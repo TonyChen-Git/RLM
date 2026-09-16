@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumachat.invalid/schemas/vscode-settings-v1.json",
+  "title": "LumaChat VS Code Adapter Settings",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server.url": {
+      "type": "string",
+      "format": "uri",
+      "default": "http://127.0.0.1:32189"
+    },
+    "server.allowRemote": {
+      "type": "boolean",
+      "default": false
+    },
+    "server.timeoutMs": {
+      "type": "integer",
+      "minimum": 500,
+      "maximum": 120000,
+      "default": 30000
+    },
+    "server.maximumResponseBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 8388608,
+      "default": 4194304
+    },
+    "backendID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "modelID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "defaultMode": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "agent"
+      ],
+      "default": "agent"
+    },
+    "workspacePath": {
+      "type": "string",
+      "pattern": "^(?:$|/(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)[^\\u0000-\\u001F\\u007F]*)$",
+      "maxLength": 4096,
+      "default": ""
+    }
+  }
+}

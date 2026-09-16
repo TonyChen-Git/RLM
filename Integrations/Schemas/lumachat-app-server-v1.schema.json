@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumachat.invalid/schemas/app-server-v1.json",
+  "title": "LumaChat App Server v1 integration contract",
+  "description": "Language-neutral camelCase JSON envelopes used by thin IDE and CI clients.",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "taskMode": {
+      "enum": ["plan", "agent"]
+    },
+    "taskStatus": {
+      "enum": [
+        "idle",
+        "running",
+        "awaiting_approval",
+        "paused",
+        "completed",
+        "cancelled",
+        "failed",
+        "step_limit"
+      ]
+    },
+    "executionKind": {
+      "enum": ["local", "worktree", "ssh", "future_cloud"]
+    },
+    "healthResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status", "apiVersion", "serverID", "startedAt"],
+      "properties": {
+        "status": { "const": "ok" },
+        "apiVersion": { "const": "v1" },
+        "serverID": { "$ref": "#/$defs/uuid" },
+        "startedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "createTaskRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "workspacePath", "backendID", "modelID"],
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" },
+        "mode": { "$ref": "#/$defs/taskMode" },
+        "workspacePath": {
+          "type": "string",
+          "pattern": "^/(?!/)",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "backendID": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "modelID": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "taskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content"],
+      "properties": {
+        "content": { "type": "string" },
+        "reasoningSummary": { "type": "string" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "toolName", "displayName", "permissionLevel", "riskReasons"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "toolName": { "type": "string" },
+        "displayName": { "type": "string" },
+        "permissionLevel": { "type": "string" },
+        "reason": { "type": "string" },
+        "command": { "type": "string" },
+        "workingDirectory": { "type": "string" },
+        "riskReasons": { "type": "array", "items": { "type": "string" } },
+        "diffPreview": { "type": "string" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "mode",
+        "status",
+        "backendID",
+        "modelID",
+        "workspacePath",
+        "executionKind",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "title": { "type": "string" },
+        "mode": { "$ref": "#/$defs/taskMode" },
+        "status": { "$ref": "#/$defs/taskStatus" },
+        "backendID": { "type": "string" },
+        "modelID": { "type": "string" },
+        "workspacePath": { "type": "string" },
+        "executionKind": { "$ref": "#/$defs/executionKind" },
+        "pendingApproval": { "$ref": "#/$defs/approval" },
+        "result": { "$ref": "#/$defs/taskResult" },
+        "lastError": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    },
+    "taskList": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["tasks"],
+      "properties": {
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } }
+      }
+    },
+    "messageRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content"],
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "metadata": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "controlRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "resumeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "metadata": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "approvalRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvalID", "decision"],
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" },
+        "approvalID": { "$ref": "#/$defs/uuid" },
+        "decision": { "enum": ["allowOnce", "allowForTask", "deny"] }
+      }
+    },
+    "acceptedOperation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["requestID", "taskID", "status", "accepted"],
+      "properties": {
+        "requestID": { "$ref": "#/$defs/uuid" },
+        "taskID": { "$ref": "#/$defs/uuid" },
+        "status": { "$ref": "#/$defs/taskStatus" },
+        "accepted": { "type": "boolean" }
+      }
+    },
+    "diffResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["taskID", "diff", "changedPaths", "truncated", "generatedAt"],
+      "properties": {
+        "taskID": { "$ref": "#/$defs/uuid" },
+        "diff": { "type": "string" },
+        "baseFingerprint": { "type": "string" },
+        "receipt": {},
+        "changedPaths": { "type": "array", "items": { "type": "string" } },
+        "truncated": { "type": "boolean" },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "taskEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "taskID", "kind", "timestamp", "payload"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "taskID": { "$ref": "#/$defs/uuid" },
+        "kind": {
+          "enum": [
+            "snapshot",
+            "message_delta",
+            "reasoning_delta",
+            "step",
+            "approval_required",
+            "diff_changed",
+            "state_changed",
+            "warning",
+            "error",
+            "heartbeat"
+          ]
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {}
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_request",
+                "unauthorized",
+                "forbidden",
+                "not_found",
+                "method_not_allowed",
+                "unsupported_media_type",
+                "payload_too_large",
+                "conflict",
+                "invalid_state",
+                "backend_unavailable",
+                "approval_not_found",
+                "event_cursor_expired",
+                "internal_error"
+              ]
+            },
+            "message": { "type": "string", "maxLength": 2048 },
+            "requestID": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

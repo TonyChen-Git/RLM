@@ -1,0 +1,30 @@
+name: LumaChat review example
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    # The runner must be able to reach your user-controlled App Server.
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Review with LumaChat
+        uses: ./integrations/GitHubAction
+        with:
+          server_url: ${{ secrets.LUMACHAT_APP_SERVER_URL }}
+          server_token: ${{ secrets.LUMACHAT_APP_SERVER_TOKEN }}
+          allow_remote: "true"
+          backend_id: ${{ vars.LUMACHAT_BACKEND_ID }}
+          model_id: ${{ vars.LUMACHAT_MODEL_ID }}
+          # Set this when the App Server sees the checkout at a different path.
+          workspace_path: ${{ vars.LUMACHAT_WORKSPACE_PATH }}
+          operation: comment
+          github_token: ${{ github.token }}

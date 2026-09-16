@@ -1,0 +1,7 @@
+/tmp/
+/.build/
+/.swiftpm/
+/DerivedData/
+*.xcresult
+.DS_Store
+._*

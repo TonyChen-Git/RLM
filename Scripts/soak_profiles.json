@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "2h": {
+      "durationSeconds": 7200,
+      "minimumCompletedCycles": 2
+    },
+    "8h": {
+      "durationSeconds": 28800,
+      "minimumCompletedCycles": 8
+    },
+    "24h": {
+      "durationSeconds": 86400,
+      "minimumCompletedCycles": 24
+    },
+    "multi-day": {
+      "durationSeconds": 259200,
+      "minimumCompletedCycles": 72
+    }
+  },
+  "shards": [
+    {
+      "category": "agent",
+      "filter": "(AgentCoreTests|AgentRuntime.*Tests|AgentProvider.*Tests)"
+    },
+    {
+      "category": "pty",
+      "filter": "(PseudoTerminalSessionTests|TaskTerminalServiceTests|AgentTerminalStreamingTests)"
+    },
+    {
+      "category": "subagent",
+      "filter": "SubagentSchedulerTests"
+    },
+    {
+      "category": "automation",
+      "filter": "AutomationSchedulerTests"
+    },
+    {
+      "category": "browser",
+      "filter": "(BrowserToolTests|BrowserAnnotationTests)"
+    },
+    {
+      "category": "ollama-reconnect",
+      "filter": "(AgentProviderStreamingTests|LLMReasoningStreamTests|MCPRuntimeTests)"
+    },
+    {
+      "category": "task-switching",
+      "filter": "(AgentViewModelConcurrencyTests|ChatViewModelConcurrencyTests)"
+    },
+    {
+      "category": "failure-injection",
+      "filter": "PhaseHFailureInjectionTests"
+    }
+  ],
+  "requiredFailureScenarios": [
+    "force-quit",
+    "disk-full",
+    "network-down",
+    "ollama-down",
+    "mcp-crash",
+    "browser-crash",
+    "pty-crash",
+    "git-lock",
+    "worktree-deleted",
+    "remote-disconnect"
+  ]
+}

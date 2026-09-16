@@ -1,0 +1,98 @@
+name: Production macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_url:
+        description: Exact HTTPS URL where this versioned ZIP will be published
+        required: true
+        type: string
+      release_notes_url:
+        description: Optional exact HTTPS release-notes URL
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lumachat-production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 180
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require an immutable tag and prepare release epoch
+        shell: /bin/zsh {0}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == refs/tags/* ]]
+          release_epoch=$(/usr/bin/git show -s --format=%ct "${GITHUB_SHA}")
+          [[ "${release_epoch}" =~ '^[0-9]{10,}$' ]]
+          print -r -- "SOURCE_DATE_EPOCH=${release_epoch}" >> "${GITHUB_ENV}"
+
+      - name: Materialize update signing key inside project tmp
+        shell: /bin/zsh {0}
+        env:
+          UPDATE_PRIVATE_KEY_BASE64: ${{ secrets.LUMACHAT_UPDATE_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          secret_root="${GITHUB_WORKSPACE}/tmp/release-secrets"
+          /bin/mkdir -p "${secret_root}"
+          if /usr/bin/find "${secret_root}" -name '._*' -print -quit | /usr/bin/grep -q .; then
+            print -u2 -r -- "AppleDouble metadata found; preserving and refusing release."
+            exit 1
+          fi
+          umask 077
+          print -rn -- "${UPDATE_PRIVATE_KEY_BASE64}" | /usr/bin/base64 --decode \
+            > "${secret_root}/update-ed25519.pem"
+          [[ -s "${secret_root}/update-ed25519.pem" && ! -L "${secret_root}/update-ed25519.pem" ]]
+
+      - name: Build, test, sign, notarize, staple, and attest
+        shell: /bin/zsh {0}
+        env:
+          LUMACHAT_RELEASE_MODE: production
+          LUMACHAT_SIGNING_IDENTITY: ${{ vars.LUMACHAT_DEVELOPER_ID_APPLICATION }}
+          LUMACHAT_SIGNING_TEAM_ID: ${{ vars.LUMACHAT_SIGNING_TEAM_ID }}
+          LUMACHAT_NOTARY_PROFILE: ${{ vars.LUMACHAT_NOTARY_PROFILE }}
+          LUMACHAT_UPDATE_FEED_URL: ${{ vars.LUMACHAT_UPDATE_FEED_URL }}
+          LUMACHAT_UPDATE_ARCHIVE_URL: ${{ inputs.archive_url }}
+          LUMACHAT_UPDATE_PUBLIC_KEY: ${{ vars.LUMACHAT_UPDATE_PUBLIC_KEY }}
+          LUMACHAT_UPDATE_PRIVATE_KEY_PATH: ${{ github.workspace }}/tmp/release-secrets/update-ed25519.pem
+          LUMACHAT_RELEASE_NOTES_URL: ${{ inputs.release_notes_url }}
+        run: |
+          set -euo pipefail
+          "${GITHUB_WORKSPACE}/Scripts/release.sh"
+
+      - name: Remove only the exact temporary private-key file
+        if: always()
+        shell: /bin/zsh {0}
+        run: |
+          set -euo pipefail
+          key="${GITHUB_WORKSPACE}/tmp/release-secrets/update-ed25519.pem"
+          if [[ -f "${key}" && ! -L "${key}" ]]; then
+            : > "${key}"
+            /bin/rm -f "${key}"
+          fi
+
+      - name: Retain notarized artifacts and attestations
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LumaChat-production-${{ github.ref_name }}
+          path: |
+            dist/LumaChat-*.zip
+            dist/LumaChat-*.sha256
+            dist/LumaChat-*.archive-manifest.json
+            dist/LumaChat-*.sbom.spdx.json
+            dist/LumaChat-*.provenance.json
+            dist/update-v1.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,13 @@
+{
+  "name": "lumachat-github-action",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-dependency GitHub Action adapter for LumaChat App Server v1.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "name": "lumachat-vscode",
+  "displayName": "LumaChat",
+  "description": "Thin, fail-closed VS Code adapter for a user-controlled LumaChat App Server.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "lumachat-local",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:lumachat.sendSelection",
+    "onCommand:lumachat.ask",
+    "onCommand:lumachat.fixSelection",
+    "onCommand:lumachat.openTask",
+    "onCommand:lumachat.showDiff",
+    "onCommand:lumachat.applyResult",
+    "onCommand:lumachat.reviewWorkspace",
+    "onCommand:lumachat.pauseTask",
+    "onCommand:lumachat.resumeTask",
+    "onCommand:lumachat.stopTask",
+    "onCommand:lumachat.setServerToken",
+    "onCommand:lumachat.clearServerToken"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "lumachat.sendSelection",
+        "title": "LumaChat: Send Selection"
+      },
+      {
+        "command": "lumachat.ask",
+        "title": "LumaChat: Ask"
+      },
+      {
+        "command": "lumachat.fixSelection",
+        "title": "LumaChat: Fix Selection"
+      },
+      {
+        "command": "lumachat.openTask",
+        "title": "LumaChat: Open Task"
+      },
+      {
+        "command": "lumachat.showDiff",
+        "title": "LumaChat: Show Diff"
+      },
+      {
+        "command": "lumachat.applyResult",
+        "title": "LumaChat: Apply Result"
+      },
+      {
+        "command": "lumachat.reviewWorkspace",
+        "title": "LumaChat: Review Workspace"
+      },
+      {
+        "command": "lumachat.pauseTask",
+        "title": "LumaChat: Pause Task"
+      },
+      {
+        "command": "lumachat.resumeTask",
+        "title": "LumaChat: Resume Task"
+      },
+      {
+        "command": "lumachat.stopTask",
+        "title": "LumaChat: Stop Task"
+      },
+      {
+        "command": "lumachat.setServerToken",
+        "title": "LumaChat: Set App Server Token"
+      },
+      {
+        "command": "lumachat.clearServerToken",
+        "title": "LumaChat: Clear App Server Token"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "lumachat.sendSelection",
+          "when": "editorHasSelection",
+          "group": "navigation@90"
+        },
+        {
+          "command": "lumachat.fixSelection",
+          "when": "editorHasSelection",
+          "group": "navigation@91"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LumaChat",
+      "properties": {
+        "lumachat.server.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:32189",
+          "description": "LumaChat App Server origin. Credentials, paths, queries, and redirects are refused."
+        },
+        "lumachat.server.allowRemote": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicitly allow a non-loopback App Server. Remote origins must use HTTPS and a SecretStorage Bearer token."
+        },
+        "lumachat.server.timeoutMs": {
+          "type": "integer",
+          "default": 30000,
+          "minimum": 500,
+          "maximum": 120000,
+          "description": "Bounded App Server request timeout in milliseconds."
+        },
+        "lumachat.server.maximumResponseBytes": {
+          "type": "integer",
+          "default": 4194304,
+          "minimum": 1024,
+          "maximum": 8388608,
+          "description": "Hard response-body limit."
+        },
+        "lumachat.backendID": {
+          "type": "string",
+          "default": "",
+          "description": "Exact App Server backend/provider ID. Required when creating a task; no fallback is attempted."
+        },
+        "lumachat.modelID": {
+          "type": "string",
+          "default": "",
+          "description": "Exact model ID. Required when creating a task; no substitute model is selected."
+        },
+        "lumachat.defaultMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "agent"
+          ],
+          "default": "agent",
+          "description": "Exact mode for a task created by Ask. Invalid values fail; Selection and Fix use Agent mode, and Review uses Plan mode."
+        },
+        "lumachat.workspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional canonical App Server-visible workspace path. Empty uses the exact current local workspace folder."
+        }
+      }
+    }
+  }
+}

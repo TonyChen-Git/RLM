@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumachat.invalid/schemas/github-action-inputs-v1.json",
+  "title": "LumaChat GitHub Action inputs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "server_token",
+    "backend_id",
+    "model_id"
+  ],
+  "properties": {
+    "server_url": {
+      "type": "string",
+      "format": "uri",
+      "default": "http://127.0.0.1:32189"
+    },
+    "server_token": {
+      "type": "string",
+      "writeOnly": true,
+      "minLength": 32,
+      "maxLength": 512
+    },
+    "allow_remote": {
+      "type": "boolean",
+      "default": false
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "review",
+        "analyze",
+        "comment"
+      ],
+      "default": "review"
+    },
+    "prompt": {
+      "type": "string",
+      "maxLength": 16384
+    },
+    "workspace_path": {
+      "type": "string",
+      "pattern": "^/(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)[^\\u0000-\\u001F\\u007F]*$",
+      "maxLength": 4096
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "github_token": {
+      "type": "string",
+      "writeOnly": true,
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "maximum_diff_bytes": {
+      "type": "integer",
+      "minimum": 16384,
+      "maximum": 921600,
+      "default": 786432
+    },
+    "request_timeout_ms": {
+      "type": "integer",
+      "minimum": 500,
+      "maximum": 120000,
+      "default": 30000
+    },
+    "task_timeout_ms": {
+      "type": "integer",
+      "minimum": 5000,
+      "maximum": 1800000,
+      "default": 900000
+    },
+    "poll_interval_ms": {
+      "type": "integer",
+      "minimum": 250,
+      "maximum": 30000,
+      "default": 2000
+    }
+  }
+}

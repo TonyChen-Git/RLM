@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_TW</string>
+    <key>CFBundleDisplayName</key>
+    <string>Luma Chat</string>
+    <key>CFBundleExecutable</key>
+    <string>LumaChat</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.lumachat.desktop</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>LumaChat</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+	<string>1.4.0</string>
+    <key>CFBundleVersion</key>
+	<string>7</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Luma Chat 只會在您連接 App 或送出訊息時讀取備忘錄與編輯器目前文件；直接修改原文件前會再次要求您確認。</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>Luma Chat 需要輔助使用權限，才能即時讀取編輯器文件；只有在您啟用 Computer Use、將 App 加入白名單並核准動作後，才會在該 App 內點按、輸入或捲動。</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Production release.sh replaces these empty fail-closed values from
+         explicit release credentials. Development/ad-hoc builds cannot update. -->
+    <key>LumaChatUpdateFeedURL</key>
+    <string></string>
+    <key>LumaChatUpdatePublicKey</key>
+    <string></string>
+    <key>LumaChatUpdateTeamIdentifier</key>
+    <string></string>
+</dict>
+</plist>

@@ -1,0 +1,72 @@
+name: LumaChat Review
+description: Run review/analyze/comment through one user-controlled LumaChat App Server.
+author: LumaChat
+inputs:
+  server_url:
+    description: LumaChat App Server origin. Defaults to loopback.
+    required: false
+    default: http://127.0.0.1:32189
+  server_token:
+    description: Bearer token for the App Server. Use a GitHub secret.
+    required: true
+  allow_remote:
+    description: Explicitly permit a non-loopback HTTPS App Server.
+    required: false
+    default: "false"
+  backend_id:
+    description: Exact LumaChat backend/provider ID. No fallback is used.
+    required: true
+  model_id:
+    description: Exact LumaChat model ID. No fallback is used.
+    required: true
+  operation:
+    description: review, analyze, or comment.
+    required: false
+    default: review
+  prompt:
+    description: Optional bounded review focus.
+    required: false
+  workspace_path:
+    description: Optional canonical path as seen by the App Server; defaults to canonical GITHUB_WORKSPACE.
+    required: false
+  base_sha:
+    description: Optional full base commit SHA; defaults to the pull_request event base.
+    required: false
+  head_sha:
+    description: Optional full head commit SHA; defaults to the event head/GITHUB_SHA.
+    required: false
+  issue_number:
+    description: Optional issue/PR number that overrides event metadata for comment mode.
+    required: false
+  github_token:
+    description: Token used only to publish comment mode output to this GitHub repository.
+    required: false
+  maximum_diff_bytes:
+    description: Hard Git diff byte limit from 16384 through 921600.
+    required: false
+    default: "786432"
+  request_timeout_ms:
+    description: Per-request timeout from 500 through 120000 milliseconds.
+    required: false
+    default: "30000"
+  task_timeout_ms:
+    description: Overall task timeout from 5000 through 1800000 milliseconds.
+    required: false
+    default: "900000"
+  poll_interval_ms:
+    description: Task status polling interval from 250 through 30000 milliseconds.
+    required: false
+    default: "2000"
+outputs:
+  task_id:
+    description: Opaque LumaChat task ID.
+  status:
+    description: completed when the selected LumaChat task succeeds.
+  report:
+    description: Bounded final result.content from the Plan task.
+runs:
+  using: node20
+  main: index.js
+branding:
+  icon: message-circle
+  color: purple

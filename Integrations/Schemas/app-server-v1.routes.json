@@ -1,0 +1,101 @@
+{
+  "apiVersion": "v1",
+  "defaultOrigin": "http://127.0.0.1:32189",
+  "authorization": {
+    "scheme": "Bearer",
+    "required": true
+  },
+  "fieldNaming": "camelCase",
+  "dateEncoding": "RFC3339/ISO-8601",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "successStatus": 200,
+      "response": "#/$defs/healthResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks",
+      "successStatus": 200,
+      "response": "#/$defs/taskList"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks",
+      "successStatus": 201,
+      "request": "#/$defs/createTaskRequest",
+      "response": "#/$defs/task"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{taskID}",
+      "successStatus": 200,
+      "response": "#/$defs/task"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{taskID}/messages",
+      "successStatus": 202,
+      "request": "#/$defs/messageRequest",
+      "response": "#/$defs/acceptedOperation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{taskID}/events",
+      "query": {
+        "after": "optional unsigned event sequence"
+      },
+      "successStatus": 200,
+      "responseMediaType": "text/event-stream",
+      "eventData": "#/$defs/taskEvent"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{taskID}/approve",
+      "successStatus": 202,
+      "request": "#/$defs/approvalRequest",
+      "response": "#/$defs/acceptedOperation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{taskID}/pause",
+      "successStatus": 202,
+      "request": "#/$defs/controlRequest",
+      "response": "#/$defs/acceptedOperation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{taskID}/resume",
+      "successStatus": 202,
+      "request": "#/$defs/resumeRequest",
+      "response": "#/$defs/acceptedOperation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{taskID}/stop",
+      "successStatus": 202,
+      "request": "#/$defs/controlRequest",
+      "response": "#/$defs/acceptedOperation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{taskID}/diff",
+      "successStatus": 200,
+      "response": "#/$defs/diffResponse"
+    }
+  ],
+  "taskModes": ["plan", "agent"],
+  "taskStatuses": [
+    "idle",
+    "running",
+    "awaiting_approval",
+    "paused",
+    "completed",
+    "cancelled",
+    "failed",
+    "step_limit"
+  ],
+  "approvalDecisions": ["allowOnce", "allowForTask", "deny"],
+  "inferenceFallback": "none"
+}
