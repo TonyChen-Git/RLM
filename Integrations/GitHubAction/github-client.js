@@ -11,7 +11,9 @@ async function createGitHubComment({
   timeoutMs = 30_000,
   fetchImpl = globalThis.fetch
 }) {
-  if (!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u.test(repository || '')) {
+  const repositoryComponents = String(repository || '').split('/');
+  if (!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u.test(repository || '') ||
+      repositoryComponents.some(component => component === '.' || component === '..')) {
     throw new Error('GitHub repository is invalid.');
   }
   if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {

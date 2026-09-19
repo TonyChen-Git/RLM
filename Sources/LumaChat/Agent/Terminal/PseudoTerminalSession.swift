@@ -992,7 +992,8 @@ actor PseudoTerminalSession {
             shell: shell,
             allowsNetwork: allowsNetwork || assessment.usesNetwork,
             allowsGitMetadata: allowsGitMetadata,
-            allowsGitMetadataWrite: allowsGitMetadataWrite
+            allowsGitMetadataWrite: allowsGitMetadataWrite,
+            allowsWorkspaceWrite: true
         )
         var environment = sandbox.environment(
             session: sessionEnvironment,

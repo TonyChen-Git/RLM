@@ -209,7 +209,7 @@ actor BrowserService: BrowserServicing {
     private var stopAllInProgress = false
 
     func start(configuration: BrowserLaunchConfiguration) async throws -> BrowserSession {
-        try validate(configuration)
+        try Self.validate(configuration)
         guard !stopAllInProgress else {
             throw BrowserError.invalidConfiguration("Browser shutdown is in progress.")
         }
@@ -2330,7 +2330,7 @@ private extension BrowserService {
         guard cookie.url != nil || cookie.domain?.isEmpty == false else {
             throw BrowserError.invalidCookie("Either url or domain is required.")
         }
-        if cookie.sameSite == .none, !cookie.secure {
+        if cookie.sameSite == BrowserCookieSameSite.none, !cookie.secure {
             throw BrowserError.invalidCookie("SameSite=None requires Secure.")
         }
 

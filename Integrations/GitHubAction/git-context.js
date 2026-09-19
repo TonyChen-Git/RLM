@@ -143,7 +143,9 @@ function requiredPath(value, name) {
 
 function requiredRepository(value) {
   const repository = String(value || '');
-  if (!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u.test(repository)) {
+  const components = repository.split('/');
+  if (!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u.test(repository) ||
+      components.some(component => component === '.' || component === '..')) {
     throw new Error('GITHUB_REPOSITORY must be an owner/name pair.');
   }
   return repository;

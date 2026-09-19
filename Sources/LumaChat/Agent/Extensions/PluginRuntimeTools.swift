@@ -268,7 +268,7 @@ private enum PluginProcessRunner {
             try FileManager.default.createDirectory(at: isolated, withIntermediateDirectories: false)
             isolatedRuntimeRoot = isolated
             sandbox = try sandboxBackend.makeExtensionPolicy(
-                trustedExtensionRuntimeRoot: isolated,
+                trustedRuntimeRoot: isolated,
                 pluginReadOnlyRoot: pluginRoot
             )
             workingDirectory = isolated

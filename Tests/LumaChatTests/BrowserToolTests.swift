@@ -186,7 +186,7 @@ private actor BrowserServiceProbe: BrowserServicing {
         ignoreCache: Bool,
         timeout: TimeInterval
     ) async throws -> BrowserNavigationResult {
-        _ = try requiredTab(sessionID: sessionID, tabID: tabID)
+        let tab = try requiredTab(sessionID: sessionID, tabID: tabID)
         return try navigationResult(sessionID: sessionID, tabID: tabID, url: tab.url)
     }
 
@@ -665,13 +665,9 @@ final class BrowserToolTests: XCTestCase {
         }
         let first = try await opening.value
 
-        let persistent = makeContext(
-            sessionID: initial.sessionID,
-            taskID: taskID,
-            fixture: fixture,
-            profileMode: .persistent,
-            profileName: "rotated"
-        )
+        var persistent = initial
+        persistent.browserProfileMode = .persistent
+        persistent.browserPersistentProfileName = "rotated"
         let second = try await coordinator.open(context: persistent, initialURL: nil)
         let state = await service.snapshot()
         XCTAssertNotEqual(first.session.id, second.session.id)
@@ -945,7 +941,7 @@ final class BrowserToolTests: XCTestCase {
         )
         let context = makeContext(fixture: fixture)
         _ = try await tool("browser_open", in: tools).execute(
-            arguments: .emptyObject,
+            arguments: .object(["url": .string("https://example.test/")]),
             context: context
         )
 

@@ -229,17 +229,17 @@ struct LLMClient: Sendable {
             candidate.values,
             capabilities: capabilities
         )
-        let route: [String]
+        let endpointRoute: [String]
         switch settings.provider {
         case .ollama:
-            route = ["api", "chat"]
+            endpointRoute = ["api", "chat"]
         case .openAICompatible:
-            route = ["chat", "completions"]
+            endpointRoute = ["chat", "completions"]
         case .anthropic:
-            route = ["messages"]
+            endpointRoute = ["messages"]
         }
 
-        let url = try Self.routeURL(for: settings, route: route)
+        let url = try Self.routeURL(for: settings, route: endpointRoute)
         var request = URLRequest(url: url, timeoutInterval: Self.timeout(from: settings))
         request.httpMethod = "POST"
         applyHeaders(to: &request, provider: settings.provider, apiKey: apiKey, hasJSONBody: true)

@@ -1072,9 +1072,9 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         if mutationCache[id] == nil { mutationOrder.append(id) }
         mutationCache[id] = CachedMutation(signature: signature, response: response)
         if mutationOrder.count > Self.maximumRetainedMutations {
-            let expired = mutationOrder.removeFirst(
-                mutationOrder.count - Self.maximumRetainedMutations
-            )
+            let expirationCount = mutationOrder.count - Self.maximumRetainedMutations
+            let expired = Array(mutationOrder.prefix(expirationCount))
+            mutationOrder.removeFirst(expirationCount)
             expired.forEach { mutationCache.removeValue(forKey: $0) }
         }
     }
@@ -1183,7 +1183,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         }
     }
 
-    private static func boundedUTF8(_ value: String, maximumBytes: Int) -> String {
+    nonisolated private static func boundedUTF8(_ value: String, maximumBytes: Int) -> String {
         let data = Data(value.utf8)
         guard data.count > maximumBytes else { return value }
         var length = max(0, min(maximumBytes, data.count))

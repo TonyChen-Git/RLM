@@ -378,8 +378,8 @@ final class AutomationSchedulerTests: XCTestCase {
         )
         XCTAssertNoThrow(try AutomationValidation.validatedDefinition(oneTimeMainCheckout))
 
-        let readOnlyRecurring = AutomationDefinition(
-            name: "Read-only repository check",
+        let untrustedRepositoryCheck = AutomationDefinition(
+            name: "Untrusted repository check",
             schedule: .interval(every: 60, anchor: now),
             task: AutomationTaskSpec(
                 actionKind: .repositoryCheck,
@@ -390,7 +390,9 @@ final class AutomationSchedulerTests: XCTestCase {
             createdAt: now,
             updatedAt: now
         )
-        XCTAssertNoThrow(try AutomationValidation.validatedDefinition(readOnlyRecurring))
+        XCTAssertThrowsError(
+            try AutomationValidation.validatedDefinition(untrustedRepositoryCheck)
+        )
     }
 
     func testHistoryFilteringOrderingAndMarkDedicatedWorktreeDiscarded() async throws {

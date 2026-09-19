@@ -104,7 +104,7 @@ enum ComputerUsePolicy {
             kAXCheckBoxRole,
             kAXRadioButtonRole,
             kAXDisclosureTriangleRole,
-            kAXLinkRole,
+            "AXLink",
             kAXPopUpButtonRole
         ].contains(role)
     }
@@ -339,8 +339,8 @@ enum ComputerUseScopedApprovalPolicy {
         guard recognizes(toolName: toolName) else {
             return nil
         }
-        let bundleIdentifier = arguments["bundle_identifier"]?.stringValue.flatMap {
-            let candidate = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleIdentifier = arguments["bundle_identifier"]?.stringValue.flatMap { rawValue -> String? in
+            let candidate = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !candidate.isEmpty,
                   candidate.utf8.count <= AgentComputerUseSettingsLimits.maximumBundleIdentifierBytes,
                   !candidate.unicodeScalars.contains(where: {
@@ -828,12 +828,12 @@ actor MacComputerUseService: ComputerUseServicing {
               let binding = capture.accessibilityElements[elementID] else {
             throw ComputerUseError.semanticElementNotFound
         }
-        let accessibilityWindow = try accessibilityWindow(
+        let capturedAXWindow = try accessibilityWindow(
             processIdentifier: application.processIdentifier,
             expectedBounds: window.bounds,
             expectedTitle: window.title
         )
-        _ = try resolveAccessibilityElement(binding, in: accessibilityWindow)
+        _ = try resolveAccessibilityElement(binding, in: capturedAXWindow)
         let action = rawAction.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let frontmostBefore = await frontmostProcessIdentifier()
         let revalidatedWindow = try validateCapture(

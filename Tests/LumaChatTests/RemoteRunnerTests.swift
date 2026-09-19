@@ -459,9 +459,18 @@ final class RemoteRunnerTests: XCTestCase {
         XCTAssertEqual(requests[4].operationLabel, "pty_run")
 
         try AppPaths.ensureAgentDirectories()
+        let workspaceRoot = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-pty-backend-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: workspaceRoot,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
         let workspace = AgentWorkspace(
             name: "remote",
-            rootPath: AppPaths.projectTemporaryRoot.path,
+            rootPath: workspaceRoot.path,
             allowedPaths: [],
             bookmarkData: nil,
             gitRepository: true,

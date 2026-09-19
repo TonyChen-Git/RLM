@@ -33,8 +33,11 @@ private struct SkillResourceReadTool: AgentTool {
         context: AgentToolContext
     ) async throws -> AgentToolResult {
         let values = try ToolArguments(arguments)
-        guard let skillID = values.string("skill_id")?.nilIfBlank,
-              let path = values.string("path")?.nilIfBlank else {
+        let skillID = values.string("skill_id")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let path = values.string("path")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !skillID.isEmpty, !path.isEmpty else {
             throw AgentRuntimeError.invalidArguments("skill_id 與 path 為必填")
         }
         let text = try await service.readResource(

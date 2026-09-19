@@ -1,0 +1,28 @@
+{
+  "id": "com.lumachat.artifact-workflows",
+  "name": "LumaChat Artifact Workflows",
+  "version": "1.0.0",
+  "author": "LumaChat",
+  "description": "On-demand, permission-scoped workflows for PDF, document, spreadsheet, presentation, image, visualization, and site artifacts.",
+  "minimumLumaChatVersion": "1.4.0",
+  "permissions": [
+    "filesystem_read",
+    "filesystem_write",
+    "process",
+    "browser"
+  ],
+  "skills": [
+    { "path": "skills/pdf" },
+    { "path": "skills/document" },
+    { "path": "skills/spreadsheet" },
+    { "path": "skills/presentation" },
+    { "path": "skills/image" },
+    { "path": "skills/visualization" },
+    { "path": "skills/site" }
+  ],
+  "mcpServers": [],
+  "tools": [],
+  "commands": [],
+  "hooks": [],
+  "assets": []
+}

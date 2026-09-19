@@ -191,6 +191,20 @@ struct AutomationTaskSpec: Codable, Equatable, Sendable {
         review = try container.decodeIfPresent(AutomationReviewRequest.self, forKey: .review)
         metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(actionKind, forKey: .actionKind)
+        try container.encode(prompt, forKey: .prompt)
+        try container.encodeIfPresent(projectID, forKey: .projectID)
+        try container.encodeIfPresent(parentSessionID, forKey: .parentSessionID)
+        try container.encode(worktreeMode, forKey: .worktreeMode)
+        try container.encodeIfPresent(goal, forKey: .goal)
+        try container.encodeIfPresent(skill, forKey: .skill)
+        try container.encodeIfPresent(command, forKey: .command)
+        try container.encodeIfPresent(review, forKey: .review)
+        try container.encode(metadata, forKey: .metadata)
+    }
 }
 
 struct AutomationEventTrigger: Codable, Equatable, Sendable {
@@ -415,6 +429,18 @@ struct AutomationDefinition: Codable, Equatable, Identifiable, Sendable {
             ?? Date(timeIntervalSince1970: 0)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(schedule, forKey: .schedule)
+        try container.encode(task, forKey: .task)
+        try container.encode(missedRunPolicy, forKey: .missedRunPolicy)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 enum AutomationRunStatus: String, Codable, CaseIterable, Sendable {
@@ -589,6 +615,22 @@ struct AutomationRunRecord: Codable, Equatable, Identifiable, Sendable {
             ?? AutomationRunWorktree(requestedMode: .none)
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
             ?? container.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(automationID, forKey: .automationID)
+        try container.encode(occurrenceKey, forKey: .occurrenceKey)
+        try container.encode(scheduledAt, forKey: .scheduledAt)
+        try container.encodeIfPresent(startedAt, forKey: .startedAt)
+        try container.encodeIfPresent(endedAt, forKey: .endedAt)
+        try container.encode(status, forKey: .status)
+        try container.encode(log, forKey: .log)
+        try container.encodeIfPresent(result, forKey: .result)
+        try container.encode(changes, forKey: .changes)
+        try container.encode(worktree, forKey: .worktree)
+        try container.encodeIfPresent(errorMessage, forKey: .errorMessage)
     }
 }
 

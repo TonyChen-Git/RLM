@@ -293,9 +293,11 @@ struct ExtensionSettingsPane: View {
                 .controlSize(.small)
             }
             ForEach(agentViewModel.oauthConnectors) { connector in
+                let isConnected = connector.connectedAt != nil
+                let statusSymbol = isConnected ? "checkmark.shield.fill" : "link.badge.plus"
                 HStack(spacing: 9) {
-                    Image(systemName: connector.connectedAt == nil ? "link.badge.plus" : "checkmark.shield.fill")
-                        .foregroundStyle(connector.connectedAt == nil ? .secondary : .green)
+                    Image(systemName: statusSymbol)
+                        .foregroundStyle(isConnected ? Color.green : Color.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(connector.name).font(.callout.weight(.medium))
                         Text(connector.accountLabel ?? connector.kind.title)
@@ -321,7 +323,7 @@ struct ExtensionSettingsPane: View {
                         oauthEditor = OAuthEditorItem(configuration: connector)
                     }
                     .controlSize(.small)
-                    if connector.connectedAt == nil {
+                    if !isConnected {
                         Button("連線") { beginOAuth(connector) }
                             .controlSize(.small)
                             .disabled(!connector.enabled)

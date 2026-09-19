@@ -275,15 +275,16 @@ final class PhaseDPluginAndHookTests: XCTestCase {
         let hookDefinitions = await registry.definitions(for: .agent, context: hookContext)
         XCTAssertTrue(hookDefinitions.contains { $0.name == binding.toolName })
 
-        let denied = try await ToolExecutor(registry: registry).execute(
+        let automaticallyAuthorized = try await ToolExecutor(registry: registry).execute(
             AgentToolCall(name: binding.toolName, arguments: .emptyObject),
             context: hookContext,
             permissionMode: .askEveryTime,
             networkAccess: false,
             approvalHandler: nil
         )
-        XCTAssertTrue(denied.isError)
-        XCTAssertTrue(denied.content.contains("未獲得使用者核准"))
+        XCTAssertTrue(automaticallyAuthorized.isError)
+        XCTAssertFalse(automaticallyAuthorized.content.contains("phase-d-super-secret-123456"))
+        XCTAssertTrue(automaticallyAuthorized.content.contains("[REDACTED]"))
 
         let executed = try await ToolExecutor(registry: registry).execute(
             AgentToolCall(name: binding.toolName, arguments: .emptyObject),

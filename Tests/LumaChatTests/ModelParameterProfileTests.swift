@@ -9,7 +9,7 @@ private final class ModelParameterURLProtocol: URLProtocol, @unchecked Sendable 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lastRequestBody = request.httpBody ?? Data()
+        Self.lastRequestBody = Self.bodyData(from: request)
         let response = HTTPURLResponse(
             url: request.url!,
             statusCode: 200,
@@ -22,6 +22,21 @@ private final class ModelParameterURLProtocol: URLProtocol, @unchecked Sendable 
     }
 
     override func stopLoading() {}
+
+    private static func bodyData(from request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        return body
+    }
 }
 
 final class ModelParameterProfileTests: XCTestCase {

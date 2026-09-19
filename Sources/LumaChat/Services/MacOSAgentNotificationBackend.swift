@@ -4,14 +4,23 @@ import Foundation
 @preconcurrency import UserNotifications
 
 final class SystemAgentNotificationBackend: NSObject, AgentNotificationBackend, @unchecked Sendable {
-    private let center: UNUserNotificationCenter
+    private let center: UNUserNotificationCenter?
     private let interactionHandlerLock = NSLock()
     private var interactionHandler: (@Sendable (AgentNotificationInteraction) async -> Void)?
 
-    init(center: UNUserNotificationCenter = .current()) {
-        self.center = center
+    init(center: UNUserNotificationCenter? = nil) {
+        // UserNotifications raises an Objective-C exception when accessed from
+        // an unbundled executable such as xctest or `swift run`. Only resolve
+        // the process-wide center when LumaChat is actually inside an app bundle.
+        let resolvedCenter = center ?? (
+            Bundle.main.bundleURL.pathExtension == "app"
+                ? UNUserNotificationCenter.current()
+                : nil
+        )
+        self.center = resolvedCenter
         super.init()
-        center.delegate = self
+        guard let resolvedCenter else { return }
+        resolvedCenter.delegate = self
         let categories = Set(AgentNotificationKind.allCases.map {
             UNNotificationCategory(
                 identifier: $0.categoryIdentifier,
@@ -20,12 +29,13 @@ final class SystemAgentNotificationBackend: NSObject, AgentNotificationBackend, 
                 options: []
             )
         })
-        center.setNotificationCategories(categories)
+        resolvedCenter.setNotificationCategories(categories)
     }
 
     func authorizationStatus() async -> AgentNotificationAuthorizationStatus {
+        guard let center else { return .unavailable }
         let settings = await center.notificationSettings()
-        switch settings.authorizationStatus {
+        return switch settings.authorizationStatus {
         case .notDetermined:
             .notDetermined
         case .denied:
@@ -42,11 +52,15 @@ final class SystemAgentNotificationBackend: NSObject, AgentNotificationBackend, 
     /// This is intentionally the sole system adapter entry point that can
     /// display a macOS authorization prompt.
     func requestAuthorization() async throws -> AgentNotificationAuthorizationStatus {
+        guard let center else { return .unavailable }
         _ = try await center.requestAuthorization(options: [.alert, .sound])
         return await authorizationStatus()
     }
 
     func deliver(_ request: AgentNotificationRequest) async throws {
+        guard let center else {
+            throw AgentNotificationServiceError.backendUnavailable
+        }
         let content = UNMutableNotificationContent()
         content.title = request.title
         content.subtitle = request.subtitle ?? ""

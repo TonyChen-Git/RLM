@@ -105,14 +105,47 @@ public enum LumaUpdateFileSecurity {
     }
 
     public static func containsAppleDouble(at root: URL) -> Bool {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-            options: [],
-            errorHandler: { _, _ in false }
-        ) else { return false }
-        for case let url as URL in enumerator where url.lastPathComponent.hasPrefix("._") {
-            return true
+        let root = root.standardizedFileURL
+        if root.lastPathComponent.hasPrefix("._") { return true }
+        var rootInfo = Darwin.stat()
+        guard Darwin.lstat(root.path, &rootInfo) == 0 else { return true }
+        guard rootInfo.st_mode & S_IFMT == S_IFDIR else { return false }
+
+        // Foundation intentionally hides AppleDouble sidecars from its directory
+        // enumerators on some macOS filesystems. Use POSIX traversal so a safety
+        // check cannot silently miss the very metadata it is meant to preserve.
+        var pending = [root.path]
+        while let directoryPath = pending.popLast() {
+            guard let directory = Darwin.opendir(directoryPath) else { return true }
+            var childDirectories: [String] = []
+            var foundAppleDouble = false
+            var traversalFailed = false
+            while let entry = Darwin.readdir(directory) {
+                let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                    pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+                        String(cString: $0)
+                    }
+                }
+                if name == "." || name == ".." { continue }
+                if name.hasPrefix("._") {
+                    foundAppleDouble = true
+                    break
+                }
+                let childPath = URL(fileURLWithPath: directoryPath, isDirectory: true)
+                    .appendingPathComponent(name, isDirectory: false)
+                    .path
+                var childInfo = Darwin.stat()
+                guard Darwin.lstat(childPath, &childInfo) == 0 else {
+                    traversalFailed = true
+                    break
+                }
+                if childInfo.st_mode & S_IFMT == S_IFDIR {
+                    childDirectories.append(childPath)
+                }
+            }
+            _ = Darwin.closedir(directory)
+            if foundAppleDouble || traversalFailed { return true }
+            pending.append(contentsOf: childDirectories)
         }
         return false
     }

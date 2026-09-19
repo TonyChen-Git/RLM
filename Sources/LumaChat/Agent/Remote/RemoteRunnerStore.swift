@@ -184,7 +184,7 @@ actor RemoteRunnerStore {
         let document: RemoteRunnerDocument
         do {
             document = try JSONDecoder().decode(RemoteRunnerDocument.self, from: data)
-        } catch is RemoteExecutionError {
+        } catch let error as RemoteExecutionError {
             throw error
         } catch {
             throw RemoteExecutionError.invalidConfiguration(

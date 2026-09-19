@@ -296,7 +296,7 @@ private final class LumaChatHeadlessHTTPConnection: @unchecked Sendable {
                 status: 431,
                 code: .payloadTooLarge,
                 message: "HTTP headers are too large."
-            }
+            )
         }
         let headerData = input[..<delimiterRange.lowerBound]
         let contentLength = try Self.contentLength(in: Data(headerData))

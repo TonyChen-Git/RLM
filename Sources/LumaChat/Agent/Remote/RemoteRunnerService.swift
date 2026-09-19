@@ -61,8 +61,12 @@ actor RemoteRunnerService: RemoteRunnerServicing {
         var result: [RemoteRunnerSummary] = []
         result.reserveCapacity(configurations.count)
         for configuration in configurations {
-            let hasCredential = configuration.authentication == .systemAgent
-                || (try await store.hasCredential(for: configuration.id))
+            let hasCredential: Bool
+            if configuration.authentication == .systemAgent {
+                hasCredential = true
+            } else {
+                hasCredential = try await store.hasCredential(for: configuration.id)
+            }
             result.append(RemoteRunnerSummary(
                 configuration: configuration,
                 hasCredential: hasCredential

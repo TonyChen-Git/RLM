@@ -137,7 +137,7 @@ struct BrowserProfile: Equatable, Identifiable, Sendable {
         let candidate = dataDirectory.standardizedFileURL
         guard candidate.deletingLastPathComponent() == expectedParent,
               candidate.lastPathComponent == id.uuidString.lowercased(),
-              isStrictDescendant(candidate, of: runtimeRoot) else {
+              Self.isStrictDescendant(candidate, of: runtimeRoot) else {
             throw BrowserError.profilePathEscapedRuntimeRoot
         }
         guard fileManager.fileExists(atPath: candidate.path) else { return }

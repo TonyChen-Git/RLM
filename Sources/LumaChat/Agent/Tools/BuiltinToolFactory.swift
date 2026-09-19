@@ -1913,7 +1913,7 @@ enum BuiltinToolFactory {
     }
 }
 
-private struct ToolArguments: Sendable {
+struct ToolArguments: Sendable {
     let object: [String: JSONValue]
 
     init(_ value: JSONValue) throws {

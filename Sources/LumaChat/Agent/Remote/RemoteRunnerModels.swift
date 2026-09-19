@@ -219,7 +219,7 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
             return value.withCString { inet_pton(AF_INET6, $0, &address) == 1 }
         }
         var ipv4 = in_addr()
-        if value.withCString({ inet_pton(AF_INET, $0, &ipv4) == 1 }) == 1 {
+        if value.withCString({ inet_pton(AF_INET, $0, &ipv4) == 1 }) {
             return true
         }
         guard !value.hasSuffix("."), !value.contains("..") else { return false }

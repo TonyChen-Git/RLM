@@ -395,16 +395,14 @@ final class ComputerUseTests: XCTestCase {
             call: approved
         )
 
-        XCTAssertEqual(
-            await manager.authorize(
-                metadata: observation,
-                call: approved,
-                context: context,
-                permissionMode: .askEveryTime,
-                networkAccess: false
-            ),
-            .allow
+        let approvedAuthorization = await manager.authorize(
+            metadata: observation,
+            call: approved,
+            context: context,
+            permissionMode: .askEveryTime,
+            networkAccess: false
         )
+        XCTAssertEqual(approvedAuthorization, .allow)
         let differentArguments = await manager.authorize(
             metadata: observation,
             call: AgentToolCall(
@@ -421,7 +419,8 @@ final class ComputerUseTests: XCTestCase {
             return XCTFail("Computer Use allowance crossed its exact argument scope.")
         }
         XCTAssertEqual(level, .network)
-        XCTAssertTrue(await manager.persistedAllowances(for: context.sessionID).isEmpty)
+        let persistedAllowances = await manager.persistedAllowances(for: context.sessionID)
+        XCTAssertTrue(persistedAllowances.isEmpty)
 
         let mutation = ToolMetadata(
             id: "builtin.computer_semantic_action",

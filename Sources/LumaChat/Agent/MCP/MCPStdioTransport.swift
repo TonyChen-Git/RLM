@@ -104,7 +104,10 @@ actor MCPStdioTransport: MCPTransport {
         process.arguments = sandbox.launcherArguments(
             command: "exec \(invocation)",
             shell: "/bin/zsh",
-            allowsNetwork: allowsNetwork
+            allowsNetwork: allowsNetwork,
+            allowsGitMetadata: false,
+            allowsGitMetadataWrite: false,
+            allowsWorkspaceWrite: false
         )
         process.environment = sandbox.environment(session: runtime.values, command: [:])
         process.currentDirectoryURL = workingDirectory

@@ -103,17 +103,20 @@ final class BrowserAnnotationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = BrowserAnnotationStore(root: root)
         let sessionID = UUID()
+        let ownerTaskID = UUID()
         let olderID = UUID()
         let newerID = UUID()
         let older = makeDraft(
             id: olderID,
             sessionID: sessionID,
+            ownerTaskID: ownerTaskID,
             label: "Older",
             createdAt: Date(timeIntervalSince1970: 10)
         )
         let newer = makeDraft(
             id: newerID,
             sessionID: sessionID,
+            ownerTaskID: ownerTaskID,
             label: "Newer",
             createdAt: Date(timeIntervalSince1970: 20)
         )

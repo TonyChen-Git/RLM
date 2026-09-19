@@ -461,7 +461,7 @@ actor AutomationScheduler {
         let priorEvaluation = snapshot.schedulerState.lastEvaluationAt
         let definitions = snapshot.automations.filter(\.isEnabled)
         for definition in definitions {
-            guard !isEventSchedule(definition.schedule) else { continue }
+            guard !Self.isEventSchedule(definition.schedule) else { continue }
             let lastScheduled = snapshot.schedulerState.lastScheduledAtByAutomation[definition.id]
             let baseline = [lastScheduled, priorEvaluation, Optional(definition.createdAt)]
                 .compactMap { $0 }

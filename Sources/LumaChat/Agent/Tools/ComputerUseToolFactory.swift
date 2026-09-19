@@ -235,9 +235,11 @@ enum ComputerUseToolFactory {
                     action: action
                 )
                 return AgentToolResult(
-                    content: verification.isBackgroundSafe
-                        ? "Performed the approved semantic \(action) without changing the foreground app. Capture consumed."
-                        : "Performed the approved semantic \(action), but post-action background verification changed. Capture consumed; observe again before continuing.",
+                    content: "External side effect (not undoable): " + (
+                        verification.isBackgroundSafe
+                            ? "performed the approved semantic \(action) without changing the foreground app. Capture consumed."
+                            : "performed the approved semantic \(action), but post-action background verification changed. Capture consumed; observe again before continuing."
+                    ),
                     data: externalSideEffectJSON(verificationJSON(verification)),
                     mayHaveChangedWorkspace: true
                 )

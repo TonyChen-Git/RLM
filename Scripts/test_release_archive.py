@@ -38,7 +38,13 @@ class ReleaseArchiveTests(unittest.TestCase):
         (self.application / "Contents/Info.plist").write_bytes(b"plist")
         (self.application / "Contents/MacOS/LumaChat").write_bytes(b"binary")
         (self.application / "Contents/Resources/AppIcon.icns").write_bytes(b"icon")
+        (self.application / "Contents/Resources/PrivacyInfo.xcprivacy").write_bytes(
+            b"privacy"
+        )
         (self.application / "Contents/Resources/bin/lumachat").write_bytes(b"cli")
+        (self.application / "Contents/Resources/bin/lumachat-updater").write_bytes(
+            b"updater"
+        )
         (plugin / "plugin.json").write_bytes(b"{}")
         for skill in ARTIFACT_WORKFLOW_SKILLS:
             directory = plugin / "skills" / skill
@@ -78,7 +84,13 @@ class ReleaseArchiveTests(unittest.TestCase):
             modes["LumaChat.app/Contents/Resources/AppIcon.icns"], 0o644
         )
         self.assertEqual(
+            modes["LumaChat.app/Contents/Resources/PrivacyInfo.xcprivacy"], 0o644
+        )
+        self.assertEqual(
             modes["LumaChat.app/Contents/Resources/bin/lumachat"], 0o755
+        )
+        self.assertEqual(
+            modes["LumaChat.app/Contents/Resources/bin/lumachat-updater"], 0o755
         )
         self.assertEqual(
             modes[

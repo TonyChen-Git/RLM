@@ -37,5 +37,13 @@
     </dict>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Production release.sh replaces these empty fail-closed values from
+         explicit release credentials. Development/ad-hoc builds cannot update. -->
+    <key>LumaChatUpdateFeedURL</key>
+    <string></string>
+    <key>LumaChatUpdatePublicKey</key>
+    <string></string>
+    <key>LumaChatUpdateTeamIdentifier</key>
+    <string></string>
 </dict>
 </plist>

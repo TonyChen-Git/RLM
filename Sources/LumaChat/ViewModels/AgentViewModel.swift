@@ -7060,7 +7060,7 @@ final class AgentViewModel: ObservableObject {
                     request: invocationText,
                     available: descriptors
                 )
-                runtimeSnapshot.loadedSkills = resolvedSkills.map(LoadedSkillReference.init)
+                runtimeSnapshot.loadedSkills = resolvedSkills.map { LoadedSkillReference($0) }
                 runtimeSnapshot.updatedAt = Date()
                 try await self.sessionStore.save(runtimeSnapshot)
                 guard !Task.isCancelled,

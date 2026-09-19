@@ -141,7 +141,7 @@ struct AgentLoop: Sendable {
             session.state = .running
             session.lastError = nil
             session.updatedAt = Date()
-            session.loadedSkills = loadedSkills.map(LoadedSkillReference.init)
+            session.loadedSkills = loadedSkills.map { LoadedSkillReference($0) }
             installSystemPrompt(in: &session, workspace: workspace)
             installProjectSettingsPrompt(in: &session, prompt: projectSettings.systemPrompt)
             let effectivePermissionMode = projectSettings.agentPermission ?? settings.permissionMode

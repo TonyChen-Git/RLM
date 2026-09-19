@@ -8,6 +8,50 @@
 		<data>
 		IoC4HDgSq3Hg1RBTzXYzZEYN1XA=
 		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/plugin.json</key>
+		<data>
+		fnDGeImNZYXD1XDs4QzWshVaWr0=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/document/SKILL.md</key>
+		<data>
+		uPA6vJH2tzQ38Swy1cgerCGvn6I=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/image/SKILL.md</key>
+		<data>
+		Og7D0HsImr7smqGYliuicAnDuDI=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/pdf/SKILL.md</key>
+		<data>
+		Jwkt66prNrjBZXhyZ3hzC3CdxIQ=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/presentation/SKILL.md</key>
+		<data>
+		KhacBL6NYHfCLqJeiOjwTbvpO94=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/site/SKILL.md</key>
+		<data>
+		hS5KTUbn7cqJHnF5/DWrm687OUk=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/spreadsheet/SKILL.md</key>
+		<data>
+		+w+5MO6LjI5TmGo0BQVOh7a+kUI=
+		</data>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/visualization/SKILL.md</key>
+		<data>
+		sUhnVJKvI+HZKfxdG150I0isydY=
+		</data>
+		<key>Resources/PrivacyInfo.xcprivacy</key>
+		<data>
+		1XyJJl/+XK0BA+jAJnJTThm/Ul0=
+		</data>
+		<key>Resources/bin/lumachat</key>
+		<data>
+		r0piwnQ2LLpMFZYKvo95SA4uRqQ=
+		</data>
+		<key>Resources/bin/lumachat-updater</key>
+		<data>
+		aA4kLuI39CL9VN0Oj7ZpZGPRJqY=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +60,83 @@
 			<key>hash2</key>
 			<data>
 			evrbM+NtaLnoojpHPtcaN/OFNCFXi2aY3usHXiW7f58=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/plugin.json</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			SslZTt6gnSqoJLOie5MQW8fFGVg31jO0Aw+gANml5Gk=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/document/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			ZLxrjSCPpaJf4xpfnwRUBUAchORFSIaMZrsoq8MEYhM=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/image/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Rs4NIG+6FofEpR/0gE/kcER8W0/dkBwCodw5MktCTHc=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/pdf/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			nk29QFxHJ9B2xRU9I4slTkrSvLo4XcW8g3ZDlaXM+Mo=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/presentation/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			0GfX2YF8v4oUeluv6cMj/LU3rhQG6hxblY4BQLIfxo8=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/site/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			mWmxqqByTNV11+fDoAPscwLiKRxl/mqXyzE93UBFw0E=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/spreadsheet/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			NyLrMFPrnOQHoQ7PQuIr8c8owbvI9q2jPAtRp2eVMRQ=
+			</data>
+		</dict>
+		<key>Resources/BuiltinPlugins/com.lumachat.artifact-workflows/skills/visualization/SKILL.md</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			9dHbfEnPhTj2sTa5lcmYTSvPfYBzI89oPZYwXWbbRPE=
+			</data>
+		</dict>
+		<key>Resources/PrivacyInfo.xcprivacy</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			90D65qBf1AKyB/zvNhLfrljbs7rfjDs99ye4TyKhQFE=
+			</data>
+		</dict>
+		<key>Resources/bin/lumachat</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			0vFyT5QooZnsXHo9v1CkPAf+64aZ22b6Gtwj1Q2FLF0=
+			</data>
+		</dict>
+		<key>Resources/bin/lumachat-updater</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			BelgxxARtnNYoGi/TxBJe3g/64phXma1myfxwmwAXEU=
 			</data>
 		</dict>
 	</dict>

@@ -297,13 +297,17 @@ actor SubagentScheduler: SubagentControlling {
 
     private func schedule() async {
         guard let launchHandler else { return }
-        while executionTasks.count < globalConcurrency {
-            let providerCounts = Dictionary(grouping: executionTasks.keys.compactMap {
-                recordsByID[$0]?.providerKey
-            }, by: { $0 }).mapValues(\.count)
-            let parentCounts = Dictionary(grouping: executionTasks.keys.compactMap {
-                recordsByID[$0]?.parentSessionID
-            }, by: { $0 }).mapValues(\.count)
+        while recordsByID.values.filter({ $0.status == .running }).count < globalConcurrency {
+            // Running status is the reservation. It is set before persistence
+            // yields, so a re-entrant schedule call cannot over-admit work in
+            // the window before the corresponding Task is installed.
+            let running = recordsByID.values.filter { $0.status == .running }
+            let providerCounts = Dictionary(grouping: running.map(\.providerKey), by: { $0 })
+                .mapValues(\.count)
+            let parentCounts = Dictionary(
+                grouping: running.map(\.parentSessionID),
+                by: { $0 }
+            ).mapValues(\.count)
             guard var next = recordsByID.values
                 .filter({ record in
                     record.status == .queued

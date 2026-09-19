@@ -151,11 +151,11 @@ actor CDPWebSocketConnection {
         )
 
         nextCommandID &+= 1
-        guard nextCommandID > 0 else {
-            nextCommandID = 1
+        if nextCommandID == 0 {
             guard pending.isEmpty else {
                 throw BrowserError.protocolViolation("Command identifier exhausted.")
             }
+            nextCommandID = 1
         }
         let commandID = nextCommandID
         let payload = try JSONEncoder().encode(

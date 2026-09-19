@@ -240,6 +240,15 @@ public struct LumaSemanticVersion: Comparable, Equatable, Sendable {
         }
         return false
     }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        let count = max(lhs.components.count, rhs.components.count)
+        return (0..<count).allSatisfy { index in
+            let left = index < lhs.components.count ? lhs.components[index] : 0
+            let right = index < rhs.components.count ? rhs.components[index] : 0
+            return left == right
+        }
+    }
 }
 
 public enum LumaUpdateError: LocalizedError, Equatable, Sendable {

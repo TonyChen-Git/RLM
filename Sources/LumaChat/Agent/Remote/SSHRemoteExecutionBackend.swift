@@ -902,7 +902,7 @@ if not os.path.isabs(root) or canonical == "/" or not os.path.isdir(canonical):
     print("workspace root is unavailable",file=sys.stderr);sys.exit(64)
 uid=os.geteuid()
 print(json.dumps({"hostname":socket.gethostname(),"effective_user":pwd.getpwuid(uid).pw_name,"user_id":uid,"canonical_workspace_root":canonical},separators=(",",":")))
-    """#
+"""#
 
     /// Git discovers repositories above its `-C` directory. Refuse that
     /// implicit authority expansion before executing any dedicated Git tool.

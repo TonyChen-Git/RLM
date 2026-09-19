@@ -337,9 +337,12 @@ final class HeadlessAppServerTests: XCTestCase {
 
         let stream = try await broker.stream(taskID: taskID, afterSequence: 0)
         var iterator = stream.makeAsyncIterator()
-        XCTAssertEqual(try await iterator.next()?.sequence, 1)
-        XCTAssertEqual(try await iterator.next()?.sequence, 2)
-        XCTAssertNil(try await iterator.next())
+        let first = try await iterator.next()
+        let second = try await iterator.next()
+        let terminal = try await iterator.next()
+        XCTAssertEqual(first?.sequence, 1)
+        XCTAssertEqual(second?.sequence, 2)
+        XCTAssertNil(terminal)
     }
 
     private func makeRouter(
