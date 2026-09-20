@@ -24,7 +24,7 @@ struct LumaChatApp: App {
     @StateObject private var updateController = LumaUpdateController.shared
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup { [agentViewModel] in
             RootView()
                 .environmentObject(viewModel)
                 .environmentObject(agentViewModel)

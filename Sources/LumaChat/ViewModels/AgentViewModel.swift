@@ -4404,7 +4404,7 @@ final class AgentViewModel: ObservableObject {
             updated.displayName = displayName
             try await store.save(updated)
             guard selectedSessionID == sessionID,
-                  self.selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
+                  self.selectedSession.flatMap({ settingsWorkspace(for: $0) })?.rootPath
                     == workspace.rootPath else {
                 throw AgentComposerError.staleSelection
             }
@@ -6226,7 +6226,7 @@ final class AgentViewModel: ObservableObject {
             }
             try await store.save(normalized)
             guard selectedSessionID == sessionID,
-                  self.selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
+                  self.selectedSession.flatMap({ settingsWorkspace(for: $0) })?.rootPath
                     == workspace.rootPath else {
                 throw AgentComposerError.staleSelection
             }

@@ -1168,7 +1168,7 @@ extension BrowserService {
                         let received = Self.number(event.params["receivedBytes"])
                         if total.map({ $0 > Double(maximumBytes) }) == true
                             || received.map({ $0 > Double(maximumBytes) }) == true {
-                            try? await runtime.browserConnection.command(
+                            _ = try? await runtime.browserConnection.command(
                                 "Browser.cancelDownload",
                                 params: .object(["guid": .string(activeGUID)]),
                                 timeout: runtime.commandTimeout
@@ -1212,7 +1212,7 @@ extension BrowserService {
             }
         } catch {
             if let guid {
-                try? await runtime.browserConnection.command(
+                _ = try? await runtime.browserConnection.command(
                     "Browser.cancelDownload",
                     params: .object(["guid": .string(guid)]),
                     timeout: runtime.commandTimeout
@@ -1222,7 +1222,7 @@ extension BrowserService {
             throw error
         }
         if let guid {
-            try? await runtime.browserConnection.command(
+            _ = try? await runtime.browserConnection.command(
                 "Browser.cancelDownload",
                 params: .object(["guid": .string(guid)]),
                 timeout: runtime.commandTimeout
