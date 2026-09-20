@@ -596,6 +596,23 @@ final class PseudoTerminalSessionTests: XCTestCase {
         }
     }
 
+    func testPTYSignalCrashReportsTerminationAndCompletes() async throws {
+        let root = try makeWorkspaceRoot("signal-crash")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = try makeSession(root: root)
+        do {
+            _ = try await session.start(command: "kill -KILL $$")
+            let finished = try await waitForExit(session, timeout: .seconds(5))
+            XCTAssertEqual(finished.state, .exited)
+            XCTAssertEqual(finished.terminationSignal, SIGKILL)
+            XCTAssertEqual(finished.exitCode, 128 + SIGKILL)
+        } catch {
+            await session.dispose()
+            throw error
+        }
+        await session.dispose()
+    }
+
     func testPTYResizeDeliversSIGWINCHAndExactWindowSize() async throws {
         let root = try makeWorkspaceRoot("resize")
         defer { try? FileManager.default.removeItem(at: root) }

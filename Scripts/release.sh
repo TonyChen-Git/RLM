@@ -25,6 +25,7 @@ xdg_config_path="${release_root}/xdg-config"
 clang_module_cache="${release_root}/clang-module-cache"
 swift_module_cache="${release_root}/swift-module-cache"
 test_app_support="${release_root}/test-app-support"
+release_archive_test_root="${project_root}/tmp/release-archive-tests"
 archive_verification_directory="${release_root}/archive-verification"
 archive_member_list="${release_root}/archive-members.txt"
 notary_upload_path="${release_root}/LumaChat-notary-upload.zip"
@@ -168,15 +169,28 @@ fi
     "${clang_module_cache}" \
     "${swift_module_cache}" \
     "${test_app_support}" \
+    "${release_archive_test_root}" \
     "${distribution_directory}"
 
 # A release archive is never produced from an unverified source tree. Tests use
 # the same project-local, isolated toolchain paths as the release build.
 env \
     TMPDIR="${system_temporary_path}" \
-    LUMACHAT_RELEASE_TEST_ROOT="${system_temporary_path}" \
+    LUMACHAT_RELEASE_TEST_ROOT="${release_archive_test_root}" \
     PYTHONDONTWRITEBYTECODE=1 \
     /usr/bin/python3 "${project_root}/Scripts/test_release_archive.py"
+
+env \
+    TMPDIR="${system_temporary_path}" \
+    LUMACHAT_RELEASE_TEST_ROOT="${system_temporary_path}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    /usr/bin/python3 "${project_root}/Scripts/test_soak.py"
+
+env \
+    TMPDIR="${system_temporary_path}" \
+    LUMACHAT_RELEASE_TEST_ROOT="${system_temporary_path}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    /usr/bin/python3 "${project_root}/Scripts/test_security_audit.py"
 
 env \
     TMPDIR="${system_temporary_path}" \
@@ -442,7 +456,10 @@ env \
         --build "${build_number}" \
         --architecture "${architecture}"
 
-env PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "${security_auditor}" \
+env \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TMPDIR="${system_temporary_path}" \
+    /usr/bin/python3 "${security_auditor}" \
     --project-root "${project_root}" \
     --application "${application_path}" \
     --release-mode "${release_mode}" \

@@ -1,7 +1,7 @@
 # Automation, Notification, and SSH Remote Runner Architecture
 
-Last static audit: 2026-09-10, after Phase F implementation and before the
-combined Phase C-H validation/release gate
+Last development audit: 2026-09-20, after the combined Phase C-H
+validation/release gate
 
 ## Scope and status
 
@@ -13,12 +13,10 @@ Phase F adds three connected but separate capabilities:
 3. a user-controlled SSH Remote Runner for Task-scoped filesystem, Git, shell,
    one-shot PTY, build, and test operations.
 
-The implementation is present in the development tree. It has focused tests,
-but those tests, the complete regression suite, production build, packaged UI
-smoke, and a real authorized SSH-host acceptance run are deliberately deferred
-to the user's final combined Phase C-H gate. This document therefore uses
-`IMPLEMENTED / UNVALIDATED` and `PARTIAL / UNVALIDATED`; it is not release
-evidence.
+The implementation and focused tests pass in the complete development
+regression/build/package gate. This is development evidence, not a live-host or
+production claim: a real authorized SSH host, native UI acceptance and
+long-duration soak remain external gates.
 
 Remote model routing and remote tool execution remain different concerns. A
 Task may use any configured model endpoint while its tools run on a selected
@@ -325,33 +323,31 @@ that such a service exists.
 
 | Requirement | Development-tree state | Evidence / remaining gate |
 | --- | --- | --- |
-| Service, scheduler, store | IMPLEMENTED / UNVALIDATED | Actor scheduler, versioned atomic store, application facade |
-| One-time, interval, cron, event | IMPLEMENTED / UNVALIDATED | Five-field cron and bounded typed event ingress |
-| Agent/Goal/Skill/job/tests/check/review | IMPLEMENTED / UNVALIDATED | Durable Agent/Review Task executor path |
-| Complete per-run history | IMPLEMENTED / UNVALIDATED | IDs, times, status, logs, result, changes, worktree |
-| Recurring mutation isolation | IMPLEMENTED / UNVALIDATED | Validation forces dedicated managed worktree |
-| Post-run Diff/Review/Commit/PR/Discard | PARTIAL / UNVALIDATED | Open Task exposes existing surfaces; explicit discard exists; no separate automated publish pipeline |
+| Service, scheduler, store | DEVELOPMENT-GATED | Actor scheduler, versioned atomic store, application facade |
+| One-time, interval, cron, event | DEVELOPMENT-GATED | Five-field cron and bounded typed event ingress |
+| Agent/Goal/Skill/job/tests/check/review | DEVELOPMENT-GATED | Durable Agent/Review Task executor path |
+| Complete per-run history | DEVELOPMENT-GATED | IDs, times, status, logs, result, changes, worktree |
+| Recurring mutation isolation | DEVELOPMENT-GATED | Validation forces dedicated managed worktree |
+| Post-run Diff/Review/Commit/PR/Discard | PARTIAL / DEVELOPMENT-GATED | Open Task exposes existing surfaces; explicit discard exists; no separate automated publish pipeline |
 | GitHub/Slack/Gmail/filesystem/webhook events | SEAM | Typed ingress only; producer adapters/listeners are absent |
-| Six notification kinds and Task routing | IMPLEMENTED / UNVALIDATED | Explicit authorization, bounded payload, typed click route |
-| SSH shell/filesystem/Git/build/test | IMPLEMENTED / UNVALIDATED | Host-bound backend and 16 structured tools |
-| Remote PTY | MVP / UNVALIDATED | One-shot SSH PTY only; no persistent interactive Task Terminal |
-| Execution-location safety | PARTIAL / UNVALIDATED | SSH identity is propagated and local capabilities are disabled; a fully generic cross-platform backend for every tool does not yet exist |
-| Local approval with remote identity | IMPLEMENTED / UNVALIDATED | Backend/host/port/user/root shown in approval card |
-| Mac/Worktree to SSH and SSH to Mac | IMPLEMENTED / UNVALIDATED | Bounded same-HEAD migration, verification, rollback/CAS, durable journal recovery and Task handoff orchestration |
+| Six notification kinds and Task routing | DEVELOPMENT-GATED | Explicit authorization, bounded payload, typed click route |
+| SSH shell/filesystem/Git/build/test | DEVELOPMENT-GATED / LIVE HOST PENDING | Host-bound backend and 16 structured tools |
+| Remote PTY | MVP / DEVELOPMENT-GATED | One-shot SSH PTY only; no persistent interactive Task Terminal |
+| Execution-location safety | PARTIAL / DEVELOPMENT-GATED | SSH identity is propagated and local capabilities are disabled; a fully generic cross-platform backend for every tool does not yet exist |
+| Local approval with remote identity | DEVELOPMENT-GATED | Backend/host/port/user/root shown in approval card |
+| Mac/Worktree to SSH and SSH to Mac | DEVELOPMENT-GATED / LIVE HOST PENDING | Bounded same-HEAD migration, verification, rollback/CAS, durable journal recovery and Task handoff orchestration |
 | Secure relay/mobile remote control | SEAM | `.futureCloud` exists but always fails closed |
-| Focused automated coverage | WRITTEN / NOT RUN | Scheduler, notification, store/backend/tool/migration cases exist; final gate deferred |
+| Focused automated coverage | PASSED | Included in the 660-test development regression; remote-disconnect boundary injection also passes |
 
 ## Known limitations and remaining Phase F gates
 
-- Run the new focused suites, full regression, typecheck/build, packaged UI
-  smoke, and final diff inspection at the requested combined gate.
 - Exercise an explicitly authorized real SSH host, including host-key mismatch,
   disconnect/timeout/cancellation, remote non-zero exit, output truncation,
   migration rollback, and App relaunch. Current backend tests use controlled
   transports and are not proof of network interoperability.
-- Add failure injection for scheduler store I/O, artifact-directory failure,
-  worktree allocation/cleanup, notification denial/backend failure, and remote
-  disconnect at each handoff/run transition.
+- Extend failure injection beyond the passing remote-disconnect scenario to
+  scheduler store I/O, artifact-directory failure, worktree allocation/cleanup,
+  notification denial/backend failure, and every handoff/run transition.
 - Add full ViewModel/UI end-to-end coverage for Automation Task creation,
   retained-worktree Diff/Review/Commit/PR/Discard, notification-click navigation,
   Settings CRUD/test connection, and all three supported remote-handoff routes.
@@ -371,8 +367,8 @@ that such a service exists.
   safe-but-ambiguous partial state. Recovery refuses to overwrite it and keeps
   all evidence; crash-total per-path compensation and kill-at-every-boundary
   coverage remain Phase H security/failure-injection gates.
-- Multi-hour/multi-day Automation and SSH soak plus remote-host disconnect
-  injection remain Phase H release gates.
+- Multi-hour/multi-day Automation and SSH soak plus a live-host disconnect run
+  remain external production gates.
 
 ## Principal files
 

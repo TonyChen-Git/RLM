@@ -70,7 +70,10 @@ def audit_tree(root: Path, *, scan_secrets: bool) -> tuple[int, int]:
 
 
 def atomic_report(path: Path, value: dict[str, object]) -> None:
-    root = Path(os.environ.get("TMPDIR", path.parent)).resolve()
+    # os.replace is only atomic when the temporary file and destination live
+    # on the same filesystem.  In particular, release staging may be on an
+    # external volume while TMPDIR points at the host's system volume.
+    root = path.parent.resolve()
     root.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix="lumachat-security-", suffix=".tmp", dir=root)
     temporary = Path(name)
@@ -80,7 +83,6 @@ def atomic_report(path: Path, value: dict[str, object]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temporary, path)
     finally:
         if temporary.exists():

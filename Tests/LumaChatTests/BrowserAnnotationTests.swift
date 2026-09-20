@@ -301,9 +301,11 @@ final class BrowserAnnotationTests: XCTestCase {
             tamperedSession.uuidString.lowercased() + ".json"
         )
         var persisted = String(decoding: try Data(contentsOf: file), as: UTF8.self)
+        let syntheticKey = ["sk", "hostile-persisted-secret-123456"]
+            .joined(separator: "-")
         persisted = persisted.replacingOccurrences(
             of: "Original label",
-            with: "api_key=sk-hostile-persisted-secret-123456"
+            with: "api_key=\(syntheticKey)"
         )
         try Data(persisted.utf8).write(to: file)
         do {

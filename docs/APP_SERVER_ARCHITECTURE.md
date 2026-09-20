@@ -116,6 +116,6 @@ is present.
   client does not make this listener remote-capable.
 - The server currently runs as an explicit headless process, not as an always-on
   background login item.
-- Live backend, IDE, Action, packaging, and failure-injection evidence is
-  collected only by the final combined validation gate requested for Phases
-  C–H; implementation presence alone is not a release claim.
+- Swift, VS Code, GitHub Action, packaging and deterministic failure-injection
+  development gates pass. Live backend/IDE/hosted-Action acceptance remains an
+  external environment gate; implementation presence is not a production claim.

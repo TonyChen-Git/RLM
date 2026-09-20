@@ -1,6 +1,7 @@
 # Per-model Parameter Profiles
 
-Status: implemented; final combined Phase C–H validation is pending.
+Status: implemented; focused profile tests and the combined Phase C–H
+development release gate passed on 2026-09-20.
 
 ## Identity and persistence
 

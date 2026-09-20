@@ -1,6 +1,6 @@
 # LumaChat Full Codex-Class Parity Audit
 
-Last audited: 2026-09-14, after Phase G implementation and before the combined Phase C-H gate
+Last audited: 2026-09-20, after the combined Phase C-H development gate
 
 ## Scope and scoring rule
 
@@ -15,6 +15,8 @@ recovery/failure behavior, UI, tests, and release path form an honest chain.
 
 - `COMPLETE`: the audited scope and release gates are complete.
 - `PARTIAL`: a production path exists, but material parity gates remain.
+- `DEVELOPMENT-GATED`: implementation and automated development release gates
+  pass, but live external or production-distribution evidence remains.
 - `MVP`: an intentionally constrained vertical slice works.
 - `STUB`: a presentation or interface seam exists without the required chain.
 - `MISSING`: no meaningful implementation exists.
@@ -23,9 +25,12 @@ recovery/failure behavior, UI, tests, and release path form an honest chain.
 
 ## Executive result
 
-The pre-Phase-A baseline was **56/100**. Phase A raised the release-gated result
-to **64/100**; the completed Phase B gate now raises it to **68.5/100**. The
-current validated artifact is `LumaChat-1.4.0-arm64.zip`.
+The pre-Phase-A baseline was **56/100**. Phase A raised the formally
+release-gated result to **64/100** and Phase B to **68.5/100**. The original
+master prompt's eight implementation phases are now **8/8 complete**, and the
+combined Phase C-H development gate passes. The formal production-credit score
+is deliberately not recomputed from development-only evidence: notarization,
+live external acceptance and qualifying long-duration soak remain incomplete.
 
 Phase B supplies real Darwin PTYs and a Task Terminal pane; a closed Advanced
 Git surface; complete typed Review sources with file/unified/side-by-side
@@ -42,26 +47,25 @@ shutdown persistence races, same-length concurrent file rewrites, cached root
 replacement and renewable worktree lease identity were also closed before the
 gate.
 
-The isolated suite passed 504 tests with one explicit environment skip and zero
-failures. Production build, signing, bundle/extracted-bundle checks, canonical
-ZIP checks and packaged UI smoke passed. Phase B is release-ready for its local
-macOS scope.
+The 2026-09-20 isolated suite passed 660 tests with one explicit environment
+skip and zero failures. The optimized arm64 build, ad-hoc signing,
+bundle/extracted-bundle checks, canonical ZIP, SBOM/provenance and security audit
+passed. VS Code passed 17/17 and GitHub Action passed 14/14 Node tests. This is
+a development release gate, not Developer ID/notarized production evidence.
 
 This is not full Task Handoff or cloud parity. The development tree now has a
 user-controlled SSH Remote Runner, host receipts, 16 closed remote tools, local
 approval identity, and bounded explicit Local/Worktree ↔ SSH migration. The
 remote PTY is intentionally one-shot, `.futureCloud` remains a fail-closed seam,
-and live-host acceptance, disconnect/failure injection, persistent interactive
-remote terminals, cross-platform backends, and long soak remain incomplete.
+and live-host acceptance, persistent interactive remote terminals,
+cross-platform backends, and long soak remain incomplete. A deterministic
+remote-disconnect boundary test is included in the passing failure shard.
 Review/PR provider breadth and live external validation also remain incomplete.
-Phase C Subagents, Phase D Skills/plugins/hooks/OAuth and Phase E Browser/CDP /
-Computer Use 2.0 are present in the development tree but retain no new score
-until the combined validation gate. Phase F Automations/notifications and the
-SSH Remote Runner are also present but unvalidated. Phase G now adds the shared
-CLI, versioned App Server, Swift SDK, VS Code adapter, GitHub Action, and bundled
-artifact-workflow Skills, but those surfaces likewise retain no score until the
-combined gate. External event producers, secure relay, and production
-distribution remain incomplete.
+Phase C Subagents, Phase D Skills/plugins/hooks/OAuth, Phase E Browser/CDP /
+Computer Use 2.0, Phase F Automations/notifications/SSH, and Phase G's CLI,
+App Server, SDK, VS Code adapter, GitHub Action and artifact Skills are now
+development-gated. External event producers, secure relay, live services and
+production distribution remain incomplete.
 “Phase A release-ready” means the scoped Local/Worktree
 slice is releasable; it does not rename the whole product a Codex-class
 replacement.
@@ -71,26 +75,47 @@ replacement.
 | Capability | Weight | Before | After | State | Evidence and tests | Known limitations |
 | --- | ---: | ---: | ---: | --- | --- | --- |
 | Agent Core and model providers | 12 | 12 | 12 | PARTIAL | Bounded Runtime, provider adapters, tool loop and regression suites | Long-run soak, broader model fixtures, structured event bus |
-| Permission, workspace, change safety | 8 | 8 | 8 | PARTIAL | Descriptor-safe I/O, scoped approvals, Undo/checkpoint/security suites; SSH identity now reaches local approval cards | Phase C-F additions await the combined gate; OS/backend generalization remains |
+| Permission, workspace, change safety | 8 | 8 | 8 | PARTIAL | Descriptor-safe I/O, scoped approvals, Undo/checkpoint/security suites; SSH identity reaches local approval cards; combined development gate passes | OS/backend generalization and live external acceptance remain |
 | Projects | 5 | 5 | 5 | COMPLETE | Projects 2.0 catalog/migration/UI/tests; location metadata remains one-folder scoped | Complete for documented local scope |
 | Tasks, concurrency, crash resume | 5 | 5 | 5 | PARTIAL | Per-Task Runtime, durable sessions, background navigation, transaction recovery; Task PTYs survive navigation and Agent Stop; Review Tasks persist a locked source contract and structured result | PTY process reattachment, browser/subagent structured resume and kill-stage drills |
 | Goals, context, compaction, memory | 4 | 4 | 4 | PARTIAL | Durable Goal/Todo/context bounds and tests | Searchable session/project/user memory and category budgets |
 | Managed worktrees and writable isolation | 6 | 1 | 5.5 | PARTIAL | Registry, leases, create/reuse/list/inspect/remove/cleanup/repair, location UI, lifecycle/E2E tests | No maintenance UI/scheduler; retained branches; orphan edge coverage |
-| Task handoff and Task fork | 4 | 0 | 3 | PARTIAL | Release-gated Local ↔ Worktree CAS/Fork plus unvalidated bounded Local/Worktree ↔ SSH migration and host rollback | Remote routes await the combined gate/live host; SSH-to-SSH and process-kill/disk-full matrix incomplete |
-| PTY terminal and task terminal sessions | 6 | 4 | 5.5 | PARTIAL | Release-gated local `forkpty`/Task Terminal plus an unvalidated bounded one-shot `remote_pty_run` | No old-process/scrollback reattach; no persistent remote input/resize/reconnect; non-Darwin and long soak remain |
+| Task handoff and Task fork | 4 | 0 | 3 | PARTIAL / DEVELOPMENT-GATED | Release-gated Local ↔ Worktree CAS/Fork plus development-gated bounded Local/Worktree ↔ SSH migration and host rollback | Remote routes await live-host acceptance; SSH-to-SSH and broader kill/storage matrix remain |
+| PTY terminal and task terminal sessions | 6 | 4 | 5.5 | PARTIAL / DEVELOPMENT-GATED | Local `forkpty`/Task Terminal plus bounded one-shot `remote_pty_run`; signal-crash test passes | No old-process/scrollback reattach; no persistent remote input/resize/reconnect; non-Darwin and long soak remain |
 | Git lifecycle and advanced Git | 5 | 4 | 5 | COMPLETE | Normal/pointer/submodule/detached layouts; closed status/diff/log/show/branch/commit plus fetch/pull/push/switch/hard-reset/merge/rebase/cherry-pick/stash/tag/remote API; 21/21 focused and integrated release gate | Remote effects lack local Undo; linked-metadata limitations are surfaced rather than hidden |
 | Review, inline comments, PR workflow | 5 | 2 | 4.5 | PARTIAL | Five complete typed sources, frozen Last Agent Turn, native file/unified/side-by-side pane, file/hunk Stage/Unstage/Revert, durable comments, isolated Review Tasks/findings, GitHub PR adapter/Keychain/tools and packaged UI smoke | GitHub only; no authorized live PR mutation E2E; provider-omitted patches remain unknowable |
-| Subagents and scheduler | 5 | 0 | 0 | IMPLEMENTED / UNVALIDATED | Durable child Tasks, seven tools, actor scheduler, budgets, scoped read/worktree isolation, structured aggregation, UI and focused tests | Credit remains gated until the requested final combined test/build/package run |
-| Skills | 4 | 0.5 | 0.5 | IMPLEMENTED / UNVALIDATED | Five-source `SKILL.md` discovery, precedence, `$skill`/description selection, transient instructions, loaded metadata, exact-ID resource tool, UI and focused tests | Credit remains gated; scripts intentionally do not auto-execute; broader hostile fixture/failure evidence awaits final gate |
-| Plugins, Hooks, OAuth connectors | 5 | 0 | 0 | IMPLEMENTED / UNVALIDATED | Manifest/manager, Local/Git/manifest/registry inspection, atomic lifecycle, permission UI, minimum-version gate, exact sandboxed executable tools, typed host-only hooks/policies/logs, PKCE and Keychain credential store | Credit remains gated; no hosted marketplace/signature transparency, OAuth refresh/device flow, or portable WASM sandbox |
-| MCP tools/resources/prompts | 4 | 4 | 4 | PARTIAL | STDIO/Streamable HTTP, tools/resources/prompts, Keychain/tests, and plugin ownership metadata/sync | Extension changes await combined gate; richer health/restart UX remains |
-| Browser and DOM/CDP automation | 5 | 1.5 | 1.5 | IMPLEMENTED / UNVALIDATED | Task-owned Chromium/CDP, isolated/persistent/attached profiles, tabs/navigation, bounded DOM/AX, screenshot, console/network/performance, downloads, annotations and focused tests | Credit and release claim remain gated on final suite, real-Chromium/package UI and soak validation; bounded selectors do not cover every dynamic/shadow-DOM app |
-| Computer Use | 2 | 2 | 2 | 2.0 IMPLEMENTED / UNVALIDATED | Opt-in allowlist, explicit safe-window selection, capture-bound bounded AX press/focus, background verification, scoped approval UI, secret refusal and focused tests | Release/packaged UI gate pending; no broad AX action surface or locked-screen execution |
-| Automations and notifications | 4 | 0 | 0 | IMPLEMENTED / UNVALIDATED | Durable scheduler/store/history, seven Task actions, dedicated recurring worktrees, six typed macOS notifications, Task click routing, and focused tests | Combined gate not run; external event producers, integration/failure/UI acceptance and soak remain |
-| Remote execution and control | 4 | 0 | 0 | PARTIAL / UNVALIDATED | SSH runner/store/Keychain, strict host receipt, 16 closed tools, remote approval identity, bounded migration, Settings/UI and focused tests | Live-host E2E, persistent remote PTY, richer Git/tool backends, secure relay and failure/soak gates remain |
-| CLI, App Server, SDK, IDE and GitHub | 4 | 0 | 0 | IMPLEMENTED / UNVALIDATED | Shared-runtime CLI, loopback authenticated v1 server/SSE, Swift SDK, thin VS Code adapter, user-backend GitHub Action, focused tests and packaging paths | Combined gate not run; process-local idempotency, live transport/failure timing, VS Code filesystem race and same-path CI visibility remain |
-| Release and cross-platform readiness | 3 | 3 | 3 | PARTIAL | Isolated full test/release build, signing, canonical ZIP modes/content verification and extracted-bundle verification | Developer ID/notarization/update/rollback/cross-platform |
+| Subagents and scheduler | 5 | 0 | 0 | DEVELOPMENT-GATED | Durable child Tasks, seven tools, actor scheduler, budgets, scoped read/worktree isolation, structured aggregation, UI and passing focused tests | Live high-concurrency/long-duration acceptance remains |
+| Skills | 4 | 0.5 | 0.5 | DEVELOPMENT-GATED | Five-source `SKILL.md` discovery, precedence, `$skill`/description selection, transient instructions, loaded metadata, exact-ID resource tool, UI and passing focused tests | Scripts intentionally do not auto-execute; live ecosystem breadth remains |
+| Plugins, Hooks, OAuth connectors | 5 | 0 | 0 | DEVELOPMENT-GATED | Manifest/manager, atomic lifecycle, permission UI, sandboxed tools, typed hooks, PKCE and Keychain store pass combined gate | No hosted marketplace/signature transparency, OAuth live-provider refresh/device flow, or portable WASM sandbox |
+| MCP tools/resources/prompts | 4 | 4 | 4 | PARTIAL / DEVELOPMENT-GATED | STDIO/Streamable HTTP, tools/resources/prompts, Keychain/tests, plugin ownership, and real child-process crash coverage | Richer health/restart UX and live-server breadth remain |
+| Browser and DOM/CDP automation | 5 | 1.5 | 1.5 | DEVELOPMENT-GATED | Task-owned Chromium/CDP, isolated/persistent/attached profiles, bounded surfaces, downloads, annotations, focused tests and crash cleanup | Real-Chromium/package UI and long soak remain; bounded selectors do not cover every dynamic/shadow-DOM app |
+| Computer Use | 2 | 2 | 2 | DEVELOPMENT-GATED | Opt-in allowlist, safe-window selection, capture-bound AX, verification, approval UI, secret refusal and passing focused tests | Live native packaged UI pending; no broad AX action surface or locked-screen execution |
+| Automations and notifications | 4 | 0 | 0 | DEVELOPMENT-GATED | Durable scheduler/store/history, seven Task actions, dedicated worktrees, typed notifications, routing and passing focused tests | External event producers, native UI acceptance and soak remain |
+| Remote execution and control | 4 | 0 | 0 | PARTIAL / DEVELOPMENT-GATED | SSH runner/store/Keychain, strict host receipt, 16 closed tools, migration, Settings/UI, focused and disconnect-boundary tests | Live-host E2E, persistent remote PTY, richer backends, secure relay and soak remain |
+| CLI, App Server, SDK, IDE and GitHub | 4 | 0 | 0 | DEVELOPMENT-GATED | Shared-runtime CLI, authenticated server/SSE, Swift SDK, VS Code 17/17, GitHub Action 14/14 and package paths | Process-local idempotency and live transport/hosted-runner acceptance remain |
+| Release and cross-platform readiness | 3 | 3 | 3 | PARTIAL / DEVELOPMENT-GATED | 660-test release gate, updater rollback/failure tests, ad-hoc signing, canonical ZIP, metadata and security audit | Developer ID/notarization/stapling, production update feed, non-Darwin backend and qualifying soak |
 | **Total** | **100** | **56** | **68.5** |  |  |  |
+
+The numeric total above remains the last formal production-credit score. It is
+not a feature-completion percentage. Development phase progress is 8/8; rows
+marked `DEVELOPMENT-GATED` intentionally retain their prior numeric points until
+their listed external production gates are satisfied.
+
+## Combined development gate evidence — 2026-09-20
+
+- Archive contract 6/6, soak contract 4/4, security-report contract 1/1.
+- Swift: 660 tests, one explicit environment skip, zero failures, 192.445 s.
+- Failure shard: exact 10/10 scenarios for force quit, disk full, network and
+  backend loss, MCP/Browser/PTY crash, Git lock, deleted worktree, and remote
+  disconnect.
+- VS Code Node tests 17/17; GitHub Action Node tests 14/14.
+- Optimized arm64 build 181.87 s; ad-hoc hardened signature, plist, canonical
+  archive, extracted app, SBOM/provenance and security audit passed.
+- Development ZIP SHA-256:
+  `43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
+- Not executed or claimed: Developer ID/notarization/stapling, production update
+  feed, real authorized external-service acceptance, native packaged UI smoke,
+  and qualifying 2h/8h/24h/multi-day soak.
 
 ## Trace findings
 
@@ -149,12 +174,12 @@ Runtime, terminal, process, or approval state.
 
 - Phase F now implements the three intentional V1 Remote routes—Local → SSH,
   managed Worktree → SSH, and SSH → the Task's original Local checkout—but
-  they remain unvalidated. SSH → SSH, SSH → arbitrary Local, and SSH → new
-  Worktree routes are not claimed.
+  only the controlled development gate has run. Live-host acceptance remains;
+  SSH → SSH, SSH → arbitrary Local, and SSH → new Worktree routes are not claimed.
 - Arbitrary ignored files are not migrated; only explicit Task-owned ignored
   paths are supplemental. Symlinks and special files fail closed.
-- Full process-kill, every-stage relaunch, disk-full and I/O fault injection are
-  not yet automated.
+- PTY signal crash, deleted worktree, Git lock and updater post-swap disk-full
+  rollback are automated; every-stage relaunch and broader I/O injection remain.
 - Cleanup/repair/list/inspect lack a general maintenance screen or scheduler.
 - Normal checkout removal retains a created branch; branch garbage collection
   is not implicit.
@@ -471,7 +496,7 @@ settings JSON or model context.
 - The final dedicated `AdvancedGitServiceTests` suite passed 21/21. A combined
   Advanced Git, persistence, handoff and worktree-lease gate passed 37/37.
 
-### PHASE D IMPLEMENTATION STATE — VALIDATION DEFERRED
+### PHASE D IMPLEMENTATION STATE — DEVELOPMENT-GATED
 
 - Skills now have bounded global/project/repository/nested/plugin discovery,
   deterministic precedence, explicit and automatic selection, transient
@@ -494,12 +519,12 @@ settings JSON or model context.
   transient instruction replay without Session pollution, terminal hook
   delivery, plugin lifecycle/path/version/permission rejection, hook visibility/
   failure/logging, OAuth PKCE/secret separation, and MCP ownership.
-- None of this section changes the 68.5 broad-parity score: the new sources and
-  tests have not yet run through the user-requested combined Phase C–H test,
-  production build, package, signature, and UI-smoke gate. See
+- This section's focused tests, combined Swift regression, optimized development
+  build, package and ad-hoc signature gate pass. It does not change the formal
+  68.5 production-credit score without live ecosystem acceptance. See
   [`PLUGIN_ARCHITECTURE.md`](PLUGIN_ARCHITECTURE.md).
 
-### PHASE F IMPLEMENTATION STATE — VALIDATION DEFERRED
+### PHASE F IMPLEMENTATION STATE — DEVELOPMENT-GATED / LIVE HOST PENDING
 
 - Automation now has a versioned atomic store, actor scheduler, durable
   occurrence claims, bounded run history, restart interruption recovery,
@@ -560,19 +585,19 @@ settings JSON or model context.
   input/resize/reconnect/scrollback transport. `.futureCloud` remains only a
   versioned fail-closed seam; no relay or hosted service is claimed.
 - Focused scheduler, notification, SSH store/transport/backend/tool and
-  migration tests are present but unexecuted. Real-host acceptance,
-  ViewModel/UI E2E, remote disconnect and every-stage handoff/worktree failure
-  injection, and Automation/SSH soak remain mandatory gates.
-- Phase F therefore adds no score yet. See
+  migration tests pass in the combined development gate. Deterministic remote-
+  disconnect injection also passes. Real-host acceptance, native UI E2E,
+  every-stage handoff/worktree injection, and Automation/SSH soak remain.
+- Phase F therefore adds no formal production score yet. See
   [`AUTOMATION_REMOTE_ARCHITECTURE.md`](AUTOMATION_REMOTE_ARCHITECTURE.md) for
   the ownership chains, truthfulness boundary, requirement matrix, and exact
   remaining work.
 
 ### TEST PLAN
 
-- Remaining Terminal hardening belongs to Phase H: crash/disk/storage injection,
-  multi-hour soak and non-Darwin backends. Relaunch semantics are explicitly
-  metadata-only and tested.
+- PTY signal crash and updater post-swap disk-full injection now pass; broader
+  storage injection, multi-hour soak and non-Darwin backends remain. Relaunch
+  semantics are explicitly metadata-only and tested.
 - Advanced Git retains only the live remote-mutation limitation and later
   hostile-config/failure-injection expansion.
 - Review retains crash/disk-full expansion and broader UI accessibility work;
@@ -581,9 +606,11 @@ settings JSON or model context.
 - PR: retain controlled provider tests and add an explicitly authorized
   push→create→structured-link→Review PR acceptance run outside deterministic
   unit tests.
-- Regression/release gate completed: 504 tests, 1 explicit skip, 0 failures;
-  5/5 archive tests; production build/sign/archive round-trip; packaged UI
-  smoke; artifact SHA-256 and size recorded.
+- Current development regression/release gate completed: 660 tests, 1 explicit
+  skip, 0 failures; 6/6 archive contract tests; optimized build/ad-hoc sign/
+  archive round-trip; SBOM/provenance/security audit; artifact SHA-256 recorded.
+  The earlier Phase B packaged UI smoke remains historical evidence; the current
+  Phase C-H gate did not rerun native UI smoke.
 
 ## Score change policy
 

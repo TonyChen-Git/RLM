@@ -719,9 +719,10 @@ validation remain later release-program work and are not claimed by Phase A.
   unstaged Review content, real PTY/ANSI output, pane continuity and clean quit.
 - `dist/LumaChat-1.4.0-arm64.zip` is 7,315,724 bytes; SHA-256 is
   `224d6942969670cd090797416bdcfb979a79387a827b68fa8c184d64d871b2b0`.
-  It is an ad-hoc-signed local artifact; Developer ID/notarization remain Phase
-  H. The Phase B artifact remains the latest validated release. Phase C source
-  integration is complete and awaits the requested combined Phase C–H gate.
+  It remains the historical Phase B artifact. The 2026-09-20 combined Phase
+  C–H development gate later passed 660 tests, optimized build/package,
+  metadata and security audit; Developer ID/notarization and live external
+  acceptance remain production gates.
 
 ### Phase C Subagent orchestration
 
@@ -736,7 +737,7 @@ validation remain later release-program work and are not claimed by Phase A.
   and network scope. Parent follow-ups are consumed only by the addressed child.
 - Validated structured results are collection-gated before a Parent Task may
   finish. Sidebar and detail UI expose the durable parent/child status tree.
-- The full design and deferred test matrix are documented in
+- The full design and passing development test matrix are documented in
   [`SUBAGENT_ARCHITECTURE.md`](SUBAGENT_ARCHITECTURE.md).
 
 ### Phase D extension runtime
@@ -767,5 +768,5 @@ validation remain later release-program work and are not claimed by Phase A.
   cannot remove manual MCP configuration.
 - Architecture, persistence, threat boundaries, focused test inventory, and
   honest limitations are documented in
-  [`PLUGIN_ARCHITECTURE.md`](PLUGIN_ARCHITECTURE.md). The tests/build remain
-  intentionally deferred to the combined Phase C–H gate.
+  [`PLUGIN_ARCHITECTURE.md`](PLUGIN_ARCHITECTURE.md). The tests/build pass in
+  the combined Phase C–H development gate.

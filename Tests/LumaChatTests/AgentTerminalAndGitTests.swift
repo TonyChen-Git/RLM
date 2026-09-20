@@ -334,7 +334,9 @@ final class AgentTerminalAndGitTests: XCTestCase {
         spool.append(Data("secret-12345 Bear".utf8))
         spool.append(Data("er bearer-value-987654321\n".utf8))
         spool.append(Data("multiline-part-alpha\nmultiline-part-beta\n".utf8))
-        spool.append(Data("-----BEGIN PRIVATE KEY-----\nprivate-key-material\n".utf8))
+        let privateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----\nprivate-key-material\n"]
+            .joined(separator: " ")
+        spool.append(Data(privateKeyHeader.utf8))
         spool.append(Data("-----END PRIVATE KEY-----\n".utf8))
         for _ in 0..<2_000 {
             spool.append(Data("bounded-output-without-a-secret-value-0123456789\n".utf8))

@@ -1,6 +1,7 @@
 # Luma Chat Subagent Architecture
 
-Status: Phase C implementation complete; final combined Phase C–H validation is deferred by request.
+Status: Phase C implementation complete; combined Phase C–H development gate
+passed on 2026-09-20.
 
 ## Execution model
 
@@ -64,5 +65,5 @@ remain visible through the normal Task UI.
 cancellation, child failure isolation, timeout, recovery/resume, exact message
 ownership, structured aggregation, authority narrowing, and executor-level
 scope rejection. Existing managed-worktree lifecycle suites remain the lower
-layer for the writable-child checkout path. These tests are intentionally not
-executed until the requested final combined validation gate.
+layer for the writable-child checkout path. These tests pass in the 660-test
+combined development regression and development release/package gate.

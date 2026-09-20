@@ -91,18 +91,14 @@ public enum LumaUpdateInstaller {
             throw LumaUpdateError.untrustedApplication("same-volume candidate changed during copy")
         }
 
-        guard Darwin.renameatx_np(
-            AT_FDCWD,
-            swapURL.path,
-            AT_FDCWD,
-            currentURL.path,
-            UInt32(RENAME_SWAP)
-        ) == 0 else {
-            throw LumaUpdateError.processFailure("atomic application swap failed: \(String(cString: strerror(errno)))")
-        }
-        journal.stage = .swapped
-        journal.updatedAt = Date()
-        try LumaUpdateFileSecurity.writeJSONAtomically(journal, to: journalURL)
+        try performAtomicSwapAndPersist(
+            currentURL: currentURL,
+            replacedApplicationURL: swapURL,
+            journal: &journal,
+            journalURL: journalURL,
+            swapApplications: atomicSwap,
+            persistJournal: LumaUpdateFileSecurity.writeJSONAtomically
+        )
 
         do {
             try launch(applicationURL: currentURL, installationID: request.installationID)
@@ -255,20 +251,76 @@ public enum LumaUpdateInstaller {
         try LumaUpdateFileSecurity.run("/usr/bin/open", arguments)
     }
 
+    /// Closes the transaction window between the physical application swap and
+    /// the durable `.swapped` journal record. If persistence fails after the
+    /// swap, the previous application is restored before the I/O error escapes.
+    /// The injected operations are internal so tests can exercise the exact
+    /// production state machine without replacing files in /Applications.
+    static func performAtomicSwapAndPersist(
+        currentURL: URL,
+        replacedApplicationURL: URL,
+        journal: inout LumaUpdateJournal,
+        journalURL: URL,
+        swapApplications: (URL, URL) throws -> Void,
+        persistJournal: (LumaUpdateJournal, URL) throws -> Void
+    ) throws {
+        try swapApplications(replacedApplicationURL, currentURL)
+        journal.stage = .swapped
+        journal.updatedAt = Date()
+        do {
+            try persistJournal(journal, journalURL)
+        } catch {
+            let persistenceError = error
+            do {
+                try swapApplications(replacedApplicationURL, currentURL)
+            } catch {
+                journal.stage = .failed
+                journal.failure = "automatic rollback could not restore the previous application"
+                journal.updatedAt = Date()
+                try? persistJournal(journal, journalURL)
+                throw LumaUpdateError.processFailure("automatic rollback failed")
+            }
+            journal.stage = .rolledBack
+            journal.failure = nil
+            journal.updatedAt = Date()
+            // The original persistence failure may be persistent (for example,
+            // ENOSPC). Physical rollback is the safety boundary, so recording
+            // the recovered state is deliberately best effort.
+            try? persistJournal(journal, journalURL)
+            throw persistenceError
+        }
+    }
+
+    private static func atomicSwap(_ firstURL: URL, _ secondURL: URL) throws {
+        guard Darwin.renameatx_np(
+            AT_FDCWD,
+            firstURL.path,
+            AT_FDCWD,
+            secondURL.path,
+            UInt32(RENAME_SWAP)
+        ) == 0 else {
+            throw LumaUpdateError.processFailure(
+                "atomic application swap failed: \(String(cString: strerror(errno)))"
+            )
+        }
+    }
+
     private static func rollbackAtomicSwap(
         currentURL: URL,
         replacedApplicationURL: URL,
         journal: inout LumaUpdateJournal,
         journalURL: URL
     ) throws {
-        guard FileManager.default.fileExists(atPath: replacedApplicationURL.path),
-              Darwin.renameatx_np(
-                AT_FDCWD,
-                replacedApplicationURL.path,
-                AT_FDCWD,
-                currentURL.path,
-                UInt32(RENAME_SWAP)
-              ) == 0 else {
+        guard FileManager.default.fileExists(atPath: replacedApplicationURL.path) else {
+            journal.stage = .failed
+            journal.failure = "automatic rollback could not restore the previous application"
+            journal.updatedAt = Date()
+            try? LumaUpdateFileSecurity.writeJSONAtomically(journal, to: journalURL)
+            throw LumaUpdateError.processFailure("automatic rollback failed")
+        }
+        do {
+            try atomicSwap(replacedApplicationURL, currentURL)
+        } catch {
             journal.stage = .failed
             journal.failure = "automatic rollback could not restore the previous application"
             journal.updatedAt = Date()

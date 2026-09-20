@@ -9,11 +9,13 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-16）**：Phase A/B 有既有 release gate 證據；Phase C–G、
-> 每模型參數設定與 Phase H release/security hardening 的程式與測試已在開發樹中，
-> 但依原開發順序，完整的 Phase C–H regression、build、package、UI smoke、
-> live backend/SSH 與 soak gate 尚待最後一次整合執行。因此目前 checkout 應視為
-> development snapshot，不是已 notarize 的 production release。
+> **目前狀態（2026-09-20）**：原始 master prompt 的 Phase A–H 開發範圍已完成，
+> Phase C–H 的合併 development gate 通過 660 項 Swift 測試（1 項環境性 skip、
+> 0 failures）、optimized arm64 build、ad-hoc hardened signing、canonical ZIP、
+> SBOM/provenance 與安全稽核。VS Code 17/17、GitHub Action 14/14 Node 測試也通過。
+> 目前仍是 development snapshot；沒有 Developer ID/notarization/stapling、正式
+> update feed、live backend/SSH/real-browser acceptance 或正式長時間 soak 證據，
+> 因此不是可對外宣稱的 production release。
 
 ## 能力總覽
 
@@ -60,12 +62,16 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 | --- | --- | --- |
 | A | Managed worktrees、`.git` pointer、handoff、writable isolation | Release gate 已有證據 |
 | B | 真 PTY、Task Terminal、Advanced Git、Review、PR | Release gate 已有證據（1.4.0 development artifact） |
-| C | Subagents 與 scheduler | 實作/測試存在，合併 gate 待執行 |
-| D | Skills、plugins、hooks、OAuth | 實作/測試存在，合併 gate 待執行 |
-| E | Browser/CDP、annotations、Computer Use 2.0 | 實作/測試存在，真實瀏覽器與 UI gate 待執行 |
-| F | Automations、notifications、SSH Remote Runner | 實作/測試存在，live-host、handoff、soak 待執行 |
-| G | CLI、App Server、SDK、VS Code、GitHub Action、artifact workflows | 實作/測試存在，compiler/Node/package gate 待執行 |
-| H | Release、update/rollback、sandbox/storage seam、cross-platform readiness | 硬化骨架與測試存在，production credentials 與最終驗證待執行 |
+| C | Subagents 與 scheduler | 實作完成；合併 Swift/release development gate 通過 |
+| D | Skills、plugins、hooks、OAuth | 實作完成；合併 Swift/release development gate 通過 |
+| E | Browser/CDP、annotations、Computer Use 2.0 | 實作與自動化 gate 通過；real-browser/native UI acceptance 仍屬外部 gate |
+| F | Automations、notifications、SSH Remote Runner | 實作與自動化 gate 通過；live SSH host、native UI 與長時間 soak 待外部驗證 |
+| G | CLI、App Server、SDK、VS Code、GitHub Action、artifact workflows | Swift、Node、schema 與 development package gate 通過 |
+| H | Release、update/rollback、sandbox/storage seam、cross-platform readiness | Development hardening gate 通過；production signing/notarization 與正式長時間 soak 待外部環境 |
+
+以原始八個開發 phase 計算，目前為 **8/8（100% implementation complete）**。
+這個百分比不等於 production Definition of Done；外部憑證、服務與長時間運行的
+驗收項目仍保留如下方限制。
 
 詳細的 requirement trace、分數與限制請見
 [`docs/CODEX_FULL_PARITY_AUDIT.md`](docs/CODEX_FULL_PARITY_AUDIT.md) 與
@@ -123,10 +129,15 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
-本 README 的提交時點尚未宣稱上述命令已通過；最後結果以實際 CI/local gate 與
-release notes 為準。Production release 需要 Developer ID、notary profile、
-Ed25519 update key、team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，
-並只能由明確設定的環境變數提供。
+2026-09-20 的 development gate 結果：archive contract 6/6、soak contract 4/4、
+security report contract 1/1、Swift 660 tests（1 skip、0 failures）、VS Code
+17/17、GitHub Action 14/14；optimized arm64 build、bundle/extracted-bundle、
+signature、plist、canonical ZIP、SBOM/provenance 與 security audit 均通過。生成的
+development ZIP SHA-256 為
+`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`。
+Production release 仍需要 Developer ID、notary profile、Ed25519 update key、
+team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確設定的
+環境變數提供。
 
 ## Persistence、profile 與 secrets
 
@@ -204,9 +215,11 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Known limitations
 
-- Phase C–H 的 focused tests 目前只是開發樹中的測試資產；完整合併 gate、長時間
-  soak、crash/disk-full/failure injection、live SSH/IDE/Action/backend acceptance
-  仍需在同一個乾淨環境執行。
+- Phase C–H 合併 development gate 與十種 deterministic failure scenarios 已
+  通過；2h/8h/24h/multi-day 正式 soak 尚未執行。Soak dry-run 只證明 profile、
+  test inventory 與精確 selector 契約有效，不代表時間門檻已達成。
+- live SSH host、真實 Ollama/OpenAI-compatible backend、真實 Chromium、native
+  Computer Use/UI、VS Code 與 GitHub hosted runner 仍需要各自授權環境的 acceptance。
 - Production Developer ID/notarization/update feed 未配置時只能做 development/
   ad-hoc build；不能把 development artifact 當成可自動更新的正式版本。
 - Remote runner 需要使用者管理的 SSH host、strict `known_hosts` 與 Keychain

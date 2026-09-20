@@ -1,7 +1,7 @@
 # Luma Chat Browser/CDP architecture
 
-Status: Phase E implementation complete in the development tree; final combined
-Phase C–H validation has not yet run.
+Status: Phase E implementation complete; focused Browser/annotation tests and
+the combined Phase C–H development gate passed on 2026-09-20.
 
 ## Runtime ownership
 
@@ -97,7 +97,7 @@ identity, viewport, trust metadata and timestamp. Cross-Task records fail closed
 The prompt projection is structured, bounded and explicitly untrusted; image
 bytes are never embedded in the JSON annotation.
 
-## Known limits before the final gate
+## Known limits after the development gate
 
 - Browser functionality requires an installed Chromium/Google Chrome compatible
   with the used CDP methods.
@@ -108,5 +108,6 @@ bytes are never embedded in the JSON annotation.
   Computer Use fallback.
 - Browser events and annotations survive only according to their documented
   Task/artifact stores; live CDP connections are not reattached after relaunch.
-- Final lint/typecheck/test/build, real-browser integration, packaged UI and
-  long-run gates are deferred to the requested combined Phase C–H validation.
+- Full Swift regression and development build/package gates pass. Real-browser
+  integration, packaged native UI acceptance and long-duration soak still
+  require an explicitly provisioned external environment.

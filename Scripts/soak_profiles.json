@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "profiles": {
     "2h": {
       "durationSeconds": 7200,
@@ -49,19 +49,19 @@
     },
     {
       "category": "failure-injection",
-      "filter": "PhaseHFailureInjectionTests"
+      "filterSource": "requiredFailureScenarios"
     }
   ],
-  "requiredFailureScenarios": [
-    "force-quit",
-    "disk-full",
-    "network-down",
-    "ollama-down",
-    "mcp-crash",
-    "browser-crash",
-    "pty-crash",
-    "git-lock",
-    "worktree-deleted",
-    "remote-disconnect"
-  ]
+  "requiredFailureScenarios": {
+    "force-quit": "AgentCoreTests/testInterruptedRunRecoveryPersistsTruthfulPausedState",
+    "disk-full": "PhaseHUpdateTests/testDiskFullAfterAtomicSwapRestoresPreviousApplication",
+    "network-down": "PhaseHFailureInjectionTests/testNetworkDownLeavesUpdateStateUnchanged",
+    "ollama-down": "PhaseHFailureInjectionTests/testOllamaDownSurfacesConnectionFailureWithoutModels",
+    "mcp-crash": "PhaseHFailureInjectionTests/testMCPProcessCrashFailsPendingRequestAndDisconnects",
+    "browser-crash": "PhaseHFailureInjectionTests/testBrowserCrashCleansEphemeralProfileAndSession",
+    "pty-crash": "PseudoTerminalSessionTests/testPTYSignalCrashReportsTerminationAndCompletes",
+    "git-lock": "PhaseHFailureInjectionTests/testGitIndexLockFailsWithoutMutatingIndexOrWorktree",
+    "worktree-deleted": "ManagedWorktreeServiceLifecycleTests/testRepairMarksExternallyDeletedCheckoutMissingWithoutReleasingLease",
+    "remote-disconnect": "PhaseHFailureInjectionTests/testRemoteDisconnectPropagatesStableConnectionFailure"
+  }
 }

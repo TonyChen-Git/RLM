@@ -23,6 +23,9 @@ import uuid
 
 MAX_LOG_BYTES = 16 * 1024 * 1024
 MAX_SHARD_SECONDS = 30 * 60
+FAILURE_SCENARIO_SELECTOR = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*Tests/test[A-Za-z0-9_]+$"
+)
 stopping = False
 
 
@@ -65,27 +68,59 @@ def atomic_json(path: Path, value: object) -> None:
 def load_contract(project: Path) -> dict[str, object]:
     path = project / "Scripts" / "soak_profiles.json"
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schemaVersion") != 1:
+    if value.get("schemaVersion") != 2:
         raise ValueError("unsupported soak profile schema")
     profiles = value.get("profiles")
     shards = value.get("shards")
     failures = value.get("requiredFailureScenarios")
-    if not isinstance(profiles, dict) or not isinstance(shards, list) or not isinstance(failures, list):
+    if not isinstance(profiles, dict) or not isinstance(shards, list) or not isinstance(failures, dict):
         raise ValueError("malformed soak profile contract")
     required_categories = {
         "agent", "pty", "subagent", "automation", "browser",
         "ollama-reconnect", "task-switching", "failure-injection",
     }
-    categories = {item.get("category") for item in shards if isinstance(item, dict)}
-    if categories != required_categories:
+    if len(shards) != len(required_categories) or not all(
+        isinstance(item, dict) for item in shards
+    ):
+        raise ValueError("soak shard coverage is incomplete or duplicated")
+    categories = [item.get("category") for item in shards]
+    if set(categories) != required_categories or len(set(categories)) != len(categories):
         raise ValueError("soak shard coverage is incomplete or duplicated")
     required_failures = {
         "force-quit", "disk-full", "network-down", "ollama-down", "mcp-crash",
         "browser-crash", "pty-crash", "git-lock", "worktree-deleted", "remote-disconnect",
     }
-    if set(failures) != required_failures:
+    if set(failures.keys()) != required_failures:
         raise ValueError("failure-injection coverage is incomplete")
+    selectors = list(failures.values())
+    if len(set(selectors)) != len(selectors) or not all(
+        isinstance(selector, str) and FAILURE_SCENARIO_SELECTOR.fullmatch(selector)
+        for selector in selectors
+    ):
+        raise ValueError("failure-injection selectors must be unique exact XCTest selectors")
+    for shard in shards:
+        category = shard["category"]
+        if category == "failure-injection":
+            if shard.get("filterSource") != "requiredFailureScenarios" or "filter" in shard:
+                raise ValueError("failure-injection shard must resolve the scenario mapping")
+        else:
+            pattern = shard.get("filter")
+            if not isinstance(pattern, str) or not pattern:
+                raise ValueError(f"soak category {category} has no test filter")
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise ValueError(f"soak category {category} has an invalid test filter") from error
     return value
+
+
+def resolved_shard_filter(
+    shard: dict[str, object],
+    failures: dict[str, str],
+) -> str:
+    if shard["category"] != "failure-injection":
+        return str(shard["filter"])
+    return "(?:" + "|".join(re.escape(selector) for selector in failures.values()) + ")"
 
 
 def project_environment(project: Path, run_root: Path) -> dict[str, str]:
@@ -155,7 +190,8 @@ def assert_filters_exist(
     project: Path,
     run_root: Path,
     environment: dict[str, str],
-    shards: list[dict[str, str]],
+    shards: list[dict[str, object]],
+    failures: dict[str, str],
 ) -> None:
     inventory_log = run_root / "test-inventory.log"
     status = run_process(
@@ -167,8 +203,19 @@ def assert_filters_exist(
     if status != 0:
         raise RuntimeError("Swift test inventory failed")
     inventory = inventory_log.read_text(encoding="utf-8", errors="replace")
+    inventory_lines = [line.strip() for line in inventory.splitlines() if line.strip()]
+    for scenario, selector in failures.items():
+        matches = [
+            line for line in inventory_lines
+            if line == selector or line.endswith("." + selector)
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"failure scenario {scenario} selector matched {len(matches)} tests"
+            )
     for shard in shards:
-        if re.search(shard["filter"], inventory) is None:
+        pattern = resolved_shard_filter(shard, failures)
+        if re.search(pattern, inventory) is None:
             raise RuntimeError(f"no tests match soak category {shard['category']}")
 
 
@@ -187,10 +234,19 @@ def main() -> int:
     official_duration = int(profile["durationSeconds"])
     if options.duration_seconds is not None and not options.development_override:
         raise ValueError("duration override requires --development-override")
-    duration = options.duration_seconds or official_duration
+    duration = (
+        options.duration_seconds
+        if options.duration_seconds is not None
+        else official_duration
+    )
     if duration <= 0:
         raise ValueError("duration must be positive")
-    qualifying = duration >= official_duration and not options.dry_run
+    qualifying = (
+        duration >= official_duration
+        and options.duration_seconds is None
+        and not options.development_override
+        and not options.dry_run
+    )
 
     soak_root = project / "tmp" / "soak"
     soak_root.mkdir(parents=True, exist_ok=True)
@@ -226,6 +282,15 @@ def main() -> int:
         (run_root / child).mkdir(parents=True, exist_ok=True)
     environment = project_environment(project, run_root)
     shards = contract["shards"]
+    failures = contract["requiredFailureScenarios"]
+    assert_filters_exist(
+        options.swift,
+        project,
+        run_root,
+        environment,
+        shards,
+        failures,
+    )
     if options.dry_run:
         state["status"] = "dry-run"
         state["finishedAt"] = utc_now()
@@ -234,7 +299,6 @@ def main() -> int:
         print(run_root)
         return 0
 
-    assert_filters_exist(options.swift, project, run_root, environment, shards)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
     deadline = time.monotonic() + duration
@@ -244,6 +308,7 @@ def main() -> int:
             if stopping or time.monotonic() >= deadline:
                 break
             category = shard["category"]
+            shard_filter = resolved_shard_filter(shard, failures)
             log = run_root / "logs" / f"cycle-{cycle:06d}-{category}.log"
             status = run_process(
                 [
@@ -252,7 +317,7 @@ def main() -> int:
                         run_root,
                         "test",
                         "--jobs", "2",
-                        "--filter", shard["filter"],
+                        "--filter", shard_filter,
                     ),
                 ],
                 project,

@@ -1,9 +1,9 @@
 import CryptoKit
 import Foundation
-import LumaUpdateCore
 import XCTest
 
 @testable import LumaChat
+@testable import LumaUpdateCore
 
 private final class InMemorySecureStorageBackend: SecureStorageBackend, @unchecked Sendable {
     private let lock = NSLock()
@@ -32,6 +32,98 @@ private final class InMemorySecureStorageBackend: SecureStorageBackend, @uncheck
 }
 
 final class PhaseHUpdateTests: XCTestCase {
+    func testDiskFullAfterAtomicSwapRestoresPreviousApplication() throws {
+        let root = fixtureRoot("swap-journal-disk-full")
+        let currentURL = root.appendingPathComponent("LumaChat.app", isDirectory: true)
+        let replacedURL = root.appendingPathComponent(".replacement.app", isDirectory: true)
+        let journalURL = root.appendingPathComponent("journal.json", isDirectory: false)
+        var installedVersion = "old"
+        var replacementVersion = "new"
+        var swapCount = 0
+        var persistedStages: [LumaUpdateJournalStage] = []
+        var journal = sampleJournal(
+            currentURL: currentURL,
+            candidateURL: replacedURL,
+            journalURL: journalURL
+        )
+
+        XCTAssertThrowsError(try LumaUpdateInstaller.performAtomicSwapAndPersist(
+            currentURL: currentURL,
+            replacedApplicationURL: replacedURL,
+            journal: &journal,
+            journalURL: journalURL,
+            swapApplications: { first, second in
+                XCTAssertEqual(first, replacedURL)
+                XCTAssertEqual(second, currentURL)
+                swap(&installedVersion, &replacementVersion)
+                swapCount += 1
+            },
+            persistJournal: { value, url in
+                XCTAssertEqual(url, journalURL)
+                persistedStages.append(value.stage)
+                if value.stage == .swapped {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+                }
+            }
+        )) { error in
+            let nsError = error as NSError
+            XCTAssertEqual(nsError.domain, NSPOSIXErrorDomain)
+            XCTAssertEqual(nsError.code, Int(ENOSPC))
+        }
+
+        XCTAssertEqual(swapCount, 2)
+        XCTAssertEqual(installedVersion, "old")
+        XCTAssertEqual(replacementVersion, "new")
+        XCTAssertEqual(journal.stage, .rolledBack)
+        XCTAssertEqual(persistedStages, [.swapped, .rolledBack])
+    }
+
+    func testJournalAndReverseSwapFailureRecordsFailedTransaction() throws {
+        let root = fixtureRoot("swap-and-rollback-failure")
+        let currentURL = root.appendingPathComponent("LumaChat.app", isDirectory: true)
+        let replacedURL = root.appendingPathComponent(".replacement.app", isDirectory: true)
+        let journalURL = root.appendingPathComponent("journal.json", isDirectory: false)
+        var swapCount = 0
+        var persistedStages: [LumaUpdateJournalStage] = []
+        var journal = sampleJournal(
+            currentURL: currentURL,
+            candidateURL: replacedURL,
+            journalURL: journalURL
+        )
+
+        XCTAssertThrowsError(try LumaUpdateInstaller.performAtomicSwapAndPersist(
+            currentURL: currentURL,
+            replacedApplicationURL: replacedURL,
+            journal: &journal,
+            journalURL: journalURL,
+            swapApplications: { _, _ in
+                swapCount += 1
+                if swapCount == 2 {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+            },
+            persistJournal: { value, _ in
+                persistedStages.append(value.stage)
+                if value.stage == .swapped {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+                }
+            }
+        )) { error in
+            XCTAssertEqual(
+                error as? LumaUpdateError,
+                .processFailure("automatic rollback failed")
+            )
+        }
+
+        XCTAssertEqual(swapCount, 2)
+        XCTAssertEqual(journal.stage, .failed)
+        XCTAssertEqual(
+            journal.failure,
+            "automatic rollback could not restore the previous application"
+        )
+        XCTAssertEqual(persistedStages, [.swapped, .failed])
+    }
+
     func testSignedEnvelopeVerifiesExactPayloadAndRejectsTamperingAndUnknownFields() throws {
         let privateKey = Curve25519.Signing.PrivateKey()
         let release = sampleRelease()
@@ -221,6 +313,32 @@ final class PhaseHUpdateTests: XCTestCase {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
+    }
+
+    private func sampleJournal(
+        currentURL: URL,
+        candidateURL: URL,
+        journalURL: URL
+    ) -> LumaUpdateJournal {
+        LumaUpdateJournal(
+            operation: .install,
+            installationID: UUID(),
+            stage: .backupCreated,
+            fromVersion: "1.4.0",
+            fromBuild: 7,
+            toVersion: "1.5.0",
+            toBuild: 8,
+            currentApplicationPath: currentURL.path,
+            candidateApplicationPath: candidateURL.path,
+            backupApplicationPath: currentURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("LumaChat-backup.app", isDirectory: true).path,
+            confirmationPath: journalURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("confirmed.txt", isDirectory: false).path,
+            expectedBundleIdentifier: "com.lumachat.desktop",
+            expectedTeamIdentifier: "ABCDE12345"
+        )
     }
 
     private func fixtureRoot(_ name: String) -> URL {

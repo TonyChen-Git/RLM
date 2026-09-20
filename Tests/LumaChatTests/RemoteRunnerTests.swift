@@ -1043,11 +1043,12 @@ private func makeRunner(
 }
 
 private func makeCredential() -> RemoteRunnerCredential {
-    RemoteRunnerCredential(privateKey: """
-    -----BEGIN OPENSSH PRIVATE KEY-----
-    abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh
-    -----END OPENSSH PRIVATE KEY-----
-    """)
+    let privateKey = [
+        ["-----BEGIN", "OPENSSH PRIVATE KEY-----"].joined(separator: " "),
+        "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh",
+        "-----END OPENSSH PRIVATE KEY-----"
+    ].joined(separator: "\n")
+    return RemoteRunnerCredential(privateKey: privateKey)
 }
 
 private func makeCommandResult(

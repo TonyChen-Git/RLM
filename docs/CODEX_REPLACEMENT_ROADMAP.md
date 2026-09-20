@@ -1,7 +1,7 @@
 # Luma Chat Codex Replacement Roadmap
 
-Last audited: 2026-09-14 after Phase G implementation and before the combined Phase C-H gate;
-Phases C-G remain unscored until validation
+Last audited: 2026-09-20 after the combined Phase C-H development gate;
+all eight implementation phases are complete, with production gates remaining
 
 ## Definition of 100
 
@@ -24,29 +24,38 @@ Points are awarded only when the implementation, persistence/recovery behavior,
 UI, automated tests, and release packaging all pass. A mock screen or an
 unverified happy path earns no points.
 
-## Audited local-workflow score after Phase B
+## Formal production-credit score
 
 | Capability | Points | Current | Remaining release gates |
 | --- | ---: | ---: | --- |
 | Local agent core and safety | 25 | 23 | Long-run soak tests; broader model compatibility fixtures |
 | Projects, tasks, and concurrency | 20 | 20 | Complete for the documented local Projects 2.0 scope; retain regression coverage |
 | Terminal, Git, review, and worktrees | 20 | 20 | Phase B release-gated the PTY/pane, closed Advanced Git API, complete Review sources/actions/comments/Review Agent and provider-neutral PR seam with GitHub |
-| Goals, extensions, subagents, automation | 20 | 9 | Phase C Subagents, Phase D extensions, and Phase F Automations/notifications are implemented but retain zero release credit until the combined gate; event producers and soak remain |
-| Product and release completeness | 15 | 12 | Phase F SSH and Phase G headless/integration surfaces are present but unvalidated; Developer ID/notarization/update, secure relay and cross-platform gates remain |
-| **Total** | **100** | **84** | **Later phases below remain** |
+| Goals, extensions, subagents, automation | 20 | 9 | Phase C/D/F automated development gates pass; live integrations, external event producers and long soak remain |
+| Product and release completeness | 15 | 12 | Phase F/G/H development gates pass; Developer ID/notarization/update feed, live services, secure relay and cross-platform gates remain |
+| **Total** | **100** | **84** | **Formal points intentionally unchanged by development-only evidence** |
 
 This score is intentionally stricter than feature counting. Existing filesystem,
 terminal/process, Git, Todo, image, web, MCP, provider, permission, checkpoint,
 undo, concurrent-task, and release-test paths retain their credit only while the
 full regression suite remains green.
 
-Phase B adds five release-gated points. The four candidate Review gaps are
+Phase B added five formally release-gated points. The four candidate Review gaps are
 closed, Advanced Git passed its final focused suite, and the complete regression,
 production package/sign/archive and packaged UI gates passed. The released
-local-workflow score is therefore **84/100**. The latest validated artifact is
-`LumaChat-1.4.0-arm64.zip`.
+local-workflow score therefore remains **84/100**. This numeric score is not the
+implementation percentage: the master program is now 8/8 phases implemented,
+but production-only evidence is not converted into points speculatively.
 
-## Unscored Browser/CDP and Computer Use 2.0
+The 2026-09-20 combined development gate passed 660 Swift tests with one
+environment skip and zero failures, VS Code 17/17, GitHub Action 14/14, the
+10/10 exact failure shard, optimized arm64 build, ad-hoc signing, canonical ZIP,
+SBOM/provenance and security audit. The development ZIP SHA-256 is
+`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
+Developer ID/notarization, live external acceptance and qualifying long soak
+were not run or claimed.
+
+## Development-gated Browser/CDP and Computer Use 2.0
 
 The development tree now has a separate Task-owned Chromium/CDP layer with
 isolated temporary and named persistent profiles plus explicit loopback-only
@@ -86,8 +95,9 @@ pixel automation cannot classify, so they remain inappropriate for bypassing
 structured network/terminal policy. Structured tools and
 connectors remain preferred when they are available.
 
-Computer Use 2.0 still adds no points by itself. The audited total is now
-**84/100** after the separately release-gated Phase A and Phase B slices. A stricter comparison
+Computer Use 2.0 still adds no formal production points by itself. The audited
+total remains **84/100**, while its focused and combined development gates now
+pass. A stricter comparison
 against the full current Codex desktop/CLI product is the separate
 `CODEX_FULL_PARITY_AUDIT.md` matrix and must not be inferred from this score.
 
@@ -166,7 +176,7 @@ against the full current Codex desktop/CLI product is the separate
 See [`TERMINAL_ARCHITECTURE.md`](TERMINAL_ARCHITECTURE.md) for the implemented
 transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
 
-### Phase C — Subagents (implementation complete, validation deferred)
+### Phase C — Subagents (implementation and development gate complete)
 
 - Durable child `AgentSession` identity, parent binding, goal/context/scope,
   complete budget/timestamp/status/result records and restart recovery.
@@ -178,10 +188,10 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
 - Validated structured aggregation and a parent completion invariant requiring
   all outstanding results to be collected.
 - Sidebar hierarchy and Task-level live status/navigation/cancel/resume UI.
-- Focused tests are written but deliberately await the final Phase C–H
-  validation/build gate. See [`SUBAGENT_ARCHITECTURE.md`](SUBAGENT_ARCHITECTURE.md).
+- Focused tests pass in the final Phase C–H development validation/build gate.
+  See [`SUBAGENT_ARCHITECTURE.md`](SUBAGENT_ARCHITECTURE.md).
 
-### Phase D — Extensions (implementation complete, validation deferred)
+### Phase D — Extensions (implementation and development gate complete)
 
 - Bounded global/project/repository/nested/plugin `SKILL.md` discovery,
   precedence, explicit `$skill` and description selection, transient prompt
@@ -198,11 +208,10 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   Keychain-only credentials. Plugin MCP declarations have explicit ownership;
   manual MCP configurations remain independent.
 - Extensions Settings and Task loaded-Skill presentation share the live
-  extension state. Focused tests are written but deliberately await the final
-  combined validation/build gate. See
+  extension state. Focused tests pass in the combined development gate. See
   [`PLUGIN_ARCHITECTURE.md`](PLUGIN_ARCHITECTURE.md).
 
-### Phase F — Automations, notifications, and SSH (implementation present, validation deferred)
+### Phase F — Automations, notifications, and SSH (development-gated; live host pending)
 
 - Added a versioned atomic Automation store and actor scheduler with durable
   occurrence claims, one-time/interval/five-field-cron/event schedules, missed-
@@ -233,14 +242,15 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   recovery snapshots plus the pinned baseline/remote authority; relaunch
   recovery compares the persisted Task binding with the exact source/destination
   and never overwrites a third state. Pending evidence blocks the runner too.
-- Remaining Phase F gates are the combined test/build/package run, real SSH-host
-  acceptance, ViewModel/UI handoff and Automation E2E, disconnect/every-stage
-  failure injection, and soak. GitHub/Slack/Gmail/filesystem/webhook producers,
+- The combined test/build/package run and deterministic remote-disconnect
+  boundary test pass. Remaining Phase F gates are real SSH-host acceptance,
+  ViewModel/UI handoff and Automation E2E, broader transition failure injection,
+  and long soak. GitHub/Slack/Gmail/filesystem/webhook producers,
   persistent remote PTY and a secure relay are not implemented.
 - `.futureCloud` remains only a truthful fail-closed protocol seam. See
   [`AUTOMATION_REMOTE_ARCHITECTURE.md`](AUTOMATION_REMOTE_ARCHITECTURE.md).
 
-### Phase G — CLI, App Server, SDK, integrations, and artifact workflows (implementation present, validation deferred)
+### Phase G — CLI, App Server, SDK, integrations, and artifact workflows (development-gated)
 
 - Added the `lumachat` launcher and shared-runtime `chat`, `agent`, `exec`,
   `resume`, `tasks`, `projects`, `skills`, `mcp`, and `plugins` commands. Help,
@@ -268,8 +278,8 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   PDF, document, spreadsheet, presentation, image, visualization, and site.
   Installation, enablement, and permission revocation share the normal plugin
   state; release packaging checks the exact manifest and Skill payload.
-- Focused Swift, Node, schema, packaging, and integration tests are written but
-  deliberately await the requested final combined validation gate. Process-local
+- Focused Swift, Node, schema, packaging, and integration tests pass in the
+  combined development gate. Process-local
   idempotency, count-bounded rather than aggregate-byte-bounded live SSE queues,
   VS Code filesystem races, and same-machine App Server workspace visibility
   remain documented limitations. See [`CLI_ARCHITECTURE.md`](CLI_ARCHITECTURE.md)
@@ -303,9 +313,10 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   Goal/Todo and checkpoint provenance without sharing Runtime/process state.
 - Parallel writable tasks are isolated by construction and location is surfaced
   in Sidebar and Detail actions.
-- The Phase F development tree adds bounded explicit Local/Worktree → SSH and
-  SSH → original-Local migration with durable journal recovery, but it remains
-  unvalidated and does not add SSH-to-SSH or arbitrary alternate-Local routes.
+- Phase F adds bounded explicit Local/Worktree → SSH and SSH → original-Local
+  migration with durable journal recovery and passing development tests, but
+  live-host acceptance remains and it does not add SSH-to-SSH or arbitrary
+  alternate-Local routes.
   General maintenance UI/scheduled cleanup, full
   process-kill/disk-full fault drills, and arbitrary ignored-file policy remain.
 

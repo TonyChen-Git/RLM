@@ -1,14 +1,17 @@
 # Luma Chat — Unreleased development notes
 
-Checkpoint date: 2026-09-10
+Checkpoint date: 2026-09-20
 
-Status: Phase B is release-ready as Luma Chat 1.4.0 / build 7. Detailed evidence
-is in
+Status: the Phase A–H development implementation and combined development
+release gate are complete. This is not a production release: Developer ID,
+notarization/stapling, production update credentials, live external acceptance,
+and the qualifying long-duration soak remain external gates.
+
+The current development-gate artifact is `LumaChat-1.4.0-arm64.zip`, SHA-256
+`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
+It is ad-hoc signed and has not been published or used to rewrite the existing
+historical tag. Phase B's earlier evidence remains recorded in
 [`RELEASE_NOTES_1.4.0.md`](RELEASE_NOTES_1.4.0.md).
-
-The validated artifact is `dist/LumaChat-1.4.0-arm64.zip` (7,315,724 bytes,
-SHA-256 `224d6942969670cd090797416bdcfb979a79387a827b68fa8c184d64d871b2b0`).
-It is ad-hoc signed and has not been published or tagged.
 
 ## Phase C — Subagents
 
@@ -23,8 +26,8 @@ It is ad-hoc signed and has not been published or tagged.
 - Added Sidebar parent/child grouping and a live Subagent status surface with
   navigate/cancel/resume actions.
 - Added focused scheduler, aggregation, recovery, timeout, cancellation,
-  context-ownership, provider-overload, and isolation tests. Per the combined
-  development request, execution is deferred to the final Phase C–H gate.
+  context-ownership, provider-overload, and isolation tests. They now pass in
+  the combined Phase C–H development gate.
 
 ## Per-model parameters — priority feature
 
@@ -40,8 +43,7 @@ It is ad-hoc signed and has not been published or tagged.
   request encoding. Agent freezes it per run and reuses it for retry, resume,
   output continuation and every tool-call round.
 - Added focused migration, isolation, reset, persistence, request-omission and
-  multi-turn Agent profile tests. Execution remains deferred to the final
-  combined gate requested for all development phases.
+  multi-turn Agent profile tests. All pass in the combined development gate.
 
 ## Phase D — Skills, plugins, hooks, and OAuth connectors
 
@@ -74,8 +76,8 @@ It is ad-hoc signed and has not been published or tagged.
   configurations and their existing Keychain handling.
 - Added the Extensions management surface plus focused Skill, runtime
   transient-injection/terminal-hook, plugin/hook, OAuth, and MCP ownership
-  tests. Test/build execution remains deferred to the
-  requested final combined Phase C–H gate. See
+  tests. Test/build execution now passes in the combined Phase C–H development
+  gate. See
   [`PLUGIN_ARCHITECTURE.md`](PLUGIN_ARCHITECTURE.md).
 
 ## Phase E — Browser/CDP and Computer Use 2.0
@@ -121,8 +123,8 @@ It is ad-hoc signed and has not been published or tagged.
   secret-like typing refusal at both tool and service boundaries, secure focused-
   field refusal, Screen Recording/Accessibility checks, screenshot-backed
   approval, and explicit `External Side Effect · Not Undoable` presentation.
-  Focused tests were added but not executed under
-  the combined Phase C–H validation deferral.
+  Focused tests now pass in the combined Phase C–H development gate; real
+  browser/native UI acceptance remains an external environment gate.
 
 ## Phase F — Automations, notifications, and SSH Remote Runner
 
@@ -179,9 +181,10 @@ It is ad-hoc signed and has not been published or tagged.
   reconnect, or scrollback contract. `.futureCloud` is still only a fail-closed
   seam: no secure relay, hosted runner, or cloud fallback is claimed.
 - Focused Automation, notification, SSH store/transport/backend/tool, and
-  migration tests have been added but not executed. The combined regression/
-  build/package gate, live SSH-host acceptance, UI/ViewModel E2E, disconnect and
-  every-stage failure injection, and soak remain pending. See
+  migration tests pass in the combined regression/build/package gate. A real
+  remote-disconnect failure is covered through the injected transport boundary;
+  live SSH-host acceptance, native UI E2E and long-duration soak remain pending.
+  See
   [`AUTOMATION_REMOTE_ARCHITECTURE.md`](AUTOMATION_REMOTE_ARCHITECTURE.md).
 
 ## Phase G — CLI, App Server, SDK, integrations, and artifact workflows
@@ -209,9 +212,41 @@ It is ad-hoc signed and has not been published or tagged.
   document, spreadsheet, presentation, image, visualization, and site Skills.
   All seven use the normal plugin permission/state lifecycle and are copied and
   byte-compared by release packaging.
-- Added focused Swift/Node/schema/packaging tests for these paths. Per the
-  requested sequencing, no test, lint, typecheck, build, or packaging command
-  has run yet; validation remains part of the final combined Phase C-H gate.
+- Added focused Swift/Node/schema/packaging tests for these paths. The combined
+  Swift gate passes, along with VS Code 17/17 and GitHub Action 14/14 Node tests
+  and the development package round trip.
+
+## Phase H — Release, update/rollback, soak, and security hardening
+
+- Added a signed update-envelope verifier, exact manifest/archive validation,
+  helper-based installation, durable transaction journal, reverse-swap rollback,
+  downgrade/architecture/notarization policy, and fail-closed update state.
+- Closed the post-swap disk-full window: if persisting the `swapped` journal
+  fails after the physical rename exchange, the installer first restores the
+  previous application. If that reverse swap also fails, the durable state is
+  marked `failed` best-effort and the error reports that automatic rollback
+  failed instead of claiming success.
+- Added deterministic failure coverage for force quit, post-swap disk full,
+  network down, Ollama down, MCP process crash, Browser process crash, PTY
+  signal crash, Git index lock, deleted worktree, and remote disconnect. The
+  failure shard resolves exact XCTest selectors and passes 10/10.
+- Upgraded the soak contract to require eight exact unique categories and all
+  ten named failure scenarios. Dry-run now inventories the compiled test bundle
+  and rejects missing, duplicate, regex, or ambiguous selectors; development
+  duration overrides are explicitly non-qualifying.
+- Security-report persistence now creates its temporary file beside the final
+  report so the atomic replace remains valid when project staging is on another
+  filesystem. Release archive fixtures that deliberately contain AppleDouble
+  metadata are retained in a dedicated project-`tmp` tree instead of poisoning
+  the next release staging run.
+- The 2026-09-20 development gate passed archive contract 6/6, soak contract
+  4/4, security-report contract 1/1, and 660 Swift tests with one explicit
+  environment skip and zero failures in 192.445 seconds. The optimized arm64
+  build completed in 181.87 seconds; ad-hoc hardened signing, plist, canonical
+  ZIP, extracted-app, SBOM/provenance, and static/package security audit passed.
+- The security audit inspected 355 source files / 9,000,247 bytes and 15
+  application files / 36,144,425 bytes; `get-task-allow` and update trust were
+  both disabled for this development artifact.
 
 ## Candidate scope
 
@@ -241,12 +276,11 @@ It is ad-hoc signed and has not been published or tagged.
   real unstaged Review content, real PTY/ANSI output, panel continuity and clean
   quit.
 
-## Work continuing after 1.4.0
+## Remaining external production gates
 
-The master parity program has eight phases, A-H. A and B are release-gated;
-Phases C-G are present in the development tree with combined validation
-deferred. Phase F still has the explicit live-host, failure-injection, UI-E2E
-and soak gates listed above, while Phase G still needs its compiler, Node,
-schema, packaged launcher and live transport gates. Work now continues with
-Phase H production signing, notarization, update/rollback, cross-platform
-preparation, soak and security audit.
+The master parity program's eight development phases, A-H, are implemented and
+have passed the combined development gate. Production completion still requires
+a real Developer ID identity, notarization/stapling, production update signing
+key/feed/archive URLs, real authorized SSH/backend/browser/native-UI acceptance,
+and qualifying 2h/8h/24h/multi-day soak runs. The development artifact must not
+be presented as notarized, published, or production-update capable.
