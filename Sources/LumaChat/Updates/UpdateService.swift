@@ -49,6 +49,8 @@ actor LumaUpdateService {
     }
 
     func check() async throws -> LumaUpdateCheckResult {
+        try requireNoBlockingTransaction()
+        var state = try stateStore.loadState()
         var request = URLRequest(url: configuration.feedURL)
         request.httpMethod = "GET"
         request.setValue("application/vnd.lumachat.update.v1+json", forHTTPHeaderField: "Accept")
@@ -67,7 +69,6 @@ actor LumaUpdateService {
         guard verified.release.teamIdentifier == configuration.teamIdentifier else {
             throw LumaUpdateError.invalidTeamIdentifier
         }
-        var state = try stateStore.loadState()
         let comparison = try compareWithCurrent(verified.release)
         if comparison == .orderedDescending {
             state.availableRelease = verified.release
@@ -82,6 +83,7 @@ actor LumaUpdateService {
     }
 
     func downloadAndPrepare() async throws -> LumaPreparedUpdate {
+        try requireNoBlockingTransaction()
         var state = try stateStore.loadState()
         guard let release = state.availableRelease,
               let encodedEnvelope = state.availableEnvelopeBase64,
@@ -168,10 +170,12 @@ actor LumaUpdateService {
     }
 
     func launchPreparedInstall() throws -> UUID {
+        try requireNoBlockingTransaction()
         let state = try stateStore.loadState()
         guard let prepared = state.preparedUpdate,
               prepared.release.teamIdentifier == configuration.teamIdentifier,
               prepared.release.bundleIdentifier == configuration.bundleIdentifier,
+              try compareWithCurrent(prepared.release) == .orderedDescending,
               Date().timeIntervalSince(prepared.createdAt) <= 24 * 60 * 60 else {
             throw LumaUpdateError.invalidInstallRequest
         }
@@ -231,6 +235,9 @@ actor LumaUpdateService {
     }
 
     func launchRollback() throws -> UUID {
+        // Rollback remains available after a terminal transaction, but it must
+        // never destroy the only journal describing an unresolved install.
+        try requireNoBlockingTransaction()
         let state = try stateStore.loadState()
         guard let knownGood = state.lastKnownGood else {
             throw LumaUpdateError.invalidInstallRequest
@@ -296,6 +303,17 @@ actor LumaUpdateService {
         try stateStore.saveJournal(launched)
         try launchHelper(requestURL: requestURL)
         return installationID
+    }
+
+    private func requireNoBlockingTransaction() throws {
+        guard let journal = try stateStore.loadJournal() else { return }
+        switch journal.stage {
+        case .confirmed, .rolledBack:
+            return
+        case .planned, .prepared, .helperLaunched, .backupCreated, .swapped,
+             .launchRequested, .failed:
+            throw LumaUpdateError.transactionInProgress
+        }
     }
 
     private func boundedResponse(

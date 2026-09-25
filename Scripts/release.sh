@@ -377,6 +377,8 @@ verified_builtin_plugin="${verified_application_path}/Contents/Resources/Builtin
 [[ -x "${verified_updater}" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${verified_application_path}/Contents/Info.plist")" == "LumaChat" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${verified_application_path}/Contents/Info.plist")" == "${version}" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${verified_application_path}/Contents/Info.plist")" == "${build_number}" ]]
+[[ "$("${verified_cli}" --version)" == "LumaChat ${version}" ]]
 /usr/bin/cmp -s \
     "${builtin_plugin_source}/plugin.json" \
     "${verified_builtin_plugin}/plugin.json"

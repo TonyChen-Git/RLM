@@ -149,7 +149,7 @@ protocol SubagentControlling: Sendable {
     func takePendingSubagentMessages(id: UUID) async -> [String]
     func recordSubagentTokenUsage(id: UUID, tokens: Int) async
     func hasOutstandingSubagents(parentSessionID: UUID) async -> Bool
-    func cancelSubagents(parentSessionID: UUID) async
+    func cancelSubagents(parentSessionID: UUID) async throws
 }
 
 enum SubagentError: LocalizedError, Equatable, Sendable {
@@ -431,4 +431,3 @@ enum SubagentValidation {
         return value
     }
 }
-

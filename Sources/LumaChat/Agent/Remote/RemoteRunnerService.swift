@@ -211,7 +211,7 @@ actor RemoteRunnerService: RemoteRunnerServicing {
         case .systemAgent:
             return nil
         case .keychainPrivateKey:
-            guard let credential = try credentialProvider.credential(for: configuration.id) else {
+            guard let credential = try credentialProvider.credential(for: configuration) else {
                 throw RemoteExecutionError.credentialUnavailable(configuration.id)
             }
             return try credential.validated()

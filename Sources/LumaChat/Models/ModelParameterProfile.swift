@@ -225,6 +225,26 @@ struct ModelParameterCapabilities: Equatable, Sendable {
     var supportsReasoningEffort: Bool { !supportedReasoningEfforts.isEmpty }
 }
 
+/// Backend-reported limits and feature flags for one concrete model. These
+/// values are intentionally ephemeral: Custom values remain durable, while
+/// capabilities are rediscovered from the currently selected backend and can
+/// tighten both Auto and Custom profiles at every request boundary.
+struct DiscoveredModelParameterCapabilities: Equatable, Sendable {
+    var modelMaximumContextTokens: Int?
+    var maximumOutputTokens: Int?
+    var supportsThinking: Bool?
+
+    init(
+        modelMaximumContextTokens: Int? = nil,
+        maximumOutputTokens: Int? = nil,
+        supportsThinking: Bool? = nil
+    ) {
+        self.modelMaximumContextTokens = modelMaximumContextTokens
+        self.maximumOutputTokens = maximumOutputTokens
+        self.supportsThinking = supportsThinking
+    }
+}
+
 struct EffectiveModelParameterProfile: Equatable, Sendable {
     var key: ModelParameterKey
     var mode: ModelParameterMode
@@ -318,11 +338,10 @@ enum ModelParameterRecommendationEngine {
     static func effectiveProfile(
         for route: ModelParameterRoute,
         profiles: [ModelParameterProfile],
-        discoveredContextMaximum: Int? = nil,
-        discoveredOutputMaximum: Int? = nil
+        discoveredCapabilities: DiscoveredModelParameterCapabilities? = nil
     ) -> EffectiveModelParameterProfile {
         var capabilities = capabilities(for: route)
-        if let discoveredContextMaximum,
+        if let discoveredContextMaximum = discoveredCapabilities?.modelMaximumContextTokens,
            (1...ModelParameterValidation.absoluteMaximumContextTokens)
             .contains(discoveredContextMaximum) {
             capabilities.modelMaximumContextTokens = min(
@@ -330,13 +349,16 @@ enum ModelParameterRecommendationEngine {
                 discoveredContextMaximum
             )
         }
-        if let discoveredOutputMaximum,
+        if let discoveredOutputMaximum = discoveredCapabilities?.maximumOutputTokens,
            (1...ModelParameterValidation.absoluteMaximumOutputTokens)
             .contains(discoveredOutputMaximum) {
             capabilities.maximumOutputTokens = min(
                 capabilities.maximumOutputTokens,
                 discoveredOutputMaximum
             )
+        }
+        if let supportsThinking = discoveredCapabilities?.supportsThinking {
+            capabilities.supportsThinking = supportsThinking
         }
 
         let key = route.key

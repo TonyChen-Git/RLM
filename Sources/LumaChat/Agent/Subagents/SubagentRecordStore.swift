@@ -52,10 +52,21 @@ actor SubagentRecordStore: SubagentRecordPersisting {
     func loadRecords() throws -> [SubagentRecord] {
         let parent = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-        guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
+        let descriptor = Darwin.open(
+            fileURL.path,
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
+        )
+        if descriptor < 0, errno == ENOENT { return [] }
+        if descriptor < 0, errno == ELOOP {
+            throw SubagentRecordStoreError.invalidFile
+        }
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { _ = Darwin.close(descriptor) }
 
         var info = Darwin.stat()
-        guard Darwin.lstat(fileURL.path, &info) == 0,
+        guard Darwin.fstat(descriptor, &info) == 0,
               info.st_mode & S_IFMT == S_IFREG,
               info.st_size >= 0 else {
             throw SubagentRecordStoreError.invalidFile
@@ -63,9 +74,21 @@ actor SubagentRecordStore: SubagentRecordPersisting {
         guard info.st_size <= off_t(Self.maximumFileBytes) else {
             throw SubagentRecordStoreError.oversized(Self.maximumFileBytes)
         }
-        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        guard data.count <= Self.maximumFileBytes else {
-            throw SubagentRecordStoreError.oversized(Self.maximumFileBytes)
+
+        var data = Data()
+        data.reserveCapacity(Int(info.st_size))
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        while true {
+            let count = Darwin.read(descriptor, &buffer, buffer.count)
+            if count < 0, errno == EINTR { continue }
+            guard count >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if count == 0 { break }
+            guard data.count <= Self.maximumFileBytes - count else {
+                throw SubagentRecordStoreError.oversized(Self.maximumFileBytes)
+            }
+            data.append(contentsOf: buffer.prefix(count))
         }
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
         guard envelope.version == 1 else {

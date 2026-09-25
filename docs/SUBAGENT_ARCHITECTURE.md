@@ -1,7 +1,8 @@
 # Luma Chat Subagent Architecture
 
 Status: Phase C implementation complete; combined Phase C–H development gate
-passed on 2026-09-20.
+passed on 2026-09-25 as part of the 744-test LumaChat 1.4.1 development
+release.
 
 ## Execution model
 
@@ -65,5 +66,5 @@ remain visible through the normal Task UI.
 cancellation, child failure isolation, timeout, recovery/resume, exact message
 ownership, structured aggregation, authority narrowing, and executor-level
 scope rejection. Existing managed-worktree lifecycle suites remain the lower
-layer for the writable-child checkout path. These tests pass in the 660-test
+layer for the writable-child checkout path. These tests pass in the 744-test
 combined development regression and development release/package gate.

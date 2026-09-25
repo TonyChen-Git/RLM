@@ -9,6 +9,8 @@ enum TaskTerminalError: LocalizedError, Equatable, Sendable {
     case invalidSignal(String)
     case corruptMetadata(String)
     case metadataTooLarge(Int)
+    case persistencePending
+    case persistenceUncertain
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +28,10 @@ enum TaskTerminalError: LocalizedError, Equatable, Sendable {
             "Terminal metadata is invalid: \(detail)"
         case .metadataTooLarge(let maximum):
             "Terminal metadata exceeds the \(maximum)-byte limit."
+        case .persistencePending:
+            "Terminal metadata must be retried before another lifecycle change."
+        case .persistenceUncertain:
+            "Terminal metadata conflicts with an unreadable or unexpected on-disk snapshot."
         }
     }
 }
@@ -109,11 +115,19 @@ struct TaskTerminalMetadata: Codable, Equatable, Identifiable, Sendable {
 struct TaskTerminalDescriptor: Codable, Equatable, Identifiable, Sendable {
     var id: UUID { metadata.id }
     var metadata: TaskTerminalMetadata
+    var persistenceState: TaskTerminalPersistenceState
     var processIdentifier: Int32?
     var duration: TimeInterval
     var transportErrorCode: Int32?
     var earliestAvailableOffset: Int64
     var nextOffset: Int64
+}
+
+enum TaskTerminalPersistenceState: Codable, Equatable, Sendable {
+    case durable
+    /// The in-memory lifecycle state remains authoritative until this exact
+    /// snapshot can be retried; callers must not assume metadata reached disk.
+    case retryRequired(String)
 }
 
 struct TaskTerminalOutput: Codable, Equatable, Sendable {
@@ -146,26 +160,121 @@ private struct TaskTerminalMetadataDocument: Codable, Sendable {
     var terminals: [TaskTerminalMetadata]
 }
 
+private enum TaskTerminalMetadataSaveDisposition: Sendable {
+    case committed
+    case unchanged
+    case uncertain
+}
+
+private struct TaskTerminalMetadataSaveError: LocalizedError, Sendable {
+    let disposition: TaskTerminalMetadataSaveDisposition
+    let underlyingDescription: String
+
+    var errorDescription: String? {
+        switch disposition {
+        case .committed:
+            "Terminal metadata is visible, but directory durability could not be confirmed: "
+                + underlyingDescription
+        case .unchanged:
+            "Terminal metadata was not replaced: " + underlyingDescription
+        case .uncertain:
+            "Terminal metadata write outcome is uncertain: " + underlyingDescription
+        }
+    }
+}
+
 private struct TaskTerminalMetadataStore: Sendable {
     static let maximumDocumentBytes = 256 * 1_024
     let taskID: UUID
     let root: URL
+    let writer: @Sendable (Data, URL) throws -> Void
 
-    init(taskID: UUID, sessionsRoot: URL = AppPaths.agentSessions) {
+    init(
+        taskID: UUID,
+        sessionsRoot: URL = AppPaths.agentSessions,
+        writer: @escaping @Sendable (Data, URL) throws -> Void = AtomicFileWriter.write
+    ) {
         self.taskID = taskID
+        self.writer = writer
         root = sessionsRoot.standardizedFileURL
             .appendingPathComponent(taskID.uuidString, isDirectory: true)
             .appendingPathComponent("Terminals", isDirectory: true)
     }
 
     func load() throws -> [TaskTerminalMetadata] {
-        let file = metadataFile
+        guard let data = try readDocumentDataIfPresent() else { return [] }
+        let document = try JSONDecoder().decode(TaskTerminalMetadataDocument.self, from: data)
+        guard document.version == 1,
+              document.terminals.count <= TaskTerminalService.maximumTerminals,
+              Set(document.terminals.map(\.id)).count == document.terminals.count,
+              document.terminals.allSatisfy({ metadata in
+                  metadata.taskID == taskID
+                      && TaskTerminalMetadata.normalizedTitle(metadata.title) == metadata.title
+                      && (1...1_000).contains(Int(metadata.rows))
+                      && (1...1_000).contains(Int(metadata.columns))
+              }) else {
+            throw TaskTerminalError.corruptMetadata("identity, title, dimensions, or count failed validation")
+        }
+        return document.terminals
+    }
+
+    func save(_ terminals: [TaskTerminalMetadata]) throws {
+        guard terminals.count <= TaskTerminalService.maximumTerminals,
+              Set(terminals.map(\.id)).count == terminals.count,
+              terminals.allSatisfy({ $0.taskID == taskID }) else {
+            throw TaskTerminalError.corruptMetadata("refusing to persist an invalid Task terminal set")
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let canonicalParent = root.deletingLastPathComponent().standardizedFileURL
+        guard root.standardizedFileURL.deletingLastPathComponent() == canonicalParent,
+              root.lastPathComponent == "Terminals",
+              canonicalParent.lastPathComponent == taskID.uuidString else {
+            throw TaskTerminalError.corruptMetadata("metadata root escaped the Task directory")
+        }
+        let data = try encodedDocument(terminals)
+        let previous = try readDocumentDataIfPresent()
+        do {
+            try writer(data, metadataFile)
+        } catch {
+            let disposition: TaskTerminalMetadataSaveDisposition
+            do {
+                let current = try readDocumentDataIfPresent()
+                if current == data {
+                    disposition = .committed
+                } else if current == previous {
+                    disposition = .unchanged
+                } else {
+                    disposition = .uncertain
+                }
+            } catch {
+                disposition = .uncertain
+            }
+            throw TaskTerminalMetadataSaveError(
+                disposition: disposition,
+                underlyingDescription: String(error.localizedDescription.prefix(1_024))
+            )
+        }
+    }
+
+    private func encodedDocument(_ terminals: [TaskTerminalMetadata]) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(
+            TaskTerminalMetadataDocument(version: 1, terminals: terminals)
+        )
+        guard data.count <= Self.maximumDocumentBytes else {
+            throw TaskTerminalError.metadataTooLarge(Self.maximumDocumentBytes)
+        }
+        return data
+    }
+
+    private func readDocumentDataIfPresent() throws -> Data? {
         let descriptor = Darwin.open(
-            file.path,
+            metadataFile.path,
             O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY
         )
         guard descriptor >= 0 else {
-            if errno == ENOENT { return [] }
+            if errno == ENOENT { return nil }
             throw TaskTerminalError.corruptMetadata("metadata cannot be inspected")
         }
         defer { _ = Darwin.close(descriptor) }
@@ -205,43 +314,7 @@ private struct TaskTerminalMetadataStore: Sendable {
               finalInfo.st_ino == info.st_ino else {
             throw TaskTerminalError.corruptMetadata("metadata changed while being read")
         }
-        let document = try JSONDecoder().decode(TaskTerminalMetadataDocument.self, from: data)
-        guard document.version == 1,
-              document.terminals.count <= TaskTerminalService.maximumTerminals,
-              Set(document.terminals.map(\.id)).count == document.terminals.count,
-              document.terminals.allSatisfy({ metadata in
-                  metadata.taskID == taskID
-                      && TaskTerminalMetadata.normalizedTitle(metadata.title) == metadata.title
-                      && (1...1_000).contains(Int(metadata.rows))
-                      && (1...1_000).contains(Int(metadata.columns))
-              }) else {
-            throw TaskTerminalError.corruptMetadata("identity, title, dimensions, or count failed validation")
-        }
-        return document.terminals
-    }
-
-    func save(_ terminals: [TaskTerminalMetadata]) throws {
-        guard terminals.count <= TaskTerminalService.maximumTerminals,
-              Set(terminals.map(\.id)).count == terminals.count,
-              terminals.allSatisfy({ $0.taskID == taskID }) else {
-            throw TaskTerminalError.corruptMetadata("refusing to persist an invalid Task terminal set")
-        }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let canonicalParent = root.deletingLastPathComponent().standardizedFileURL
-        guard root.standardizedFileURL.deletingLastPathComponent() == canonicalParent,
-              root.lastPathComponent == "Terminals",
-              canonicalParent.lastPathComponent == taskID.uuidString else {
-            throw TaskTerminalError.corruptMetadata("metadata root escaped the Task directory")
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(
-            TaskTerminalMetadataDocument(version: 1, terminals: terminals)
-        )
-        guard data.count <= Self.maximumDocumentBytes else {
-            throw TaskTerminalError.metadataTooLarge(Self.maximumDocumentBytes)
-        }
-        try AtomicFileWriter.write(data, to: metadataFile)
+        return data
     }
 
     private var metadataFile: URL {
@@ -287,17 +360,25 @@ actor TaskTerminalService {
     private var isDisposed = false
     private var pendingCreations = 0
     private var subscribers: [UUID: AsyncStream<TaskTerminalEvent>.Continuation] = [:]
+    private var pendingPersistenceFailure: String?
+    private var persistenceRecoveryBlocked = false
+    private var pendingRemovalIDs: Set<UUID> = []
 
     init(
         taskID: UUID,
         validator: WorkspaceSecurityValidator,
         backend: any PTYBackend = DarwinPTYBackend(),
-        sessionsRoot: URL = AppPaths.agentSessions
+        sessionsRoot: URL = AppPaths.agentSessions,
+        metadataWriter: @escaping @Sendable (Data, URL) throws -> Void = AtomicFileWriter.write
     ) {
         self.taskID = taskID
         self.validator = validator
         self.backend = backend
-        store = TaskTerminalMetadataStore(taskID: taskID, sessionsRoot: sessionsRoot)
+        store = TaskTerminalMetadataStore(
+            taskID: taskID,
+            sessionsRoot: sessionsRoot,
+            writer: metadataWriter
+        )
     }
 
     deinit {
@@ -345,6 +426,11 @@ actor TaskTerminalService {
     ) async throws -> TaskTerminalDescriptor {
         try loadIfNeeded()
         guard !isDisposed else { throw PseudoTerminalError.disposed }
+        guard pendingPersistenceFailure == nil else {
+            throw persistenceRecoveryBlocked
+                ? TaskTerminalError.persistenceUncertain
+                : TaskTerminalError.persistencePending
+        }
         guard (1...1_000).contains(rows), (1...1_000).contains(columns) else {
             throw PseudoTerminalError.invalidDimensions
         }
@@ -416,7 +502,7 @@ actor TaskTerminalService {
         entries[id] = entry
         order.append(id)
         do {
-            try persist()
+            try persistTransition()
         } catch {
             entries.removeValue(forKey: id)
             order.removeAll { $0 == id }
@@ -507,7 +593,7 @@ actor TaskTerminalService {
             workspaceWrite: true
         )
         do {
-            try persist()
+            try persistTransition()
         } catch {
             entry.exitObserver?.cancel()
             entry.outputPump?.cancel()
@@ -540,7 +626,7 @@ actor TaskTerminalService {
         entry.metadata.title = try normalizedTitle(title)
         entry.metadata.updatedAt = Date()
         do {
-            try persist()
+            try persistTransition()
         } catch {
             entry.metadata = previousMetadata
             throw error
@@ -636,7 +722,12 @@ actor TaskTerminalService {
         entry.metadata.rows = status.dimensions.rows
         entry.metadata.columns = status.dimensions.columns
         entry.metadata.updatedAt = Date()
-        try persist()
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+            throw error
+        }
         let result = await descriptor(for: entry)
         emit(.init(taskID: taskID, terminalID: id, kind: .snapshot, descriptor: result, output: nil))
         return result
@@ -671,7 +762,12 @@ actor TaskTerminalService {
         }
         entry.metadata.clearGeneration &+= 1
         entry.metadata.updatedAt = Date()
-        try persist()
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+            throw error
+        }
         let result = await descriptor(for: entry)
         emit(.init(taskID: taskID, terminalID: id, kind: .snapshot, descriptor: result, output: nil))
         return result
@@ -692,7 +788,12 @@ actor TaskTerminalService {
         await refreshMetadata(entry)
         if entry.metadata.state == .running { entry.metadata.state = .stopped }
         entry.metadata.updatedAt = Date()
-        try persist()
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+            throw error
+        }
         let result = await descriptor(for: entry)
         emit(.init(taskID: taskID, terminalID: id, kind: .snapshot, descriptor: result, output: nil))
         return result
@@ -711,17 +812,38 @@ actor TaskTerminalService {
             await refreshMetadata(entry)
             entry.transport = nil
         }
-        let remainingOrder = order.filter { $0 != id }
-        try store.save(remainingOrder.compactMap { entries[$0]?.metadata })
-        entries.removeValue(forKey: id)
-        order = remainingOrder
-        emit(.init(taskID: taskID, terminalID: id, kind: .removed, descriptor: nil, output: nil))
+        pendingRemovalIDs.insert(id)
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+            throw error
+        }
+        if pendingPersistenceFailure == nil {
+            finalizePendingRemovals()
+        } else {
+            let result = await descriptor(for: entry)
+            emit(.init(
+                taskID: taskID,
+                terminalID: id,
+                kind: .snapshot,
+                descriptor: result,
+                output: nil
+            ))
+        }
     }
 
-    func disposeAll() async {
-        guard !isDisposed else { return }
+    @discardableResult
+    func disposeAll() async -> TaskTerminalPersistenceState {
+        guard !isDisposed else { return currentPersistenceState }
         isDisposed = true
-        try? loadIfNeeded()
+        do {
+            try loadIfNeeded()
+        } catch {
+            recordPersistenceFailure(error)
+            finishSubscribers()
+            return currentPersistenceState
+        }
         for id in order {
             guard let entry = entries[id] else { continue }
             entry.exitObserver?.cancel()
@@ -737,7 +859,55 @@ actor TaskTerminalService {
             }
             entry.metadata.updatedAt = Date()
         }
-        try? persist()
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+        }
+        if pendingPersistenceFailure == nil { finalizePendingRemovals() }
+        finishSubscribers()
+        return currentPersistenceState
+    }
+
+    /// Retries the retained in-memory metadata snapshot after storage becomes
+    /// writable again. This is intentionally valid even after disposeAll().
+    @discardableResult
+    func retryPendingPersistence() async throws -> TaskTerminalPersistenceState {
+        guard pendingPersistenceFailure != nil else { return .durable }
+        guard !persistenceRecoveryBlocked else {
+            throw TaskTerminalError.persistenceUncertain
+        }
+        if !didLoad { try loadIfNeeded() }
+        try persistTransition()
+        guard pendingPersistenceFailure == nil else { return currentPersistenceState }
+        finalizePendingRemovals()
+        let retained = Set(order)
+        entries = entries.filter { retained.contains($0.key) }
+        var snapshots: [(UUID, TaskTerminalDescriptor)] = []
+        snapshots.reserveCapacity(order.count)
+        for id in order {
+            guard let entry = entries[id] else { continue }
+            snapshots.append((id, await descriptor(for: entry)))
+        }
+        for (id, snapshot) in snapshots {
+            var result = snapshot
+            result.persistenceState = .durable
+            emit(.init(
+                taskID: taskID,
+                terminalID: id,
+                kind: .snapshot,
+                descriptor: result,
+                output: nil
+            ))
+        }
+        return .durable
+    }
+
+    func persistenceState() -> TaskTerminalPersistenceState {
+        currentPersistenceState
+    }
+
+    private func finishSubscribers() {
         let activeSubscribers = Array(subscribers.values)
         subscribers.removeAll()
         for continuation in activeSubscribers { continuation.finish() }
@@ -762,7 +932,13 @@ actor TaskTerminalService {
             order.append(metadata.id)
         }
         didLoad = true
-        if stored.contains(where: { $0.state == .running }) { try persist() }
+        if stored.contains(where: { $0.state == .running }) {
+            do {
+                try persistTransition()
+            } catch {
+                recordPersistenceFailure(error)
+            }
+        }
     }
 
     private func normalizedTitle(_ value: String) throws -> String {
@@ -781,6 +957,11 @@ actor TaskTerminalService {
 
     private func ensureActive() throws {
         guard !isDisposed else { throw PseudoTerminalError.disposed }
+        guard pendingPersistenceFailure == nil else {
+            throw persistenceRecoveryBlocked
+                ? TaskTerminalError.persistenceUncertain
+                : TaskTerminalError.persistencePending
+        }
     }
 
     private func requireStable(_ entry: Entry, id: UUID) throws {
@@ -869,8 +1050,13 @@ actor TaskTerminalService {
               entry.transport === transport else { return }
         await refreshMetadata(entry)
         entry.metadata.updatedAt = Date()
-        let result = await descriptor(for: entry)
-        try? persist()
+        var result = await descriptor(for: entry)
+        do {
+            try persistTransition()
+        } catch {
+            recordPersistenceFailure(error)
+        }
+        result.persistenceState = currentPersistenceState
         emit(.init(taskID: taskID, terminalID: id, kind: .snapshot, descriptor: result, output: nil))
     }
 
@@ -906,6 +1092,7 @@ actor TaskTerminalService {
             let next = max(earliest, entry.metadata.nextOffset ?? earliest)
             return TaskTerminalDescriptor(
                 metadata: entry.metadata,
+                persistenceState: currentPersistenceState,
                 processIdentifier: nil,
                 duration: 0,
                 transportErrorCode: nil,
@@ -919,6 +1106,7 @@ actor TaskTerminalService {
         entry.metadata.nextOffset = bounds?.nextOffset
         return TaskTerminalDescriptor(
             metadata: entry.metadata,
+            persistenceState: currentPersistenceState,
             processIdentifier: status?.processIdentifier,
             duration: status?.duration ?? 0,
             transportErrorCode: status?.transportErrorCode,
@@ -1026,6 +1214,65 @@ actor TaskTerminalService {
     }
 
     private func persist() throws {
-        try store.save(order.compactMap { entries[$0]?.metadata })
+        try store.save(order.compactMap { id in
+            guard !pendingRemovalIDs.contains(id) else { return nil }
+            return entries[id]?.metadata
+        })
+    }
+
+    private func finalizePendingRemovals() {
+        let removed = pendingRemovalIDs
+        pendingRemovalIDs.removeAll()
+        guard !removed.isEmpty else { return }
+        order.removeAll { removed.contains($0) }
+        for id in removed {
+            entries.removeValue(forKey: id)
+            emit(.init(
+                taskID: taskID,
+                terminalID: id,
+                kind: .removed,
+                descriptor: nil,
+                output: nil
+            ))
+        }
+    }
+
+    /// AtomicFileWriter can report a directory-sync failure after rename made
+    /// the requested document visible. Treat that as a semantic commit while
+    /// retaining a retry warning; only a proven unchanged destination permits
+    /// callers to compensate the in-memory/process transition.
+    private func persistTransition() throws {
+        guard !persistenceRecoveryBlocked else {
+            throw TaskTerminalError.persistenceUncertain
+        }
+        do {
+            try persist()
+            pendingPersistenceFailure = nil
+            persistenceRecoveryBlocked = false
+        } catch let error as TaskTerminalMetadataSaveError {
+            switch error.disposition {
+            case .committed:
+                recordPersistenceFailure(error)
+            case .unchanged:
+                throw error
+            case .uncertain:
+                recordPersistenceFailure(error, recoveryBlocked: true)
+            }
+        }
+    }
+
+    private var currentPersistenceState: TaskTerminalPersistenceState {
+        if let pendingPersistenceFailure {
+            return .retryRequired(pendingPersistenceFailure)
+        }
+        return .durable
+    }
+
+    private func recordPersistenceFailure(
+        _ error: Error,
+        recoveryBlocked: Bool = false
+    ) {
+        pendingPersistenceFailure = error.localizedDescription
+        persistenceRecoveryBlocked = persistenceRecoveryBlocked || recoveryBlocked
     }
 }

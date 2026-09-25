@@ -1,6 +1,6 @@
 # Luma Chat Codex Replacement Roadmap
 
-Last audited: 2026-09-20 after the combined Phase C-H development gate;
+Last audited: 2026-09-25 after the LumaChat 1.4.1 combined Phase A-H development gate;
 all eight implementation phases are complete, with production gates remaining
 
 ## Definition of 100
@@ -24,7 +24,13 @@ Points are awarded only when the implementation, persistence/recovery behavior,
 UI, automated tests, and release packaging all pass. A mock screen or an
 unverified happy path earns no points.
 
-## Formal production-credit score
+## Local-workflow production-credit score
+
+This roadmap keeps the narrower daily local-workflow rubric established before
+the full platform audit. Its 84/100 result is therefore not directly comparable
+to the broader 68.5/100 matrix in `CODEX_FULL_PARITY_AUDIT.md`, which includes
+additional cloud, integration and production-distribution parity. Neither score
+is the 8/8 implementation-completion percentage.
 
 | Capability | Points | Current | Remaining release gates |
 | --- | ---: | ---: | --- |
@@ -47,11 +53,11 @@ local-workflow score therefore remains **84/100**. This numeric score is not the
 implementation percentage: the master program is now 8/8 phases implemented,
 but production-only evidence is not converted into points speculatively.
 
-The 2026-09-20 combined development gate passed 660 Swift tests with one
+The 2026-09-25 combined development gate passed 744 Swift tests with one
 environment skip and zero failures, VS Code 17/17, GitHub Action 14/14, the
 10/10 exact failure shard, optimized arm64 build, ad-hoc signing, canonical ZIP,
 SBOM/provenance and security audit. The development ZIP SHA-256 is
-`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
+`d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`.
 Developer ID/notarization, live external acceptance and qualifying long soak
 were not run or claimed.
 

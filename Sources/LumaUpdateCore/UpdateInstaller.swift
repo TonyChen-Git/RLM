@@ -40,11 +40,18 @@ public enum LumaUpdateInstaller {
               candidateIdentity.bundleIdentifier == request.expectedBundleIdentifier,
               candidateIdentity.teamIdentifier == request.expectedTeamIdentifier,
               candidateIdentity.version == request.expectedVersion,
-              candidateIdentity.build == request.expectedBuild else {
+              candidateIdentity.build == request.expectedBuild,
+              journal.fromVersion == currentIdentity.version,
+              journal.fromBuild == currentIdentity.build,
+              journal.toVersion == candidateIdentity.version,
+              journal.toBuild == candidateIdentity.build else {
             throw LumaUpdateError.untrustedApplication("request and application identities differ")
         }
 
         if request.operation == .install {
+            guard try isStrictlyNewer(candidate: candidateIdentity, than: currentIdentity) else {
+                throw LumaUpdateError.invalidInstallRequest
+            }
             let verified = try verifySignedInstallRequest(
                 request,
                 currentApplicationURL: currentURL
@@ -178,7 +185,9 @@ public enum LumaUpdateInstaller {
               journal.backupApplicationPath == request.backupApplicationPath,
               journal.confirmationPath == request.confirmationPath,
               journal.expectedBundleIdentifier == request.expectedBundleIdentifier,
-              journal.expectedTeamIdentifier == request.expectedTeamIdentifier else {
+              journal.expectedTeamIdentifier == request.expectedTeamIdentifier,
+              journal.toVersion == request.expectedVersion,
+              journal.toBuild == request.expectedBuild else {
             throw LumaUpdateError.invalidInstallRequest
         }
         return journal
@@ -228,6 +237,16 @@ public enum LumaUpdateInstaller {
             usleep(100_000)
         }
         throw LumaUpdateError.processFailure("the running application did not exit")
+    }
+
+    static func isStrictlyNewer(
+        candidate: LumaUpdateApplicationIdentity,
+        than current: LumaUpdateApplicationIdentity
+    ) throws -> Bool {
+        let candidateVersion = try LumaSemanticVersion(candidate.version)
+        let currentVersion = try LumaSemanticVersion(current.version)
+        if candidateVersion != currentVersion { return candidateVersion > currentVersion }
+        return candidate.build > current.build
     }
 
     private static func waitForConfirmation(at url: URL, installationID: UUID) throws {

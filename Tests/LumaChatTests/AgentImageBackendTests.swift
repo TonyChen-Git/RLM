@@ -489,7 +489,9 @@ final class AgentImageBackendTests: XCTestCase {
                 maxOutputTokens: 128
             )
         )
-        let firstBody = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().first)
+        // Ollama parameter-capability discovery may precede the chat request;
+        // the generated chat payload is always the final request in this call.
+        let firstBody = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().last)
         let firstJSON = try XCTUnwrap(
             JSONSerialization.jsonObject(with: firstBody) as? [String: Any]
         )
@@ -536,7 +538,7 @@ final class AgentImageBackendTests: XCTestCase {
             imagePayloads: [payload]
         )
         _ = try await provider.generate(request: request)
-        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().first)
+        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().last)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.map { $0["role"] as? String }, ["assistant", "tool", "user"])
@@ -579,7 +581,7 @@ final class AgentImageBackendTests: XCTestCase {
             )
         )
 
-        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().first)
+        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().last)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.count, 2)
@@ -639,7 +641,7 @@ final class AgentImageBackendTests: XCTestCase {
             )
         )
 
-        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().first)
+        let body = try XCTUnwrap(AgentImageURLProtocol.capturedBodies().last)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(

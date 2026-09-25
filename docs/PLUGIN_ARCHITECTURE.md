@@ -1,7 +1,8 @@
 # Luma Chat Skills, Plugins, Hooks, and OAuth Architecture
 
 Status: Phase D implementation complete; the combined Phase C–H development
-validation/build/package gate passed on 2026-09-20.
+validation/build/package gate passed on 2026-09-25 as part of the 744-test
+LumaChat 1.4.1 development release.
 
 ## Trust model
 
@@ -164,7 +165,7 @@ delivery, permission denial, non-zero failure policy, output redaction/history,
 OAuth PKCE and token/JSON separation, insecure endpoint rejection, and plugin-
 owned versus manual MCP persistence.
 
-These tests pass in the 660-test combined development regression. The optimized
+These tests pass in the 744-test combined development regression. The optimized
 arm64 build, package round trip, signature/plist checks and security audit also
 pass; third-party marketplace/OAuth live-service acceptance remains external.
 

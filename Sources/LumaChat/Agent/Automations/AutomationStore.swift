@@ -6,6 +6,28 @@ protocol AutomationPersisting: Sendable {
     func saveSnapshot(_ snapshot: AutomationSnapshot) async throws
 }
 
+enum AutomationSnapshotSaveDisposition: Equatable, Sendable {
+    case committed
+    case unchanged
+    case uncertain
+}
+
+struct AutomationSnapshotSaveError: LocalizedError, Equatable, Sendable {
+    var disposition: AutomationSnapshotSaveDisposition
+    var underlyingDescription: String
+
+    var errorDescription: String? {
+        switch disposition {
+        case .committed:
+            "Automation snapshot 已取代目標檔案，但目錄同步結果不確定：\(underlyingDescription)"
+        case .unchanged:
+            "Automation snapshot 尚未取代原檔案：\(underlyingDescription)"
+        case .uncertain:
+            "Automation snapshot 寫入結果無法安全判定：\(underlyingDescription)"
+        }
+    }
+}
+
 enum AutomationStoreError: LocalizedError, Equatable, Sendable {
     case invalidLocation
     case unsafeFile
@@ -33,6 +55,11 @@ enum AutomationStoreError: LocalizedError, Equatable, Sendable {
 /// transition. Version 1 and the early unversioned snapshot shape remain
 /// readable; every successful save upgrades them to version 2.
 actor AutomationStore: AutomationPersisting {
+    private enum ExactFileImage: Equatable {
+        case absent
+        case bytes(Data)
+    }
+
     private struct VersionProbe: Decodable { var version: Int? }
 
     private struct EnvelopeV2: Codable {
@@ -71,24 +98,33 @@ actor AutomationStore: AutomationPersisting {
 
     private let fileManager: FileManager
     private let fileURL: URL
+    private let writer: @Sendable (Data, URL) throws -> Void
 
     init(
         fileManager: FileManager = .default,
         fileURL: URL = AppPaths.appSupport
             .appendingPathComponent("AgentAutomations", isDirectory: true)
-            .appendingPathComponent("automations.json", isDirectory: false)
+            .appendingPathComponent("automations.json", isDirectory: false),
+        writer: @escaping @Sendable (Data, URL) throws -> Void = { data, destination in
+            try AtomicFileWriter.write(data, to: destination)
+        }
     ) {
         self.fileManager = fileManager
         self.fileURL = fileURL.standardizedFileURL
+        self.writer = writer
     }
 
     func loadSnapshot() throws -> AutomationSnapshot {
         try validateLocation()
         let parent = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-        guard fileManager.fileExists(atPath: fileURL.path) else { return AutomationSnapshot() }
-
-        let data = try Self.readRegularFile(fileURL)
+        let data: Data
+        switch try Self.readExactFileImage(fileURL) {
+        case .absent:
+            return AutomationSnapshot()
+        case .bytes(let bytes):
+            data = bytes
+        }
         let decoder = JSONDecoder()
         let probe = try? decoder.decode(VersionProbe.self, from: data)
         let version = probe?.version
@@ -134,7 +170,28 @@ actor AutomationStore: AutomationPersisting {
         guard data.count <= AutomationLimits.maximumFileBytes else {
             throw AutomationStoreError.oversized(AutomationLimits.maximumFileBytes)
         }
-        try AtomicFileWriter.write(data, to: fileURL)
+        // Refuse to replace an existing object that cannot be opened as the
+        // exact regular-file image we are about to supersede. Treating that as
+        // an absent pre-image would turn a symlink or unreadable file into a
+        // destructive overwrite.
+        let previousImage = try Self.readExactFileImage(fileURL)
+        do {
+            try writer(data, fileURL)
+        } catch {
+            let currentImage = try? Self.readExactFileImage(fileURL)
+            let disposition: AutomationSnapshotSaveDisposition
+            if currentImage == .some(.bytes(data)) {
+                disposition = .committed
+            } else if currentImage == .some(previousImage) {
+                disposition = .unchanged
+            } else {
+                disposition = .uncertain
+            }
+            throw AutomationSnapshotSaveError(
+                disposition: disposition,
+                underlyingDescription: String(error.localizedDescription.prefix(1_024))
+            )
+        }
     }
 
     private func validateLocation() throws {
@@ -150,8 +207,9 @@ actor AutomationStore: AutomationPersisting {
         }
     }
 
-    private static func readRegularFile(_ url: URL) throws -> Data {
+    private static func readExactFileImage(_ url: URL) throws -> ExactFileImage {
         let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT { return .absent }
         guard descriptor >= 0 else { throw AutomationStoreError.unsafeFile }
         defer { _ = Darwin.close(descriptor) }
 
@@ -178,7 +236,7 @@ actor AutomationStore: AutomationPersisting {
             }
             data.append(contentsOf: buffer.prefix(count))
         }
-        return data
+        return .bytes(data)
     }
 
     private static func definitionSort(

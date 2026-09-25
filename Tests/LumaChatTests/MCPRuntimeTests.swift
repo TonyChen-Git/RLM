@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import LumaChat
@@ -328,7 +329,11 @@ final class MCPRuntimeTests: XCTestCase {
             transport: .stdio(
                 MCPStdioConfiguration(
                     command: "/usr/bin/example",
-                    arguments: ["--token", "argument-secret", "--mode=read"],
+                    arguments: [
+                        "--token", "argument-secret",
+                        "--key", "generic-key-secret",
+                        "--mode=read"
+                    ],
                     environment: [
                         "LOG_LEVEL": "debug",
                         "API_TOKEN": "local-secret",
@@ -352,6 +357,7 @@ final class MCPRuntimeTests: XCTestCase {
         XCTAssertFalse(persistedText.contains("local-secret"))
         XCTAssertFalse(persistedText.contains("remote-secret"))
         XCTAssertFalse(persistedText.contains("argument-secret"))
+        XCTAssertFalse(persistedText.contains("generic-key-secret"))
         XCTAssertFalse(persistedText.contains("db-password"))
         XCTAssertTrue(persistedText.contains("LUMACHAT_MCP_KEYCHAIN"))
         XCTAssertFalse(persistedText.contains("debug"))
@@ -369,7 +375,10 @@ final class MCPRuntimeTests: XCTestCase {
             loadedLocal.environment["DATABASE_URL"],
             "postgres://db-user:db-password@db.invalid/app"
         )
-        XCTAssertEqual(loadedLocal.arguments, ["--token", "argument-secret", "--mode=read"])
+        XCTAssertEqual(
+            loadedLocal.arguments,
+            ["--token", "argument-secret", "--key", "generic-key-secret", "--mode=read"]
+        )
         XCTAssertEqual(loadedRemote.headers["Authorization"], "Bearer remote-secret")
     }
 
@@ -399,6 +408,7 @@ final class MCPRuntimeTests: XCTestCase {
         secrets.failAfterSuccessfulSaves(1)
 
         var updated = original
+        updated.name = "Persist failure updated"
         updated.transport = .stdio(
             MCPStdioConfiguration(
                 command: "/usr/bin/example",
@@ -418,6 +428,619 @@ final class MCPRuntimeTests: XCTestCase {
         XCTAssertEqual(configuration.environment["TOKEN_A"], "old-a")
         XCTAssertEqual(configuration.environment["TOKEN_B"], "old-b")
     }
+
+    func testSettingsPersistFailureRollsBackCredentialAndKeepsPreviousDocument() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-persist-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let normalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let serverID = UUID()
+        let original = MCPServerConfiguration(
+            id: serverID,
+            name: "Persist failure",
+            transport: .stdio(
+                MCPStdioConfiguration(
+                    command: "/usr/bin/example",
+                    environment: ["TOKEN": "old-secret"]
+                )
+            )
+        )
+        try await normalStore.save([original])
+        let failingStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            writeData: { _, _ in throw InjectedMCPPersistenceError.failure }
+        )
+        var updated = original
+        updated.name = "Rollback failure updated"
+        updated.transport = .stdio(
+            MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "new-secret"]
+            )
+        )
+
+        do {
+            try await failingStore.save([updated])
+            XCTFail("Injected persistence failure should abort the transaction")
+        } catch {
+            XCTAssertTrue(error is InjectedMCPPersistenceError)
+        }
+
+        let loaded = try await normalStore.load()
+        guard case .stdio(let configuration) = try XCTUnwrap(loaded.first).transport else {
+            return XCTFail("Expected STDIO configuration")
+        }
+        XCTAssertEqual(configuration.environment["TOKEN"], "old-secret")
+    }
+
+    func testSettingsReportsCombinedErrorWhenPersistAndFreshCredentialCleanupBothFail() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-rollback-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let normalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let serverID = UUID()
+        let original = MCPServerConfiguration(
+            id: serverID,
+            name: "Rollback failure",
+            transport: .stdio(
+                MCPStdioConfiguration(
+                    command: "/usr/bin/example",
+                    environment: ["TOKEN": "old-secret"]
+                )
+            )
+        )
+        try await normalStore.save([original])
+        // The fresh updated credential is written without touching the old
+        // generation. Inject failure while deleting that fresh account after
+        // the metadata writer fails before commit.
+        secrets.failNextDelete()
+        let failingStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            writeData: { _, _ in throw InjectedMCPPersistenceError.failure }
+        )
+        var updated = original
+        updated.name = "Rollback failure updated"
+        updated.transport = .stdio(
+            MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "new-secret"]
+            )
+        )
+
+        do {
+            try await failingStore.save([updated])
+            XCTFail("A failed rollback must not be reported as an ordinary persist failure")
+        } catch let error as MCPSettingsStoreTransactionError {
+            XCTAssertEqual(error.operation, .save)
+            XCTAssertTrue(error.primaryError is InjectedMCPPersistenceError)
+            XCTAssertEqual(error.recoveryFailures.count, 1)
+            XCTAssertTrue(error.recoveryFailures[0].underlyingError is MockMCPSecretStoreError)
+            XCTAssertFalse(error.localizedDescription.contains("old-secret"))
+            XCTAssertFalse(error.localizedDescription.contains("new-secret"))
+        } catch {
+            XCTFail("Expected combined MCP transaction error, got \(type(of: error))")
+        }
+
+        let values = secrets.snapshot()
+        XCTAssertEqual(Set(values.values), ["old-secret", "new-secret"])
+        let persistedText = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertFalse(persistedText.contains("new-secret"))
+        let loaded = try await normalStore.load()
+        guard case .stdio(let configuration) = try XCTUnwrap(loaded.first).transport else {
+            return XCTFail("Expected STDIO configuration")
+        }
+        XCTAssertEqual(configuration.environment["TOKEN"], "old-secret")
+    }
+
+    func testObsoleteCredentialCleanupFailureLeavesCommittedDocumentUsable() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-cleanup-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let original = MCPServerConfiguration(
+            name: "Cleanup failure",
+            transport: .stdio(
+                MCPStdioConfiguration(
+                    command: "/usr/bin/example",
+                    environment: ["TOKEN": "retained-secret"]
+                )
+            )
+        )
+        try await store.save([original])
+        secrets.failNextDelete()
+
+        do {
+            try await store.save([])
+            XCTFail("Committed cleanup failure must remain visible")
+        } catch let error as MCPSettingsStoreCredentialCleanupError {
+            XCTAssertEqual(error.operation, .save)
+            XCTAssertEqual(error.failures.count, 1)
+            XCTAssertFalse(error.localizedDescription.contains("retained-secret"))
+        }
+
+        let loaded = try await store.load()
+        XCTAssertTrue(loaded.isEmpty)
+        XCTAssertEqual(Set(secrets.snapshot().values), ["retained-secret"])
+    }
+
+    func testMissingPersistedCredentialReferenceFailsClosed() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-missing-reference-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let server = MCPServerConfiguration(
+            name: "Missing reference",
+            transport: .stdio(
+                MCPStdioConfiguration(
+                    command: "/usr/bin/example",
+                    environment: ["TOKEN": "unavailable-secret"]
+                )
+            )
+        )
+        try await store.save([server])
+        let account = try XCTUnwrap(secrets.snapshot().first(where: {
+            $0.value == "unavailable-secret"
+        })?.key)
+        try secrets.delete(account: account)
+
+        do {
+            _ = try await store.load()
+            XCTFail("A missing persisted credential must not hydrate as an empty value")
+        } catch let error as MCPError {
+            guard case .invalidConfiguration(let detail) = error else {
+                return XCTFail("Expected invalid configuration error")
+            }
+            XCTAssertTrue(detail.contains("cannot be resolved"))
+            XCTAssertFalse(error.localizedDescription.contains("unavailable-secret"))
+        }
+    }
+
+    func testUnreadablePersistedReferencesPreventOverwriteAndCredentialMutation() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-invalid-references-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let file = directory.appendingPathComponent("servers.json")
+        let invalidDocument = Data("not valid MCP settings".utf8)
+        try invalidDocument.write(to: file)
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let server = MCPServerConfiguration(
+            name: "Must not overwrite",
+            transport: .stdio(
+                MCPStdioConfiguration(
+                    command: "/usr/bin/example",
+                    environment: ["TOKEN": "must-not-be-saved"]
+                )
+            )
+        )
+
+        do {
+            try await store.save([server])
+            XCTFail("Unreadable persisted references must stop the transaction")
+        } catch {
+            XCTAssertTrue(error is DecodingError)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: file), invalidDocument)
+        XCTAssertTrue(secrets.snapshot().isEmpty)
+    }
+
+    func testDuplicateServerIdentifiersAreRejectedBeforeCredentialMutationAndImport() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-duplicate-id-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let duplicateID = UUID()
+        let first = MCPServerConfiguration(
+            id: duplicateID,
+            name: "First",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "first-secret"]
+            ))
+        )
+        let second = MCPServerConfiguration(
+            id: duplicateID,
+            name: "Second",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "second-secret"]
+            ))
+        )
+
+        do {
+            try await store.save([first, second])
+            XCTFail("Duplicate MCP identifiers must fail before Keychain writes.")
+        } catch let error as MCPError {
+            guard case .invalidConfiguration(let detail) = error else {
+                return XCTFail("Expected invalid configuration, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("duplicate"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(secrets.snapshot().isEmpty)
+
+        let imported = Data(#"""
+        {"mcpServers":{
+          "First":{"id":"\#(duplicateID.uuidString)","command":"/usr/bin/first"},
+          "Second":{"id":"\#(duplicateID.uuidString)","command":"/usr/bin/second"}
+        }}
+        """#.utf8)
+        do {
+            _ = try await store.decodeImport(imported)
+            XCTFail("Duplicate identifiers in imported MCP JSON must fail closed.")
+        } catch let error as MCPError {
+            guard case .invalidConfiguration = error else {
+                return XCTFail("Expected invalid configuration, got \(error)")
+            }
+        }
+    }
+
+    func testCommittedThenThrowKeepsMCPDocumentAndCredentialsAligned() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-post-commit-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let normalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let serverID = UUID()
+        let original = MCPServerConfiguration(
+            id: serverID,
+            name: "Before commit",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "old-secret"]
+            ))
+        )
+        try await normalStore.save([original])
+        let uncertainStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            writeData: { data, url in
+                try AtomicFileWriter.write(data, to: url)
+                throw InjectedMCPPersistenceError.failure
+            }
+        )
+        var updated = original
+        updated.name = "After commit"
+        updated.transport = .stdio(MCPStdioConfiguration(
+            command: "/usr/bin/example",
+            environment: ["TOKEN": "new-secret"]
+        ))
+
+        // The replacement is visible, but a late durability error means a
+        // restart could still reveal the old document. Both generations remain.
+        do {
+            try await uncertainStore.save([updated])
+            XCTFail("Post-commit durability uncertainty must remain visible.")
+        } catch let error as MCPSettingsStoreDurabilityError {
+            XCTAssertTrue(error.primaryError is InjectedMCPPersistenceError)
+            XCTAssertFalse(error.localizedDescription.contains("new-secret"))
+        }
+
+        let loaded = try await normalStore.load()
+        XCTAssertEqual(loaded.first?.name, "After commit")
+        guard case .stdio(let configuration) = try XCTUnwrap(loaded.first).transport else {
+            return XCTFail("Expected STDIO configuration")
+        }
+        XCTAssertEqual(configuration.environment["TOKEN"], "new-secret")
+        XCTAssertEqual(Set(secrets.snapshot().values), ["old-secret", "new-secret"])
+    }
+
+    func testThirdPartyMCPDocumentAfterWriterFailureNeverRollsCredentialsBackward() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-third-version-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let originalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let serverID = UUID()
+        let original = MCPServerConfiguration(
+            id: serverID,
+            name: "Original",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "old-secret"]
+            ))
+        )
+        try await originalStore.save([original])
+        let thirdDocument = Data(#"{"version":1,"servers":[]}"#.utf8)
+        let ambiguousStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            writeData: { _, url in
+                try AtomicFileWriter.write(thirdDocument, to: url)
+                throw InjectedMCPPersistenceError.failure
+            }
+        )
+        var updated = original
+        updated.name = "Requested"
+        updated.transport = .stdio(MCPStdioConfiguration(
+            command: "/usr/bin/example",
+            environment: ["TOKEN": "new-secret"]
+        ))
+
+        do {
+            try await ambiguousStore.save([updated])
+            XCTFail("A third visible document must report durability uncertainty.")
+        } catch let error as MCPSettingsStoreDurabilityError {
+            XCTAssertTrue(error.primaryError is InjectedMCPPersistenceError)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: file), thirdDocument)
+        XCTAssertEqual(Set(secrets.snapshot().values), ["old-secret", "new-secret"])
+    }
+
+    func testMCPDeleteCommittedThenThrowKeepsDeletedDocumentAndCredentialsAligned() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-delete-post-commit-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let server = MCPServerConfiguration(
+            name: "Delete me",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "delete-secret"]
+            ))
+        )
+        let normalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        try await normalStore.save([server])
+        let uncertainStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            removeData: { url in
+                try FileManager.default.removeItem(at: url)
+                throw InjectedMCPPersistenceError.failure
+            }
+        )
+
+        // Visible absence is not enough to prove the parent-directory update is
+        // crash-durable. The credential must survive a possible metadata rollback.
+        do {
+            try await uncertainStore.deleteAll()
+            XCTFail("A post-delete durability failure must remain visible.")
+        } catch let error as MCPSettingsStoreDurabilityError {
+            XCTAssertTrue(error.primaryError is InjectedMCPPersistenceError)
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(Array(secrets.snapshot().values), ["delete-secret"])
+    }
+
+    func testMCPDeleteFailureBeforeUnlinkRestoresCredentials() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-delete-pre-commit-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let server = MCPServerConfiguration(
+            name: "Retain me",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "retained-secret"]
+            ))
+        )
+        let normalStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        try await normalStore.save([server])
+        let failingStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            removeData: { _ in throw InjectedMCPPersistenceError.failure }
+        )
+
+        do {
+            try await failingStore.deleteAll()
+            XCTFail("A pre-delete failure must abort deletion.")
+        } catch {
+            XCTAssertTrue(error is InjectedMCPPersistenceError)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(Array(secrets.snapshot().values), ["retained-secret"])
+    }
+
+    func testMCPDeleteCleanupFailureOccursOnlyAfterMetadataCommit() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-delete-cleanup-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let server = MCPServerConfiguration(
+            name: "Delete cleanup",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "orphan-safe-secret"]
+            ))
+        )
+        try await store.save([server])
+        secrets.failNextDelete()
+
+        do {
+            try await store.deleteAll()
+            XCTFail("A post-commit credential cleanup failure must remain visible.")
+        } catch let error as MCPSettingsStoreCredentialCleanupError {
+            XCTAssertEqual(error.operation, .deleteAll)
+            XCTAssertEqual(error.failures.count, 1)
+            XCTAssertFalse(error.localizedDescription.contains("orphan-safe-secret"))
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(Array(secrets.snapshot().values), ["orphan-safe-secret"])
+        let afterDelete = try await store.load()
+        XCTAssertTrue(afterDelete.isEmpty)
+    }
+
+    func testLegacyFixedMarkerLoadsAndMigratesToVersionedCredentialReference() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-legacy-reference-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let serverID = UUID()
+        let legacyAccount = "mcp|\(serverID.uuidString.lowercased())|env|TOKEN"
+        try secrets.save("legacy-secret", account: legacyAccount)
+        let persistedServer = MCPServerConfiguration(
+            id: serverID,
+            name: "Legacy",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN": "${LUMACHAT_MCP_KEYCHAIN}"]
+            ))
+        )
+        let serverObject = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(persistedServer)
+        )
+        let legacyDocument = try JSONSerialization.data(
+            withJSONObject: ["version": 1, "servers": [serverObject]],
+            options: [.sortedKeys]
+        )
+        try legacyDocument.write(to: file)
+
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let loaded = try await store.load()
+        guard case .stdio(let loadedConfiguration) = try XCTUnwrap(loaded.first).transport else {
+            return XCTFail("Expected STDIO configuration")
+        }
+        XCTAssertEqual(loadedConfiguration.environment["TOKEN"], "legacy-secret")
+
+        try await store.save(loaded)
+        let migratedText = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(migratedText.contains("${LUMACHAT_MCP_KEYCHAIN:"))
+        XCTAssertNil(try secrets.load(account: legacyAccount))
+        XCTAssertEqual(Array(secrets.snapshot().values), ["legacy-secret"])
+        let migrated = try await store.load()
+        XCTAssertEqual(migrated, loaded)
+    }
+
+    func testVersionedMarkerCannotReferenceAnotherLogicalCredentialField() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-cross-field-reference-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let store = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let server = MCPServerConfiguration(
+            name: "Scoped references",
+            transport: .stdio(MCPStdioConfiguration(
+                command: "/usr/bin/example",
+                environment: ["TOKEN_A": "secret-a", "TOKEN_B": "secret-b"]
+            ))
+        )
+        try await store.save([server])
+        let accountA = try XCTUnwrap(secrets.snapshot().first(where: { $0.value == "secret-a" })?.key)
+        let markerA = testVersionedMCPMarker(account: accountA)
+
+        var document = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]
+        )
+        var servers = try XCTUnwrap(document["servers"] as? [[String: Any]])
+        var persistedServer = try XCTUnwrap(servers.first)
+        var transport = try XCTUnwrap(persistedServer["transport"] as? [String: Any])
+        var environment = try XCTUnwrap(transport["env"] as? [String: String])
+        environment["TOKEN_B"] = markerA
+        transport["env"] = environment
+        persistedServer["transport"] = transport
+        servers[0] = persistedServer
+        document["servers"] = servers
+        try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys]).write(to: file)
+
+        do {
+            _ = try await store.load()
+            XCTFail("A versioned marker must be scoped to its exact logical field.")
+        } catch let error as MCPError {
+            guard case .invalidConfiguration(let detail) = error else {
+                return XCTFail("Expected invalid configuration, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("reference is invalid"))
+            XCTAssertFalse(error.localizedDescription.contains("secret-a"))
+        }
+    }
+
+    func testConcurrentMCPStoreInstancesSerializeMergeTransactions() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-concurrent-stores-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("servers.json")
+        let secrets = MockMCPSecretStore()
+        let firstWriterEntered = expectation(description: "first MCP writer entered")
+        let firstStore = MCPSettingsStore(
+            fileURL: file,
+            secretStore: secrets,
+            writeData: { data, url in
+                firstWriterEntered.fulfill()
+                Darwin.usleep(150_000)
+                try AtomicFileWriter.write(data, to: url)
+            }
+        )
+        let secondStore = MCPSettingsStore(fileURL: file, secretStore: secrets)
+        let firstDocument = Data(#"{"mcpServers":{"First":{"command":"/usr/bin/first"}}}"#.utf8)
+        let secondDocument = Data(#"{"mcpServers":{"Second":{"command":"/usr/bin/second"}}}"#.utf8)
+
+        let firstTask = Task { try await firstStore.importAndSave(firstDocument) }
+        await fulfillment(of: [firstWriterEntered], timeout: 2)
+        let secondTask = Task { try await secondStore.importAndSave(secondDocument) }
+        _ = try await firstTask.value
+        _ = try await secondTask.value
+
+        let loadedNames = Set(try await secondStore.load().map(\.name))
+        XCTAssertEqual(loadedNames, ["First", "Second"])
+    }
+}
+
+private func testVersionedMCPMarker(account: String) -> String {
+    let encoded = Data(account.utf8)
+        .base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+    return "${LUMACHAT_MCP_KEYCHAIN:\(encoded)}"
 }
 
 private struct MockMCPTransportFactory: MCPTransportFactory {
@@ -559,6 +1182,7 @@ private final class MockMCPSecretStore: MCPSecretStore, @unchecked Sendable {
     private var values: [String: String] = [:]
     private var saves = 0
     private var failAtSave: Int?
+    private var failDelete = false
 
     func save(_ value: String, account: String) throws {
         try lock.withLock {
@@ -576,14 +1200,32 @@ private final class MockMCPSecretStore: MCPSecretStore, @unchecked Sendable {
     }
 
     func delete(account: String) throws {
-        _ = lock.withLock { values.removeValue(forKey: account) }
+        try lock.withLock {
+            if failDelete {
+                failDelete = false
+                throw MockMCPSecretStoreError.injectedFailure
+            }
+            values.removeValue(forKey: account)
+        }
     }
 
     func failAfterSuccessfulSaves(_ count: Int) {
         lock.withLock { failAtSave = saves + max(0, count) + 1 }
     }
+
+    func failNextDelete() {
+        lock.withLock { failDelete = true }
+    }
+
+    func snapshot() -> [String: String] {
+        lock.withLock { values }
+    }
 }
 
 private enum MockMCPSecretStoreError: Error {
     case injectedFailure
+}
+
+private enum InjectedMCPPersistenceError: Error {
+    case failure
 }

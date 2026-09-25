@@ -2,14 +2,22 @@ import Foundation
 
 enum BuiltinToolEnvironmentConfigurationError: LocalizedError, Sendable {
     case servicesAlreadyCreated
+    case terminalPersistencePending
 
     var errorDescription: String? {
         switch self {
         case .servicesAlreadyCreated:
             "Git credential resolution must be configured before task services are created."
+        case .terminalPersistencePending:
+            "Task Terminal shutdown metadata is still waiting for durable storage."
         }
     }
 }
+
+typealias TaskTerminalServiceFactory = @Sendable (
+    UUID,
+    WorkspaceSecurityValidator
+) -> TaskTerminalService
 
 fileprivate struct WorkspaceToolServices: Sendable {
     var workspace: AgentWorkspace
@@ -32,18 +40,29 @@ actor BuiltinToolEnvironment {
     }
 
     private var servicesBySession: [ServiceKey: WorkspaceToolServices] = [:]
+    private var pendingTaskTerminalDisposals: Set<ServiceKey> = []
+    private var closingSessionIDs: Set<UUID> = []
+    private var disposalSessionIDsInFlight: Set<UUID> = []
+    private var isStoppingAllProcesses = false
+    private var isStopAllProcessesInFlight = false
+    private var taskTerminalPersistenceRetryTask: Task<Void, Never>?
     nonisolated fileprivate let imageAttachmentStore: AgentImageAttachmentStore
     nonisolated fileprivate let browserCoordinator: BrowserToolCoordinator
     private var remoteCredentialResolver: GitRemoteCredentialResolver
+    private let taskTerminalServiceFactory: TaskTerminalServiceFactory
 
     init(
         imageAttachmentStore: AgentImageAttachmentStore = AgentImageAttachmentStore(),
         browserCoordinator: BrowserToolCoordinator = BrowserToolCoordinator(),
-        remoteCredentialResolver: GitRemoteCredentialResolver = .disabled
+        remoteCredentialResolver: GitRemoteCredentialResolver = .disabled,
+        taskTerminalServiceFactory: @escaping TaskTerminalServiceFactory = {
+            TaskTerminalService(taskID: $0, validator: $1)
+        }
     ) {
         self.imageAttachmentStore = imageAttachmentStore
         self.browserCoordinator = browserCoordinator
         self.remoteCredentialResolver = remoteCredentialResolver
+        self.taskTerminalServiceFactory = taskTerminalServiceFactory
     }
 
     func configureRemoteCredentialResolver(
@@ -62,6 +81,13 @@ actor BuiltinToolEnvironment {
             taskID: context.taskID,
             workspaceID: workspace.id
         )
+        guard !isStoppingAllProcesses,
+              !closingSessionIDs.contains(context.sessionID),
+              !pendingTaskTerminalDisposals.contains(where: {
+                  $0.sessionID == context.sessionID && $0.taskID == context.taskID
+              }) else {
+            throw BuiltinToolEnvironmentConfigurationError.terminalPersistencePending
+        }
         if let existing = servicesBySession[key],
            existing.workspace.rootPath == workspace.rootPath,
            existing.workspace.allowedPaths == workspace.allowedPaths {
@@ -82,10 +108,7 @@ actor BuiltinToolEnvironment {
         let files = WorkspaceFileSystem(validator: validator, changes: changes)
         let search = WorkspaceSearchService(validator: validator)
         let terminal = try TerminalSession(validator: validator)
-        let taskTerminal = TaskTerminalService(
-            taskID: context.taskID,
-            validator: validator
-        )
+        let taskTerminal = taskTerminalServiceFactory(context.taskID, validator)
         let git: Result<GitService, GitServiceError>
         do {
             git = .success(try GitService(
@@ -159,14 +182,42 @@ actor BuiltinToolEnvironment {
         )
     }
 
-    func remove(sessionID: UUID) async {
+    func remove(sessionID: UUID) async throws {
+        guard disposalSessionIDsInFlight.insert(sessionID).inserted else {
+            throw BuiltinToolEnvironmentConfigurationError.terminalPersistencePending
+        }
+        closingSessionIDs.insert(sessionID)
+        defer { disposalSessionIDsInFlight.remove(sessionID) }
         await browserCoordinator.close(agentSessionID: sessionID)
         let keys = servicesBySession.keys.filter { $0.sessionID == sessionID }
+        var durable = true
         for key in keys {
-            if let services = servicesBySession.removeValue(forKey: key) {
+            guard let services = servicesBySession[key] else { continue }
+            let state: TaskTerminalPersistenceState
+            if pendingTaskTerminalDisposals.contains(key) {
+                do {
+                    state = try await services.taskTerminal.retryPendingPersistence()
+                } catch {
+                    durable = false
+                    continue
+                }
+            } else {
+                pendingTaskTerminalDisposals.insert(key)
                 await services.terminal.dispose()
-                await services.taskTerminal.disposeAll()
+                state = await services.taskTerminal.disposeAll()
             }
+            if state == .durable {
+                pendingTaskTerminalDisposals.remove(key)
+                servicesBySession.removeValue(forKey: key)
+            } else {
+                durable = false
+            }
+        }
+        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
+        if durable {
+            closingSessionIDs.remove(sessionID)
+        } else {
+            throw BuiltinToolEnvironmentConfigurationError.terminalPersistencePending
         }
     }
 
@@ -177,14 +228,82 @@ actor BuiltinToolEnvironment {
         }
     }
 
-    func stopAllProcesses() async {
+    @discardableResult
+    func stopAllProcesses() async -> Bool {
+        guard !isStopAllProcessesInFlight else { return false }
+        isStopAllProcessesInFlight = true
+        isStoppingAllProcesses = true
+        defer { isStopAllProcessesInFlight = false }
         await browserCoordinator.stopAll()
-        let services = Array(servicesBySession.values)
-        servicesBySession.removeAll()
-        for service in services {
-            await service.terminal.dispose()
-            await service.taskTerminal.disposeAll()
+        let keys = Array(servicesBySession.keys)
+        var durable = true
+        for key in keys {
+            guard let service = servicesBySession[key] else { continue }
+            let state: TaskTerminalPersistenceState
+            if pendingTaskTerminalDisposals.contains(key) {
+                do {
+                    state = try await service.taskTerminal.retryPendingPersistence()
+                } catch {
+                    durable = false
+                    continue
+                }
+            } else {
+                pendingTaskTerminalDisposals.insert(key)
+                await service.terminal.dispose()
+                state = await service.taskTerminal.disposeAll()
+            }
+            if state == .durable {
+                pendingTaskTerminalDisposals.remove(key)
+                servicesBySession.removeValue(forKey: key)
+            } else {
+                durable = false
+            }
         }
+        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
+        if durable { isStoppingAllProcesses = false }
+        return durable
+    }
+
+    func pendingTaskTerminalPersistenceCount() -> Int {
+        pendingTaskTerminalDisposals.count
+    }
+
+    private func scheduleTaskTerminalPersistenceRetry() {
+        guard taskTerminalPersistenceRetryTask == nil,
+              !pendingTaskTerminalDisposals.isEmpty else { return }
+        taskTerminalPersistenceRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.retryPendingTaskTerminalPersistence()
+        }
+    }
+
+    private func retryPendingTaskTerminalPersistence() async {
+        taskTerminalPersistenceRetryTask = nil
+        let keys = Array(pendingTaskTerminalDisposals)
+        for key in keys {
+            guard let service = servicesBySession[key] else {
+                pendingTaskTerminalDisposals.remove(key)
+                continue
+            }
+            do {
+                let state = try await service.taskTerminal.retryPendingPersistence()
+                guard state == .durable else { continue }
+                pendingTaskTerminalDisposals.remove(key)
+                servicesBySession.removeValue(forKey: key)
+            } catch {
+                // Retain the exact disposed service and retry later. Dropping it
+                // here would lose the only authoritative stopped snapshot.
+            }
+        }
+        for sessionID in Array(closingSessionIDs) where
+            !pendingTaskTerminalDisposals.contains(where: { $0.sessionID == sessionID }) {
+            closingSessionIDs.remove(sessionID)
+        }
+        if pendingTaskTerminalDisposals.isEmpty {
+            isStoppingAllProcesses = false
+        }
+        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
     }
 
     func taskTerminalService(for context: AgentToolContext) throws -> TaskTerminalService {
@@ -1618,6 +1737,10 @@ enum BuiltinToolFactory {
                 "terminal_id": .string(descriptor.id.uuidString.lowercased()),
                 "title": .string(safeTitle),
                 "state": .string(descriptor.metadata.state.rawValue),
+                "persistence_state": .string(
+                    descriptor.persistenceState == .durable
+                        ? "durable" : "retry_required"
+                ),
                 "rows": .number(Double(descriptor.metadata.rows)),
                 "columns": .number(Double(descriptor.metadata.columns)),
                 "exit_code": descriptor.metadata.exitCode

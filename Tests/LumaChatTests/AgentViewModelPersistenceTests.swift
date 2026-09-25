@@ -33,6 +33,7 @@ private actor ScriptedAgentSessionStore: AgentSessionPersisting {
 
     func attempts() -> Int { saveAttempts }
     func saved() -> [AgentSession] { savedSessions }
+    func failNextSaves(_ count: Int) { remainingSaveFailures = max(0, count) }
 }
 
 private actor BlockingAgentSessionStore: AgentSessionPersisting {
@@ -217,8 +218,9 @@ final class AgentViewModelPersistenceTests: XCTestCase {
             state: .paused
         )
 
-        await viewModel.persistControlledTermination(paused, runID: runID)
+        let didPersist = await viewModel.persistControlledTermination(paused, runID: runID)
 
+        XCTAssertTrue(didPersist)
         XCTAssertEqual(viewModel.draft, "")
         XCTAssertTrue(viewModel.pendingImageAttachments.isEmpty)
         XCTAssertEqual(viewModel.sessions.first, paused)
@@ -250,8 +252,9 @@ final class AgentViewModelPersistenceTests: XCTestCase {
             state: .cancelled
         )
 
-        await viewModel.persistControlledTermination(cancelled, runID: runID)
+        let didPersist = await viewModel.persistControlledTermination(cancelled, runID: runID)
 
+        XCTAssertFalse(didPersist)
         XCTAssertEqual(viewModel.draft, "retry after failed stop save")
         XCTAssertEqual(viewModel.pendingImageAttachments, [attachment])
         XCTAssertEqual(viewModel.sessions.first, cancelled)
@@ -272,8 +275,9 @@ final class AgentViewModelPersistenceTests: XCTestCase {
         viewModel.beginRunTracking(runID: runID, session: running, userRequest: nil)
         await viewModel.handle(.sessionUpdated(running), runID: runID)
 
-        await viewModel.shutdown()
+        let didPersist = await viewModel.shutdown()
 
+        XCTAssertTrue(didPersist)
         let saved = await store.saved()
         XCTAssertEqual(
             saved.count,
@@ -284,6 +288,34 @@ final class AgentViewModelPersistenceTests: XCTestCase {
         XCTAssertEqual(saved.last?.state, .cancelled)
         XCTAssertEqual(saved.last?.steps.last?.status, .cancelled)
         XCTAssertFalse(viewModel.isRunning)
+    }
+
+    @MainActor
+    func testShutdownRefusesTerminationWhenControlledSessionCannotPersist() async throws {
+        let store = ScriptedAgentSessionStore(saveFailures: 0)
+        let viewModel = AgentViewModel(sessionStore: store)
+        var running = AgentSession(mode: .agent)
+        running.state = .running
+        let attachment = try makeAttachment()
+        let runID = UUID()
+
+        viewModel.selectedSessionID = running.id
+        viewModel.draft = "retain after failed shutdown"
+        viewModel.beginRunTracking(
+            runID: runID,
+            session: running,
+            userRequest: "retain after failed shutdown"
+        )
+        try viewModel.recordPendingImageAttachment(attachment, for: running.id)
+        await viewModel.handle(.sessionUpdated(running), runID: runID)
+        await store.failNextSaves(1)
+
+        let canTerminate = await viewModel.shutdown()
+
+        XCTAssertFalse(canTerminate)
+        XCTAssertEqual(viewModel.draft, "retain after failed shutdown")
+        XCTAssertEqual(viewModel.pendingImageAttachments, [attachment])
+        XCTAssertTrue(viewModel.errorMessage?.contains("injected session save failure") == true)
     }
 
     @MainActor
@@ -378,7 +410,7 @@ final class AgentViewModelPersistenceTests: XCTestCase {
 
         await store.releaseSave()
         await finishing.value
-        await shutdown.value
+        _ = await shutdown.value
 
         let saved = await store.saved()
         XCTAssertEqual(saved.last?.state, .completed)

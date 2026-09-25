@@ -42,6 +42,9 @@ struct ModelParameterEditor: View {
             .padding(compact ? 14 : 16)
             .frame(width: compact ? 440 : nil, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .task(id: route.key.storageKey) {
+                await viewModel.refreshModelParameterCapabilities(for: route)
+            }
         }
     }
 

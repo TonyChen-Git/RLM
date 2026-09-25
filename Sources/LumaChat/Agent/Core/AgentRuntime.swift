@@ -127,6 +127,9 @@ struct AgentLoop: Sendable {
                         maxOutputTokens
                     )
                 }
+                if modelParameters.key.backend == .ollama {
+                    parameterCapabilities.supportsThinking = capabilities.supportsReasoning
+                }
                 effectiveParameterCapabilities = parameterCapabilities
                 effectiveParameterValues = ModelParameterValidation.normalized(
                     modelParameters.values,

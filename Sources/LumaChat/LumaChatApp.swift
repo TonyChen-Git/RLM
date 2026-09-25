@@ -3,15 +3,20 @@ import SwiftUI
 
 @MainActor
 private final class LumaApplicationDelegate: NSObject, NSApplicationDelegate {
-    var shutdownHandler: (@MainActor @Sendable () async -> Void)?
+    var shutdownHandler: (@MainActor @Sendable () async -> Bool)?
     private var isFinishingTermination = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let shutdownHandler, !isFinishingTermination else { return .terminateNow }
+        guard let shutdownHandler else { return .terminateNow }
+        // A second Quit request while the first durability drain is still in
+        // flight must join that request. Returning `.terminateNow` here would
+        // bypass the very persistence barrier this delegate installs.
+        guard !isFinishingTermination else { return .terminateLater }
         isFinishingTermination = true
         Task { @MainActor in
-            await shutdownHandler()
-            sender.reply(toApplicationShouldTerminate: true)
+            let canTerminate = await shutdownHandler()
+            isFinishingTermination = canTerminate
+            sender.reply(toApplicationShouldTerminate: canTerminate)
         }
         return .terminateLater
     }
@@ -31,7 +36,7 @@ struct LumaChatApp: App {
                 .frame(minWidth: 920, minHeight: 640)
                 .onAppear {
                     applicationDelegate.shutdownHandler = { [weak agentViewModel] in
-                        await agentViewModel?.shutdown()
+                        await agentViewModel?.shutdown() ?? true
                     }
                 }
                 .task {

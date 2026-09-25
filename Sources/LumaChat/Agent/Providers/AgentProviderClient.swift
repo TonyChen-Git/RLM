@@ -166,33 +166,7 @@ private struct AgentProviderClient: Sendable {
         let model = resolvedModel(requestedModel)
         switch kind {
         case .ollama:
-            if let cached = await capabilityCache.value(for: model) { return cached }
-            let fallback = providerCapabilities(for: .ollama, model: model)
-            guard !model.isEmpty else { return applyingVisionOverride(to: fallback) }
-            let resolved: ModelCapabilities
-            do {
-                let request = try OllamaAgentWireAdapter.makeCapabilitiesRequest(
-                    model: model,
-                    settings: settings,
-                    apiKey: apiKey
-                )
-                let data = try await transport.data(
-                    for: request,
-                    provider: OllamaAgentWireAdapter.providerName,
-                    model: model,
-                    requestedTools: false
-                )
-                resolved = OllamaAgentWireAdapter.parseCapabilities(data)
-                    .map(ModelCapabilities.init) ?? fallback
-            } catch {
-                // Older and compatible Ollama servers can lack /api/show or the
-                // capabilities field. Fall back to protocol-level behavior and
-                // let /api/chat return a precise unsupported-tools error.
-                resolved = fallback
-            }
-            let effective = applyingVisionOverride(to: resolved)
-            await capabilityCache.insert(effective, for: model)
-            return effective
+            return await ollamaCapabilityResolution(for: model).provider
         case .openAICompatible, .anthropic:
             return applyingVisionOverride(to: providerCapabilities(for: kind, model: model))
         }
@@ -333,9 +307,24 @@ private struct AgentProviderClient: Sendable {
         let model = resolvedModel(request.model)
         guard !model.isEmpty else { throw ProviderWireError.missingModel }
 
-        if kind == .ollama, !request.tools.isEmpty {
-            let capabilities = await capabilities(for: model)
-            guard capabilities.supportsTools else {
+        // Validate and materialize all request-owned image data before any
+        // advisory capability lookup can touch the network. Invalid or
+        // unreferenced payloads must fail closed without issuing /api/show.
+        try AgentImageAttachmentLimits.validate(request.imagePayloads)
+        let preparedMessages = try wireMessages(
+            request.messages,
+            payloads: request.imagePayloads
+        )
+
+        let ollamaResolution: OllamaCapabilityResolution?
+        if kind == .ollama {
+            ollamaResolution = await ollamaCapabilityResolution(for: model)
+        } else {
+            ollamaResolution = nil
+        }
+
+        if !request.tools.isEmpty, let ollamaResolution {
+            guard ollamaResolution.provider.supportsTools else {
                 throw ProviderWireError.unsupportedTools(
                     provider: OllamaAgentWireAdapter.providerName,
                     model: model,
@@ -344,14 +333,35 @@ private struct AgentProviderClient: Sendable {
             }
         }
 
-        try AgentImageAttachmentLimits.validate(request.imagePayloads)
-        let parameterCapabilities = ModelParameterRecommendationEngine.capabilities(
+        var parameterCapabilities = ModelParameterRecommendationEngine.capabilities(
             for: ModelParameterRoute(
                 settings: settings,
                 useCase: .agent,
                 modelID: model
             )
         )
+        if let discovered = ollamaResolution?.modelParameters {
+            if let contextWindow = discovered.modelMaximumContextTokens,
+               contextWindow > 0 {
+                parameterCapabilities.modelMaximumContextTokens = min(
+                    parameterCapabilities.modelMaximumContextTokens,
+                    contextWindow
+                )
+            }
+            if let maxOutputTokens = discovered.maximumOutputTokens,
+               maxOutputTokens > 0 {
+                parameterCapabilities.maximumOutputTokens = min(
+                    parameterCapabilities.maximumOutputTokens,
+                    maxOutputTokens
+                )
+            }
+            // A context-only response from an older Ollama build is not
+            // evidence that the model lacks thinking support. Only an actual
+            // capabilities array may override the centralized family rule.
+            if let supportsThinking = discovered.supportsThinking {
+                parameterCapabilities.supportsThinking = supportsThinking
+            }
+        }
         let safeContext = min(
             parameterCapabilities.maximumContextTokens,
             max(1, request.contextWindowTokens ?? settings.contextLength)
@@ -361,11 +371,11 @@ private struct AgentProviderClient: Sendable {
             max(1, request.maxOutputTokens)
         )
 
-        return try (
+        return (
             model,
             ProviderWireRequest(
                 model: model,
-                messages: wireMessages(request.messages, payloads: request.imagePayloads),
+                messages: preparedMessages,
                 tools: request.tools.map {
                     ProviderWireToolDefinition(
                         name: $0.name,
@@ -536,6 +546,58 @@ private struct AgentProviderClient: Sendable {
         }
     }
 
+    private func ollamaCapabilityResolution(
+        for model: String
+    ) async -> OllamaCapabilityResolution {
+        let fallback = applyingVisionOverride(
+            to: providerCapabilities(for: .ollama, model: model)
+        )
+        guard !model.isEmpty else {
+            return OllamaCapabilityResolution(provider: fallback, modelParameters: nil)
+        }
+        if let cached = await capabilityCache.value(for: model) { return cached }
+
+        do {
+            let request = try OllamaAgentWireAdapter.makeCapabilitiesRequest(
+                model: model,
+                settings: settings,
+                apiKey: apiKey
+            )
+            let data = try await transport.data(
+                for: request,
+                provider: OllamaAgentWireAdapter.providerName,
+                model: model,
+                requestedTools: false
+            )
+            let wire = OllamaAgentWireAdapter.parseCapabilities(data)
+            let modelParameters = OllamaAgentWireAdapter
+                .parseModelParameterCapabilities(data)
+            guard wire != nil || modelParameters != nil else {
+                // An older/compatible server may not implement metadata. Do
+                // not negative-cache that transient absence: a later request
+                // must be allowed to discover newly available capabilities.
+                return OllamaCapabilityResolution(
+                    provider: fallback,
+                    modelParameters: nil
+                )
+            }
+            let resolution = OllamaCapabilityResolution(
+                provider: applyingVisionOverride(
+                    to: wire.map(ModelCapabilities.init) ?? fallback
+                ),
+                modelParameters: modelParameters
+            )
+            await capabilityCache.insert(resolution, for: model)
+            return resolution
+        } catch {
+            // Transport and parse failures are advisory for capability
+            // discovery. Preserve the static family/backend recommendation and
+            // retry discovery on the next request instead of permanently
+            // caching a false negative.
+            return OllamaCapabilityResolution(provider: fallback, modelParameters: nil)
+        }
+    }
+
     private func applyingVisionOverride(
         to capabilities: ModelCapabilities
     ) -> ModelCapabilities {
@@ -670,11 +732,18 @@ private struct AgentProviderClient: Sendable {
     }
 }
 
-private actor AgentProviderCapabilityCache {
-    private var values: [String: ModelCapabilities] = [:]
+private struct OllamaCapabilityResolution: Sendable {
+    var provider: ModelCapabilities
+    var modelParameters: DiscoveredModelParameterCapabilities?
+}
 
-    func value(for model: String) -> ModelCapabilities? { values[model] }
-    func insert(_ value: ModelCapabilities, for model: String) { values[model] = value }
+private actor AgentProviderCapabilityCache {
+    private var values: [String: OllamaCapabilityResolution] = [:]
+
+    func value(for model: String) -> OllamaCapabilityResolution? { values[model] }
+    func insert(_ value: OllamaCapabilityResolution, for model: String) {
+        values[model] = value
+    }
 }
 
 private extension ModelCapabilities {

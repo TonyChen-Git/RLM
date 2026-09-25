@@ -57,6 +57,10 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
     var connectTimeout: TimeInterval
     var commandTimeout: TimeInterval
     var maximumOutputBytes: Int
+    /// Opaque generation identifier for the Keychain item selected by this
+    /// metadata record. Older documents omit it and continue to resolve the
+    /// legacy runner-ID account until their credential is next changed.
+    var credentialReference: String?
 
     init(
         id: UUID = UUID(),
@@ -71,7 +75,8 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
         authentication: RemoteSSHAuthentication = .keychainPrivateKey,
         connectTimeout: TimeInterval = 15,
         commandTimeout: TimeInterval = 120,
-        maximumOutputBytes: Int = 1 * 1_024 * 1_024
+        maximumOutputBytes: Int = 1 * 1_024 * 1_024,
+        credentialReference: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -86,12 +91,13 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
         self.connectTimeout = connectTimeout
         self.commandTimeout = commandTimeout
         self.maximumOutputBytes = maximumOutputBytes
+        self.credentialReference = credentialReference
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, enabled, transport, host, port, username, workspaceRoot
         case knownHostsFile, authentication, connectTimeout, commandTimeout
-        case maximumOutputBytes
+        case maximumOutputBytes, credentialReference
     }
 
     init(from decoder: Decoder) throws {
@@ -124,7 +130,11 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
             maximumOutputBytes: try values.decodeIfPresent(
                 Int.self,
                 forKey: .maximumOutputBytes
-            ) ?? 1 * 1_024 * 1_024
+            ) ?? 1 * 1_024 * 1_024,
+            credentialReference: try values.decodeIfPresent(
+                String.self,
+                forKey: .credentialReference
+            )
         )
         do {
             self = try validated()
@@ -174,6 +184,16 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
                 "Remote output limit is outside the supported range."
             )
         }
+        if let credentialReference = result.credentialReference {
+            guard authentication == .keychainPrivateKey,
+                  credentialReference == credentialReference.lowercased(),
+                  UUID(uuidString: credentialReference)?.uuidString.lowercased()
+                    == credentialReference else {
+                throw RemoteExecutionError.invalidConfiguration(
+                    "Remote runner credential reference is invalid."
+                )
+            }
+        }
         return result
     }
 
@@ -203,6 +223,7 @@ struct RemoteRunnerConfiguration: Codable, Equatable, Identifiable, Sendable {
         update("connect-timeout", String(value.connectTimeout.bitPattern))
         update("command-timeout", String(value.commandTimeout.bitPattern))
         update("maximum-output", String(value.maximumOutputBytes))
+        update("credential-reference", value.credentialReference ?? "legacy")
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 

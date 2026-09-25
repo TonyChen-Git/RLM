@@ -117,14 +117,14 @@ enum OllamaAgentWireAdapter {
         )
     }
 
-    /// Returns nil when an older Ollama server omitted capability metadata.
-    /// The concrete provider then uses provider-level defaults; model names are
-    /// deliberately never inspected.
+    /// Returns nil only when `/api/show` exposes neither capability metadata nor
+    /// a model context limit. Older Ollama builds can omit the capabilities
+    /// array while still reporting `model_info`; preserve protocol-level tool
+    /// fallback in that case while failing closed for reasoning fields.
     static func parseCapabilities(_ data: Data) -> ProviderWireCapabilities? {
-        guard let response = try? JSONDecoder().decode(OllamaWireShowResponse.self, from: data),
-              let rawCapabilities = response.capabilities else { return nil }
-        let capabilities = Set(rawCapabilities.map { $0.lowercased() })
-        let supportsTools = capabilities.contains("tools") || capabilities.contains("tool")
+        guard let response = try? JSONDecoder().decode(OllamaWireShowResponse.self, from: data)
+        else { return nil }
+        let capabilities = response.capabilities.map { Set($0.map { $0.lowercased() }) }
         let contextWindow = response.modelInfo?
             .filter { key, _ in
                 let key = key.lowercased()
@@ -132,15 +132,48 @@ enum OllamaAgentWireAdapter {
             }
             .compactMap { ProviderNumericSafety.capabilityLimit($0.value.intValue) }
             .max()
+        guard capabilities != nil || contextWindow != nil else { return nil }
+        let supportsTools = capabilities.map {
+            $0.contains("tools") || $0.contains("tool")
+        } ?? true
         return ProviderWireCapabilities(
             supportsTools: supportsTools,
-            supportsVision: capabilities.contains("vision"),
+            supportsVision: capabilities?.contains("vision") ?? false,
             supportsStreaming: true,
             supportsParallelTools: supportsTools,
-            supportsReasoning: capabilities.contains("thinking") || capabilities.contains("reasoning"),
+            supportsReasoning: capabilities.map {
+                $0.contains("thinking") || $0.contains("reasoning")
+            } ?? false,
             supportsSystemPrompt: true,
             contextWindow: contextWindow,
             maxOutputTokens: nil
+        )
+    }
+
+    /// Extracts only model-parameter capabilities. Unlike the Agent tool
+    /// capability parser, this remains useful when an older Ollama build omits
+    /// the `capabilities` array but still reports `model_info` limits.
+    static func parseModelParameterCapabilities(
+        _ data: Data
+    ) -> DiscoveredModelParameterCapabilities? {
+        guard let response = try? JSONDecoder().decode(OllamaWireShowResponse.self, from: data)
+        else { return nil }
+        let advertised = response.capabilities.map { Set($0.map { $0.lowercased() }) }
+        let contextWindow = response.modelInfo?
+            .filter { key, _ in
+                let key = key.lowercased()
+                return key == "context_length" || key.hasSuffix(".context_length")
+            }
+            .compactMap { ProviderNumericSafety.capabilityLimit($0.value.intValue) }
+            .max()
+        let supportsThinking = advertised.map {
+            $0.contains("thinking") || $0.contains("reasoning")
+        }
+        guard contextWindow != nil || supportsThinking != nil else { return nil }
+        return DiscoveredModelParameterCapabilities(
+            modelMaximumContextTokens: contextWindow,
+            maximumOutputTokens: nil,
+            supportsThinking: supportsThinking
         )
     }
 

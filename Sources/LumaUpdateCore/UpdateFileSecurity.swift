@@ -19,6 +19,20 @@ public struct LumaUpdateApplicationIdentity: Equatable, Sendable {
 public enum LumaUpdateFileSecurity {
     public static let maximumJournalBytes = 128 * 1_024
 
+    struct AtomicJSONWriteOperations: Sendable {
+        let openParentDirectory: @Sendable (String) -> Int32
+        let syncFile: @Sendable (Int32) -> Int32
+        let syncParentDirectory: @Sendable (Int32) -> Int32
+
+        static let live = AtomicJSONWriteOperations(
+            openParentDirectory: { path in
+                Darwin.open(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW_ANY)
+            },
+            syncFile: { Darwin.fsync($0) },
+            syncParentDirectory: { Darwin.fsync($0) }
+        )
+    }
+
     public static func readRegularFile(_ url: URL, maximumBytes: Int) throws -> Data {
         let path = url.standardizedFileURL.path
         let descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY)
@@ -57,6 +71,14 @@ public enum LumaUpdateFileSecurity {
     }
 
     public static func writeJSONAtomically<T: Encodable>(_ value: T, to url: URL) throws {
+        try writeJSONAtomically(value, to: url, operations: .live)
+    }
+
+    static func writeJSONAtomically<T: Encodable>(
+        _ value: T,
+        to url: URL,
+        operations: AtomicJSONWriteOperations
+    ) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -67,41 +89,109 @@ public enum LumaUpdateFileSecurity {
         guard data.count <= maximumJournalBytes else {
             throw LumaUpdateError.persistenceFailure("document exceeds the bounded size")
         }
-        let parent = url.deletingLastPathComponent().standardizedFileURL
+        let destination = url.standardizedFileURL
+        let parent = destination.deletingLastPathComponent()
+        let destinationName = destination.lastPathComponent
+        guard destination.isFileURL,
+              destination.path.hasPrefix("/"),
+              destination.path != "/",
+              !destinationName.isEmpty,
+              destinationName != ".",
+              destinationName != "..",
+              !destinationName.contains("/") else {
+            throw LumaUpdateError.unsafePath(destination.path)
+        }
         do {
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         } catch {
             throw LumaUpdateError.persistenceFailure(error.localizedDescription)
         }
-        let temporary = parent.appendingPathComponent(
-            ".lumachat-update-\(UUID().uuidString).tmp",
-            isDirectory: false
+
+        // Open and retain the parent directory before creating or replacing a
+        // file. If the directory cannot be opened safely, no rename occurs.
+        // Keeping this descriptor also makes the final directory fsync apply
+        // to the exact directory in which renameat committed the replacement.
+        let parentDescriptor = operations.openParentDirectory(parent.path)
+        guard parentDescriptor >= 0 else {
+            throw LumaUpdateError.persistenceFailure(
+                "parent directory could not be opened: \(currentPOSIXDescription())"
+            )
+        }
+        defer { _ = Darwin.close(parentDescriptor) }
+
+        let temporaryName = ".lumachat-update-\(UUID().uuidString.lowercased()).tmp"
+        let temporaryDescriptor = Darwin.openat(
+            parentDescriptor,
+            temporaryName,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o600)
         )
+        guard temporaryDescriptor >= 0 else {
+            throw LumaUpdateError.persistenceFailure(currentPOSIXDescription())
+        }
+        var temporaryIsOpen = true
+        var temporaryExists = true
+
         do {
-            try data.write(to: temporary, options: .withoutOverwriting)
-            _ = chmod(temporary.path, S_IRUSR | S_IWUSR)
-            let descriptor = Darwin.open(temporary.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY)
-            guard descriptor >= 0 else { throw LumaUpdateError.unsafePath(temporary.path) }
-            let syncResult = Darwin.fsync(descriptor)
-            _ = Darwin.close(descriptor)
-            guard syncResult == 0 else {
+            try data.withUnsafeBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                var offset = 0
+                while offset < bytes.count {
+                    let written = Darwin.write(
+                        temporaryDescriptor,
+                        base.advanced(by: offset),
+                        bytes.count - offset
+                    )
+                    if written < 0, errno == EINTR { continue }
+                    guard written > 0 else {
+                        throw LumaUpdateError.persistenceFailure(currentPOSIXDescription())
+                    }
+                    offset += written
+                }
+            }
+            guard Darwin.fchmod(temporaryDescriptor, mode_t(0o600)) == 0 else {
+                throw LumaUpdateError.persistenceFailure(currentPOSIXDescription())
+            }
+            guard operations.syncFile(temporaryDescriptor) == 0 else {
                 throw LumaUpdateError.persistenceFailure("temporary document could not be synced")
             }
-            guard Darwin.rename(temporary.path, url.path) == 0 else {
-                throw LumaUpdateError.persistenceFailure(String(cString: strerror(errno)))
+            guard Darwin.close(temporaryDescriptor) == 0 else {
+                temporaryIsOpen = false
+                throw LumaUpdateError.persistenceFailure(currentPOSIXDescription())
             }
-            let parentDescriptor = Darwin.open(parent.path, O_RDONLY | O_CLOEXEC | O_DIRECTORY)
-            if parentDescriptor >= 0 {
-                _ = Darwin.fsync(parentDescriptor)
-                _ = Darwin.close(parentDescriptor)
+            temporaryIsOpen = false
+            guard Darwin.renameat(
+                parentDescriptor,
+                temporaryName,
+                parentDescriptor,
+                destinationName
+            ) == 0 else {
+                throw LumaUpdateError.persistenceFailure(currentPOSIXDescription())
+            }
+            temporaryExists = false
+            guard operations.syncParentDirectory(parentDescriptor) == 0 else {
+                // The rename is already visible, but its survival across a
+                // sudden host failure is unknown. Report that ambiguity rather
+                // than falsely claiming a durable transaction record.
+                throw LumaUpdateError.persistenceFailure(
+                    "document was replaced but its parent directory could not be synced"
+                )
             }
         } catch {
-            // This is a single host-created regular file, never a recursive
-            // cleanup. AppleDouble material is neither matched nor removed.
-            try? FileManager.default.removeItem(at: temporary)
+            if temporaryIsOpen { _ = Darwin.close(temporaryDescriptor) }
+            if temporaryExists {
+                // This is a single host-created regular file, never a
+                // recursive cleanup. AppleDouble material is neither matched
+                // nor removed.
+                _ = Darwin.unlinkat(parentDescriptor, temporaryName, 0)
+            }
             if let known = error as? LumaUpdateError { throw known }
             throw LumaUpdateError.persistenceFailure(error.localizedDescription)
         }
+    }
+
+    private static func currentPOSIXDescription() -> String {
+        String(cString: strerror(errno))
     }
 
     public static func containsAppleDouble(at root: URL) -> Bool {

@@ -292,6 +292,23 @@ final class TaskTerminalPaneModel: ObservableObject {
         }
     }
 
+    func retryPersistence() {
+        guard let service else { return }
+        let attachment = attachmentID
+        Task { [weak self] in
+            do {
+                _ = try await service.retryPendingPersistence()
+                let listed = try await service.list()
+                guard let self, self.isCurrent(service, attachment: attachment) else { return }
+                for descriptor in listed {
+                    self.install(descriptor, resetForReplay: false)
+                }
+            } catch {
+                self?.present(error, from: service, attachment: attachment)
+            }
+        }
+    }
+
     private func consume(_ event: TaskTerminalEvent, attachment: UUID) async {
         guard attachmentID == attachment else { return }
         switch event.kind {
@@ -528,6 +545,9 @@ struct TaskTerminalPane: View {
             toolbar
             Divider().opacity(0.55)
             tabs
+            if let persistenceFailure {
+                persistenceBanner(persistenceFailure)
+            }
             Divider().opacity(0.4)
 
             if let descriptor = model.selectedDescriptor {
@@ -756,6 +776,31 @@ struct TaskTerminalPane: View {
     private var canReconnect: Bool {
         guard let state = model.selectedDescriptor?.metadata.state else { return false }
         return state != .running
+    }
+
+    private var persistenceFailure: String? {
+        guard let state = model.selectedDescriptor?.persistenceState,
+              case .retryRequired(let detail) = state else {
+            return nil
+        }
+        return detail
+    }
+
+    private func persistenceBanner(_ detail: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+            Text("Terminal 狀態尚未寫入磁碟：\(detail)")
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button("重試保存") { model.retryPersistence() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .font(.caption)
+        .foregroundStyle(.orange)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.orange.opacity(0.08))
     }
 
     private var destructiveTitle: String {

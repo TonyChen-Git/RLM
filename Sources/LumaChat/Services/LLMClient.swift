@@ -22,7 +22,11 @@ struct LLMClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
+        return URLSession(
+            configuration: configuration,
+            delegate: RejectingRedirectURLSessionDelegate(),
+            delegateQueue: nil
+        )
     }
 
     func fetchModels(settings: AppSettings, apiKey: String?) async throws -> [String] {
@@ -37,24 +41,42 @@ struct LLMClient: Sendable {
         let url = try Self.routeURL(for: settings, route: route)
         var request = URLRequest(url: url, timeoutInterval: Self.timeout(from: settings))
         request.httpMethod = "GET"
-        applyHeaders(to: &request, provider: settings.provider, apiKey: apiKey, hasJSONBody: false)
+        try applyHeaders(
+            to: &request,
+            provider: settings.provider,
+            apiKey: apiKey,
+            hasJSONBody: false
+        )
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await boundedData(
+                for: request,
+                maximumBytes: Self.maximumMetadataResponseSize
+            )
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as ChatError {
+            throw Self.sanitized(error, apiKey: apiKey)
         } catch {
-            throw ChatError.server("無法連線到 LLM 伺服器：\(error.localizedDescription)")
+            throw ChatError.server(
+                "無法連線到 LLM 伺服器："
+                    + Self.sanitizedText(error.localizedDescription, apiKey: apiKey)
+            )
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let httpResponse = response as? HTTPURLResponse,
+              AgentHTTPOrigin.isSameOrigin(request.url, httpResponse.url) else {
             throw ChatError.malformedResponse
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw Self.httpError(statusCode: httpResponse.statusCode, body: data)
+            throw Self.httpError(
+                statusCode: httpResponse.statusCode,
+                body: data,
+                apiKey: apiKey
+            )
         }
 
         do {
@@ -80,6 +102,52 @@ struct LLMClient: Sendable {
         }
     }
 
+    /// Discovers concrete model limits advertised by the selected backend.
+    /// Unsupported providers deliberately return nil so their centralized
+    /// provider/family recommendation remains authoritative.
+    func fetchModelParameterCapabilities(
+        settings: AppSettings,
+        apiKey: String?
+    ) async throws -> DiscoveredModelParameterCapabilities? {
+        guard settings.provider == .ollama else { return nil }
+
+        let request = try OllamaAgentWireAdapter.makeCapabilitiesRequest(
+            model: settings.selectedModel,
+            settings: settings,
+            apiKey: apiKey
+        )
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await boundedData(
+                for: request,
+                maximumBytes: Self.maximumMetadataResponseSize
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as ChatError {
+            throw Self.sanitized(error, apiKey: apiKey)
+        } catch {
+            throw ChatError.server(
+                "無法讀取模型能力："
+                    + Self.sanitizedText(error.localizedDescription, apiKey: apiKey)
+            )
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              AgentHTTPOrigin.isSameOrigin(request.url, httpResponse.url) else {
+            throw ChatError.malformedResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw Self.httpError(
+                statusCode: httpResponse.statusCode,
+                body: data,
+                apiKey: apiKey
+            )
+        }
+        return OllamaAgentWireAdapter.parseModelParameterCapabilities(data)
+    }
+
     /// Starts a streaming chat request. Stopping iteration cancels the underlying
     /// URLSession task. Each yielded value is a content or reasoning delta, not the
     /// full response.
@@ -102,10 +170,25 @@ struct LLMClient: Sendable {
                         settings: settings,
                         attachmentLoader: attachmentLoader
                     )
+                    let discoveredCapabilities: DiscoveredModelParameterCapabilities?
+                    do {
+                        discoveredCapabilities = try await fetchModelParameterCapabilities(
+                            settings: settings,
+                            apiKey: apiKey
+                        )
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        // Capability discovery is advisory. Older Ollama and
+                        // compatible servers can omit /api/show; the static
+                        // backend/family recommendation remains safe fallback.
+                        discoveredCapabilities = nil
+                    }
                     let request = try makeStreamingRequest(
                         messages: preparedMessages,
                         settings: settings,
                         parameters: parameters,
+                        discoveredCapabilities: discoveredCapabilities,
                         apiKey: apiKey
                     )
 
@@ -119,8 +202,14 @@ struct LLMClient: Sendable {
                         throw ChatError.server("無法連線到 LLM 伺服器：\(error.localizedDescription)")
                     }
 
-                    guard let httpResponse = response as? HTTPURLResponse else {
+                    guard let httpResponse = response as? HTTPURLResponse,
+                          AgentHTTPOrigin.isSameOrigin(request.url, httpResponse.url) else {
                         throw ChatError.malformedResponse
+                    }
+
+                    if httpResponse.expectedContentLength
+                        > Int64(Self.maximumStreamingResponseSize) {
+                        throw ChatError.server("伺服器串流回應超過安全上限。")
                     }
 
                     guard (200..<300).contains(httpResponse.statusCode) else {
@@ -131,7 +220,11 @@ struct LLMClient: Sendable {
                             if body.count >= Self.maximumErrorBodySize { break }
                             body.append(byte)
                         }
-                        throw Self.httpError(statusCode: httpResponse.statusCode, body: body)
+                        throw Self.httpError(
+                            statusCode: httpResponse.statusCode,
+                            body: body,
+                            apiKey: apiKey
+                        )
                     }
 
                     switch settings.provider {
@@ -147,7 +240,7 @@ struct LLMClient: Sendable {
                 } catch is CancellationError {
                     continuation.finish(throwing: CancellationError())
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: Self.sanitized(error, apiKey: apiKey))
                 }
             }
 
@@ -208,12 +301,14 @@ struct LLMClient: Sendable {
         messages: [PreparedMessage],
         settings: AppSettings,
         parameters suppliedParameters: EffectiveModelParameterProfile?,
+        discoveredCapabilities: DiscoveredModelParameterCapabilities?,
         apiKey: String?
     ) throws -> URLRequest {
         let route = ModelParameterRoute(settings: settings, useCase: .chat)
         let recommended = ModelParameterRecommendationEngine.effectiveProfile(
             for: route,
-            profiles: settings.modelParameterProfiles
+            profiles: settings.modelParameterProfiles,
+            discoveredCapabilities: discoveredCapabilities
         )
         let candidate: EffectiveModelParameterProfile
         if let suppliedParameters, suppliedParameters.key == route.key {
@@ -242,7 +337,12 @@ struct LLMClient: Sendable {
         let url = try Self.routeURL(for: settings, route: endpointRoute)
         var request = URLRequest(url: url, timeoutInterval: Self.timeout(from: settings))
         request.httpMethod = "POST"
-        applyHeaders(to: &request, provider: settings.provider, apiKey: apiKey, hasJSONBody: true)
+        try applyHeaders(
+            to: &request,
+            provider: settings.provider,
+            apiKey: apiKey,
+            hasJSONBody: true
+        )
 
         switch settings.provider {
         case .ollama:
@@ -351,13 +451,18 @@ struct LLMClient: Sendable {
         provider: ProviderKind,
         apiKey: String?,
         hasJSONBody: Bool
-    ) {
+    ) throws {
         request.setValue(hasJSONBody ? "application/json" : "application/json, text/event-stream", forHTTPHeaderField: "Accept")
         if hasJSONBody {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
         let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if request.url?.scheme?.lowercased() == "http",
+           !AgentHTTPOrigin.isLoopback(request.url?.host),
+           key?.isEmpty == false {
+            throw ChatError.invalidEndpoint
+        }
         switch provider {
         case .ollama:
             if let key, !key.isEmpty {
@@ -382,9 +487,14 @@ struct LLMClient: Sendable {
         continuation: AsyncThrowingStream<LLMStreamDelta, Error>.Continuation
     ) async throws {
         var lines = LineAccumulator()
+        var totalBytes = 0
 
         for try await byte in bytes {
             try Task.checkCancellation()
+            totalBytes += 1
+            guard totalBytes <= maximumStreamingResponseSize else {
+                throw ChatError.server("伺服器串流回應超過安全上限。")
+            }
             if let line = try lines.append(byte) {
                 try parseOllamaLine(line, continuation: continuation)
             }
@@ -430,19 +540,24 @@ struct LLMClient: Sendable {
         var lines = LineAccumulator()
         var event = SSEEventAccumulator()
         var plainResponseLines: [String] = []
+        var totalBytes = 0
 
         func process(_ line: String) throws {
             if line.isEmpty {
                 if let payload = event.finishEvent() {
                     try parseOpenAIEvent(payload, continuation: continuation)
                 }
-            } else if !event.consume(line: line) {
+            } else if try !event.consume(line: line) {
                 plainResponseLines.append(line)
             }
         }
 
         for try await byte in bytes {
             try Task.checkCancellation()
+            totalBytes += 1
+            guard totalBytes <= maximumStreamingResponseSize else {
+                throw ChatError.server("伺服器串流回應超過安全上限。")
+            }
             if let line = try lines.append(byte) {
                 try process(line)
             }
@@ -525,19 +640,24 @@ struct LLMClient: Sendable {
         var lines = LineAccumulator()
         var event = SSEEventAccumulator()
         var plainResponseLines: [String] = []
+        var totalBytes = 0
 
         func process(_ line: String) throws {
             if line.isEmpty {
                 if let payload = event.finishEvent() {
                     try parseAnthropicEvent(payload, continuation: continuation)
                 }
-            } else if !event.consume(line: line) {
+            } else if try !event.consume(line: line) {
                 plainResponseLines.append(line)
             }
         }
 
         for try await byte in bytes {
             try Task.checkCancellation()
+            totalBytes += 1
+            guard totalBytes <= maximumStreamingResponseSize else {
+                throw ChatError.server("伺服器串流回應超過安全上限。")
+            }
             if let line = try lines.append(byte) {
                 try process(line)
             }
@@ -639,10 +759,19 @@ struct LLMClient: Sendable {
               components.host?.nilIfBlank != nil else {
             throw ChatError.invalidEndpoint
         }
+        guard components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            throw ChatError.invalidEndpoint
+        }
+        if scheme == "http",
+           settings.provider != .ollama,
+           !AgentHTTPOrigin.isLoopback(components.host) {
+            throw ChatError.invalidEndpoint
+        }
 
         components.scheme = scheme
-        components.query = nil
-        components.fragment = nil
 
         var existing = components.path
             .split(separator: "/", omittingEmptySubsequences: true)
@@ -681,7 +810,33 @@ struct LLMClient: Sendable {
             : 300
     }
 
-    private static func httpError(statusCode: Int, body: Data) -> ChatError {
+    private func boundedData(
+        for request: URLRequest,
+        maximumBytes: Int
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        if response.expectedContentLength > Int64(maximumBytes) {
+            throw ChatError.server("伺服器回應超過安全上限。")
+        }
+        var data = Data()
+        if response.expectedContentLength > 0 {
+            data.reserveCapacity(min(maximumBytes, Int(response.expectedContentLength)))
+        }
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maximumBytes else {
+                throw ChatError.server("伺服器回應超過安全上限。")
+            }
+            data.append(byte)
+        }
+        return (data, response)
+    }
+
+    private static func httpError(
+        statusCode: Int,
+        body: Data,
+        apiKey: String?
+    ) -> ChatError {
         let message: String?
         if let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: body) {
             message = envelope.error?.description.nilIfBlank ?? envelope.message?.nilIfBlank
@@ -691,7 +846,8 @@ struct LLMClient: Sendable {
 
         let status = HTTPURLResponse.localizedString(forStatusCode: statusCode)
         if let message {
-            return .server("HTTP \(statusCode)（\(status)）：\(String(message.prefix(2_000)))")
+            let safeMessage = sanitizedText(String(message.prefix(2_000)), apiKey: apiKey)
+            return .server("HTTP \(statusCode)（\(status)）：\(safeMessage)")
         }
         return .server("HTTP \(statusCode)（\(status)）")
     }
@@ -701,7 +857,33 @@ struct LLMClient: Sendable {
         return mime.hasPrefix("image/") ? mime : "image/png"
     }
 
+    private static func sanitized(_ error: Error, apiKey: String?) -> ChatError {
+        if let chatError = error as? ChatError {
+            switch chatError {
+            case .server(let message):
+                return .server(sanitizedText(message, apiKey: apiKey))
+            case .permissionDenied(let message):
+                return .permissionDenied(sanitizedText(message, apiKey: apiKey))
+            case .invalidEndpoint, .noModel, .malformedResponse, .fileTooLarge,
+                 .unsupportedFile:
+                return chatError
+            }
+        }
+        return .server(sanitizedText(error.localizedDescription, apiKey: apiKey))
+    }
+
+    private static func sanitizedText(_ value: String, apiKey: String?) -> String {
+        var result = value
+        if let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !apiKey.isEmpty {
+            result = result.replacingOccurrences(of: apiKey, with: "[REDACTED]")
+        }
+        return SecretRedactor().redact(result)
+    }
+
     private static let maximumErrorBodySize = 64 * 1_024
+    private static let maximumMetadataResponseSize = 4 * 1_024 * 1_024
+    private static let maximumStreamingResponseSize = 64 * 1_024 * 1_024
 }
 
 // MARK: - Provider payloads
@@ -1083,10 +1265,12 @@ private struct LineAccumulator {
 
 private struct SSEEventAccumulator {
     private var dataLines: [String] = []
+    private var dataBytes = 0
     private(set) var sawData = false
+    private static let maximumEventBytes = 4 * 1_024 * 1_024
 
     /// Returns true when the line is a valid SSE field or comment.
-    mutating func consume(line: String) -> Bool {
+    mutating func consume(line: String) throws -> Bool {
         if line.hasPrefix(":") {
             return true
         }
@@ -1108,7 +1292,13 @@ private struct SSEEventAccumulator {
         switch field {
         case "data":
             sawData = true
-            dataLines.append(String(value))
+            let line = String(value)
+            let separatorBytes = dataLines.isEmpty ? 0 : 1
+            guard dataBytes + separatorBytes + line.utf8.count <= Self.maximumEventBytes else {
+                throw ChatError.server("伺服器 SSE event 超過安全上限。")
+            }
+            dataBytes += separatorBytes + line.utf8.count
+            dataLines.append(line)
             return true
         case "event", "id", "retry":
             return true
@@ -1119,7 +1309,10 @@ private struct SSEEventAccumulator {
 
     mutating func finishEvent() -> String? {
         guard !dataLines.isEmpty else { return nil }
-        defer { dataLines.removeAll(keepingCapacity: true) }
+        defer {
+            dataLines.removeAll(keepingCapacity: true)
+            dataBytes = 0
+        }
         return dataLines.joined(separator: "\n")
     }
 }

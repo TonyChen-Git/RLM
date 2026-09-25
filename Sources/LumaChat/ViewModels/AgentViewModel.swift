@@ -1603,7 +1603,7 @@ final class AgentViewModel: ObservableObject {
               !taskTerminalMutationSessionIDs.contains(sessionID),
               let current = sessions.first(where: { $0.id == sessionID }),
               Self.hasSameTaskTerminalBinding(current, session) else {
-            await toolEnvironment.remove(sessionID: sessionID)
+            try? await toolEnvironment.remove(sessionID: sessionID)
             throw TaskTerminalLifecycleError(
                 detail: "Task 或 Workspace 在 Terminal 建立期間已變更"
             )
@@ -2865,7 +2865,7 @@ final class AgentViewModel: ObservableObject {
                 for: original,
                 before: "Handoff"
             )
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
             try await worktreeStateMigrator.apply(
                 state,
                 destinationRoot: URL(
@@ -2926,7 +2926,7 @@ final class AgentViewModel: ObservableObject {
             // never leave this process runnable against the old checkout.
             apply(updated, synchronizeMode: false)
             await toolExecutor?.clearPermissions(for: sessionID)
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
             entry = try await handoffJournal.markSessionCommitted(entry)
             journalEntry = entry
             try await handoffJournal.remove(id: entry.id)
@@ -3113,7 +3113,7 @@ final class AgentViewModel: ObservableObject {
                 for: original,
                 before: "移回 Local"
             )
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
             try await worktreeStateMigrator.replace(
                 expectedCurrent: localRollback,
                 with: destinationState,
@@ -3161,7 +3161,7 @@ final class AgentViewModel: ObservableObject {
             sessionDidCommit = true
             apply(updated, synchronizeMode: false)
             await toolExecutor?.clearPermissions(for: sessionID)
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
 
             entry = try await handoffJournal.markSessionCommitted(entry)
             journalEntry = entry
@@ -3474,7 +3474,7 @@ final class AgentViewModel: ObservableObject {
             sessionDidCommit = true
             apply(durableUpdated, synchronizeMode: false)
             await toolExecutor?.clearPermissions(for: sessionID)
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
             workspaceLeases.removeValue(forKey: sessionID)
 
             entry = try await handoffJournal.markSessionCommitted(entry)
@@ -3764,7 +3764,7 @@ final class AgentViewModel: ObservableObject {
             sessionDidCommit = true
             apply(durableUpdated, synchronizeMode: false)
             await toolExecutor?.clearPermissions(for: sessionID)
-            await toolEnvironment.remove(sessionID: sessionID)
+            try await toolEnvironment.remove(sessionID: sessionID)
 
             entry = try await handoffJournal.markSessionCommitted(entry)
             journalEntry = entry
@@ -4002,8 +4002,13 @@ final class AgentViewModel: ObservableObject {
                     before: "封存 Project"
                 ) else { return }
             }
-            for session in projectSessions {
-                await toolEnvironment.remove(sessionID: session.id)
+            do {
+                for session in projectSessions {
+                    try await toolEnvironment.remove(sessionID: session.id)
+                }
+            } catch {
+                errorMessage = "Project Terminal 關閉狀態尚未安全儲存：\(redactor.redact(error.localizedDescription))"
+                return
             }
         }
         do {
@@ -4120,7 +4125,12 @@ final class AgentViewModel: ObservableObject {
             for: current,
             before: "改綁 Project folder"
         ) else { return }
-        await toolEnvironment.remove(sessionID: sessionID)
+        do {
+            try await toolEnvironment.remove(sessionID: sessionID)
+        } catch {
+            errorMessage = "Task Terminal 關閉狀態尚未安全儲存：\(redactor.redact(error.localizedDescription))"
+            return
+        }
         var updated = current
         updated.projectFolderID = folder.id
         updated.workspace = folder.workspace
@@ -4173,7 +4183,12 @@ final class AgentViewModel: ObservableObject {
                 for: sessions[index],
                 before: "封存 Task"
             ) else { return }
-            await toolEnvironment.remove(sessionID: id)
+            do {
+                try await toolEnvironment.remove(sessionID: id)
+            } catch {
+                errorMessage = "Task Terminal 關閉狀態尚未安全儲存：\(redactor.redact(error.localizedDescription))"
+                return
+            }
         }
         var updated = sessions[index]
         updated.archivedAt = archived ? Date() : nil
@@ -4237,7 +4252,7 @@ final class AgentViewModel: ObservableObject {
             // `remove` awaits TaskTerminalService.disposeAll(). The Session
             // must remain durable until every Task-owned PTY has stopped and
             // its bounded metadata transition has completed.
-            await toolEnvironment.remove(sessionID: id)
+            try await toolEnvironment.remove(sessionID: id)
             try await sessionStore.delete(id: id)
             // Browser annotations are repository-local disposable metadata,
             // not durable session authority. Best-effort cleanup follows the
@@ -4313,7 +4328,7 @@ final class AgentViewModel: ObservableObject {
                 errorMessage = "Task 已有執行歷史；請在另一個 Project／folder 明確建立新 Task。"
                 return
             }
-            await toolEnvironment.remove(sessionID: selectedSessionID)
+            try await toolEnvironment.remove(sessionID: selectedSessionID)
 
             var catalog = projects
             let assignment: (projectID: UUID, folderID: UUID, workspace: AgentWorkspace)
@@ -4789,7 +4804,11 @@ final class AgentViewModel: ObservableObject {
 
         Task { [weak self, weak control] in
             guard let self, let control else { return }
-            await self.subagentScheduler.cancelSubagents(parentSessionID: sessionID)
+            do {
+                try await self.subagentScheduler.cancelSubagents(parentSessionID: sessionID)
+            } catch {
+                self.exposeSessionPersistenceFailure(error)
+            }
             let stoppedSession = await control.runtime?.stop()
             await self.toolEnvironment.stopProcesses(sessionID: sessionID)
             // Do not cancel the outer generation task. `AgentRuntime.stop()`
@@ -4843,10 +4862,11 @@ final class AgentViewModel: ObservableObject {
     /// the superseded generation task cannot race `finish`. Keep the
     /// submitted-input tracker alive until this terminal snapshot is durable;
     /// only then may the composer draft and pending image copies be consumed.
+    @discardableResult
     func persistControlledTermination(
         _ originalSession: AgentSession,
         runID: UUID
-    ) async {
+    ) async -> Bool {
         let finalized = await sessionFinalizingLastAgentTurn(originalSession, runID: runID)
         let session = sessionApplyingGoalLifecycle(finalized)
         do {
@@ -4854,20 +4874,29 @@ final class AgentViewModel: ObservableObject {
             apply(session, synchronizeMode: true)
             clearSubmittedDraftIfPersisted(in: session, runID: runID)
             consumeSentPendingImages(in: session)
+            return true
         } catch {
             // Surface truthful paused/cancelled state in this process while
             // retaining resendable draft/images because durability failed.
             apply(session, synchronizeMode: true)
             exposeSessionPersistenceFailure(error)
+            return false
         }
     }
 
-    func shutdown() async {
+    @discardableResult
+    func shutdown() async -> Bool {
+        var persistenceSucceeded = true
         // Prevent a view that is detaching during app termination from
         // acquiring a fresh PTY after shutdown has begun.
         taskTerminalMutationSessionIDs.formUnion(sessions.map(\.id))
         if let automationService {
-            try? await automationService.shutdown()
+            do {
+                try await automationService.shutdown()
+            } catch {
+                persistenceSucceeded = false
+                errorMessage = "Automation 關閉狀態無法儲存：\(redactor.redact(error.localizedDescription))"
+            }
             automationSchedulerIsReady = false
         }
         mcpStartupTask?.cancel()
@@ -4886,7 +4915,12 @@ final class AgentViewModel: ObservableObject {
             control.generationTask?.cancel()
         }
         for control in controls {
-            await subagentScheduler.cancelSubagents(parentSessionID: control.sessionID)
+            do {
+                try await subagentScheduler.cancelSubagents(parentSessionID: control.sessionID)
+            } catch {
+                persistenceSucceeded = false
+                exposeSessionPersistenceFailure(error)
+            }
             let stoppedSession = control.isStopping
                 ? await control.runtime?.stop()
                 : nil
@@ -4899,23 +4933,31 @@ final class AgentViewModel: ObservableObject {
                 sessionID: control.sessionID,
                 requestedState: .cancelled
             ) {
-                await persistControlledTermination(terminal, runID: control.runID)
+                if !(await persistControlledTermination(terminal, runID: control.runID)) {
+                    persistenceSucceeded = false
+                }
             }
             completeRun(control)
         }
         // This awaits both the Agent Runtime process services and every
         // TaskTerminalService.disposeAll() before workspace leases disappear.
-        await toolEnvironment.stopAllProcesses()
+        if !(await toolEnvironment.stopAllProcesses()) {
+            persistenceSucceeded = false
+            errorMessage = "Task Terminal 關閉狀態尚未安全儲存；已保留記憶體快照並持續重試。"
+        }
 
         await mcpManager.disconnectAll()
         await refreshMCPSnapshots()
         if let notificationService {
             await notificationService.stopClickRouting()
         }
-        for sessionID in Array(pendingImagesBySession.keys) {
-            discardPendingImages(for: sessionID)
+        if persistenceSucceeded {
+            for sessionID in Array(pendingImagesBySession.keys) {
+                discardPendingImages(for: sessionID)
+            }
+            workspaceLeases.removeAll()
         }
-        workspaceLeases.removeAll()
+        return persistenceSucceeded
     }
 
     func refreshNotificationAuthorizationStatus() async {
@@ -5168,6 +5210,11 @@ final class AgentViewModel: ObservableObject {
                 throw AutomationError.invalidDefinition("Project primary folder 遺失。")
             }
 
+            // Automations may fire long after this view model was created.
+            // Reload the shared settings at the run boundary so the selected
+            // route and per-model Auto/Custom profiles cannot be stale.
+            try classicSettingsStore.load()
+            modelParameterProfiles = classicSettingsStore.settings.modelParameterProfiles
             let route = classicSettingsStore.settings
             let mode: AppMode
             switch task.actionKind {
@@ -6645,14 +6692,23 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
-    private func cancelScheduledSubagent(_ childID: UUID) {
+    private func cancelScheduledSubagent(_ childID: UUID) async {
         stop(sessionID: childID)
+        // `stop` deliberately owns terminal persistence in a separate Task.
+        // The scheduler must keep this child's capacity reservation until that
+        // lifecycle has drained, not merely until cancellation was requested.
+        while let control = activeRunsBySession[childID] {
+            await control.generationTask?.value
+            guard activeRunsBySession[childID] != nil else { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     private func launchScheduledSubagent(
         _ record: SubagentRecord
     ) async -> SubagentExecutionOutcome {
         do {
+            try Task.checkCancellation()
             guard record.id == record.childSessionID,
                   record.depth == 1,
                   let parent = sessions.first(where: { $0.id == record.parentSessionID }),
@@ -6680,11 +6736,27 @@ final class AgentViewModel: ObservableObject {
                 existing.state = .idle
                 existing.lastError = nil
                 existing.updatedAt = Date()
-                try await sessionStore.save(existing)
+                try Task.checkCancellation()
+                do {
+                    try await sessionStore.save(existing)
+                } catch {
+                    // An atomic writer can report a post-rename durability
+                    // failure even though the new snapshot is readable. Keep
+                    // the in-memory catalog aligned with that durable state.
+                    if await sessionStore.presence(id: existing.id) == .found,
+                       let durable = try? await sessionStore.loadSessions().first(where: {
+                           $0.id == existing.id
+                       }) {
+                        apply(durable, synchronizeMode: false)
+                    }
+                    throw error
+                }
                 apply(existing, synchronizeMode: false)
+                try Task.checkCancellation()
                 child = existing
             } else {
                 var createdWorktree: ManagedWorktreeRecord?
+                var createdSessionCommitted = false
                 do {
                     let workspace: AgentWorkspace
                     let location: AgentExecutionLocation
@@ -6702,6 +6774,8 @@ final class AgentViewModel: ObservableObject {
                                 detached: false
                             )
                         )
+                        createdWorktree = managed
+                        try Task.checkCancellation()
                         guard let lease = managed.lease,
                               lease.taskID == record.childSessionID,
                               lease.worktreeID == managed.id else {
@@ -6709,7 +6783,6 @@ final class AgentViewModel: ObservableObject {
                                 detail: "Subagent managed worktree 未取得正確 lease"
                             )
                         }
-                        createdWorktree = managed
                         workspace = Self.workspace(for: managed)
                         location = .worktree(
                             id: managed.id,
@@ -6755,11 +6828,37 @@ final class AgentViewModel: ObservableObject {
                         connection: connection
                     )
                     created.updatedAt = Date()
+                    try Task.checkCancellation()
                     try await sessionStore.save(created)
+                    createdSessionCommitted = true
                     apply(created, synchronizeMode: false)
+                    // Apply the durable child before observing cancellation.
+                    // Otherwise cleanup could release a worktree still named
+                    // by a session.json that already committed.
+                    try Task.checkCancellation()
                     child = created
                 } catch {
-                    if let createdWorktree, let lease = createdWorktree.lease {
+                    let childPresence: AgentSessionPresence
+                    if createdSessionCommitted {
+                        childPresence = .found
+                    } else {
+                        childPresence = await sessionStore.presence(id: record.childSessionID)
+                        if childPresence == .found,
+                           let durable = try? await sessionStore.loadSessions().first(where: {
+                               $0.id == record.childSessionID
+                           }) {
+                            // `save` may have renamed successfully before
+                            // surfacing a directory-fsync failure. Reconcile
+                            // that readable child into this process.
+                            apply(durable, synchronizeMode: false)
+                        }
+                    }
+                    if childPresence == .absent,
+                       let createdWorktree,
+                       let lease = createdWorktree.lease {
+                        // Only a proven pre-commit failure permits checkout
+                        // cleanup. found/corrupt/unknown all fail closed so a
+                        // durable or uncertain session path cannot dangle.
                         _ = try? await worktreeService.release(lease)
                     }
                     throw error
@@ -6772,6 +6871,7 @@ final class AgentViewModel: ObservableObject {
             // snapshot merely because it was queued before the edit.
             try classicSettingsStore.load()
             modelParameterProfiles = classicSettingsStore.settings.modelParameterProfiles
+            try Task.checkCancellation()
             let route = connection.providerSettings(
                 model: child.model,
                 modelParameterProfiles: modelParameterProfiles
@@ -6785,6 +6885,7 @@ final class AgentViewModel: ObservableObject {
             } else {
                 request = "Resume the delegated goal. Re-check current workspace state and report only evidence from this attempt."
             }
+            try Task.checkCancellation()
             guard let task = run(
                 sessionID: child.id,
                 userRequest: request,
@@ -6800,6 +6901,8 @@ final class AgentViewModel: ObservableObject {
                 throw SubagentError.executionFailed("Child Session 在執行後遺失。")
             }
             return Self.subagentOutcome(from: finished)
+        } catch is CancellationError {
+            return SubagentExecutionOutcome(status: .cancelled, result: nil, error: nil)
         } catch {
             return SubagentExecutionOutcome(
                 status: .failed,

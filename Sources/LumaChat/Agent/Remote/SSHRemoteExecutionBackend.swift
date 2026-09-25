@@ -20,7 +20,7 @@ actor SSHRemoteExecutionBackend: RemoteExecutionBackend, RemoteWorkspaceStateBac
         transport: any SSHCommandTransporting = ProcessSSHCommandTransport()
     ) throws {
         let configuration = try rawConfiguration.validated()
-        let supplied = try credentialProvider.credential(for: configuration.id)
+        let supplied = try credentialProvider.credential(for: configuration)
         self.configuration = configuration
         runnerID = configuration.id
         credential = configuration.authentication == .systemAgent

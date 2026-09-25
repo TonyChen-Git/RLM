@@ -719,8 +719,8 @@ validation remain later release-program work and are not claimed by Phase A.
   unstaged Review content, real PTY/ANSI output, pane continuity and clean quit.
 - `dist/LumaChat-1.4.0-arm64.zip` is 7,315,724 bytes; SHA-256 is
   `224d6942969670cd090797416bdcfb979a79387a827b68fa8c184d64d871b2b0`.
-  It remains the historical Phase B artifact. The 2026-09-20 combined Phase
-  C–H development gate later passed 660 tests, optimized build/package,
+  It remains the historical Phase B artifact. The 2026-09-25 combined Phase
+  A–H development gate later passed 744 tests, optimized build/package,
   metadata and security audit; Developer ID/notarization and live external
   acceptance remain production gates.
 

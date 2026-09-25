@@ -1,7 +1,8 @@
 # Luma Chat Browser/CDP architecture
 
 Status: Phase E implementation complete; focused Browser/annotation tests and
-the combined Phase C–H development gate passed on 2026-09-20.
+the combined Phase C–H development gate passed on 2026-09-25 as part of the
+744-test LumaChat 1.4.1 development release.
 
 ## Runtime ownership
 

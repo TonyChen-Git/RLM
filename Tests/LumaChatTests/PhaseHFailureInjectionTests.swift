@@ -18,7 +18,8 @@ private final class PhaseHOfflineURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private struct PhaseHNoRemoteCredentialProvider: RemoteRunnerCredentialProviding {
-    func credential(for runnerID: UUID) throws -> RemoteRunnerCredential? { nil }
+    func credential(for configuration: RemoteRunnerConfiguration) throws
+        -> RemoteRunnerCredential? { nil }
 }
 
 private struct PhaseHDisconnectingSSHTransport: SSHCommandTransporting {

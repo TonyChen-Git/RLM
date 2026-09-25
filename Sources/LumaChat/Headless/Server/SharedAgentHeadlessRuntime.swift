@@ -103,7 +103,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             await eventBroker.finish(taskID: taskID)
         }
         eventDeliveryTails.removeAll()
-        await agentViewModel.shutdown()
+        _ = await agentViewModel.shutdown()
         didStart = false
     }
 

@@ -34,7 +34,9 @@ jobs:
         shell: /bin/zsh {0}
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF}" == refs/tags/* ]]
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "${GITHUB_WORKSPACE}/AppBundle/Info.plist")
+          [[ "${GITHUB_REF}" == "refs/tags/v${version}" ]]
           release_epoch=$(/usr/bin/git show -s --format=%ct "${GITHUB_SHA}")
           [[ "${release_epoch}" =~ '^[0-9]{10,}$' ]]
           print -r -- "SOURCE_DATE_EPOCH=${release_epoch}" >> "${GITHUB_ENV}"
@@ -83,16 +85,39 @@ jobs:
             /bin/rm -f "${key}"
           fi
 
+      - name: Stage only this version's release artifacts
+        shell: /bin/zsh {0}
+        run: |
+          set -euo pipefail
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "${GITHUB_WORKSPACE}/AppBundle/Info.plist")
+          architecture=$(/usr/bin/uname -m)
+          stem="LumaChat-${version}-${architecture}"
+          upload_root="${GITHUB_WORKSPACE}/tmp/release-upload"
+          if [[ -e "${upload_root}" ]]; then
+            /usr/bin/find "${upload_root}" -depth -delete
+          fi
+          /bin/mkdir -p "${upload_root}"
+          for suffix in \
+            zip \
+            sha256 \
+            archive-manifest.json \
+            sbom.spdx.json \
+            provenance.json; do
+            source_path="${GITHUB_WORKSPACE}/dist/${stem}.${suffix}"
+            [[ -f "${source_path}" && ! -L "${source_path}" ]]
+            /bin/cp "${source_path}" "${upload_root}/${stem}.${suffix}"
+          done
+          feed="${GITHUB_WORKSPACE}/dist/update-v1.json"
+          [[ -f "${feed}" && ! -L "${feed}" ]]
+          /bin/cp "${feed}" "${upload_root}/update-v1.json"
+          [[ "$(/usr/bin/find "${upload_root}" -type f | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')" == "6" ]]
+
       - name: Retain notarized artifacts and attestations
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: LumaChat-production-${{ github.ref_name }}
           path: |
-            dist/LumaChat-*.zip
-            dist/LumaChat-*.sha256
-            dist/LumaChat-*.archive-manifest.json
-            dist/LumaChat-*.sbom.spdx.json
-            dist/LumaChat-*.provenance.json
-            dist/update-v1.json
+            tmp/release-upload/*
           if-no-files-found: error
           retention-days: 30

@@ -101,6 +101,8 @@ final class ChatViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var connectionState: ConnectionState = .idle
+    @Published private(set) var discoveredModelParameterCapabilities:
+        [ModelParameterKey: DiscoveredModelParameterCapabilities] = [:]
 
     private let conversationStore: ConversationStore
     private let attachmentService: AttachmentService
@@ -881,6 +883,13 @@ final class ChatViewModel: ObservableObject {
                settings.selectedModel.isEmpty,
                let first = models.first {
                 selectModel(first)
+            } else if !candidate.selectedModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty {
+                await refreshModelParameterCapabilities(
+                    settings: candidate,
+                    apiKey: candidateKey.isEmpty ? nil : candidateKey
+                )
             }
         } catch is CancellationError {
             return
@@ -935,6 +944,14 @@ final class ChatViewModel: ObservableObject {
             Task { await saveConversation(snapshot) }
         }
         saveSettings()
+        let capabilitySettings = settings
+        let capabilityKey = apiKey.isEmpty ? nil : apiKey
+        Task {
+            await refreshModelParameterCapabilities(
+                settings: capabilitySettings,
+                apiKey: capabilityKey
+            )
+        }
     }
 
     func activateProfile(id: UUID, startNewConversation: Bool) async {
@@ -967,7 +984,48 @@ final class ChatViewModel: ObservableObject {
     ) -> EffectiveModelParameterProfile {
         ModelParameterRecommendationEngine.effectiveProfile(
             for: route,
-            profiles: settings.modelParameterProfiles
+            profiles: settings.modelParameterProfiles,
+            discoveredCapabilities: discoveredModelParameterCapabilities[route.key]
+        )
+    }
+
+    private func refreshModelParameterCapabilities(
+        settings candidate: AppSettings,
+        apiKey candidateKey: String?
+    ) async {
+        let route = ModelParameterRoute(settings: candidate, useCase: .chat)
+        guard !route.modelID.isEmpty else { return }
+        do {
+            if let discovered = try await llmClient.fetchModelParameterCapabilities(
+                settings: candidate,
+                apiKey: candidateKey
+            ) {
+                discoveredModelParameterCapabilities[route.key] = discovered
+            } else {
+                discoveredModelParameterCapabilities.removeValue(forKey: route.key)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            // Discovery is best effort for UI presentation. The request
+            // boundary performs a fresh check before sending inference data.
+            discoveredModelParameterCapabilities.removeValue(forKey: route.key)
+        }
+    }
+
+    func refreshModelParameterCapabilities(for route: ModelParameterRoute) async {
+        guard !route.modelID.isEmpty else { return }
+        var candidate = settings
+        candidate.provider = route.provider
+        candidate.backend = route.backend
+        candidate.endpoint = route.endpoint
+        candidate.selectedModel = route.modelID
+        let storedKey = try? keychainStore.loadAPIKey(for: candidate)
+        let normalizedKey = storedKey?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        await refreshModelParameterCapabilities(
+            settings: candidate,
+            apiKey: normalizedKey?.isEmpty == false ? normalizedKey : nil
         )
     }
 

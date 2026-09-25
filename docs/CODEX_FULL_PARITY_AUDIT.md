@@ -1,6 +1,7 @@
 # LumaChat Full Codex-Class Parity Audit
 
-Last audited: 2026-09-20, after the combined Phase C-H development gate
+Last audited: 2026-09-25, after the LumaChat 1.4.1 combined Phase A-H
+development gate
 
 ## Scope and scoring rule
 
@@ -28,7 +29,7 @@ recovery/failure behavior, UI, tests, and release path form an honest chain.
 The pre-Phase-A baseline was **56/100**. Phase A raised the formally
 release-gated result to **64/100** and Phase B to **68.5/100**. The original
 master prompt's eight implementation phases are now **8/8 complete**, and the
-combined Phase C-H development gate passes. The formal production-credit score
+combined Phase A-H development gate passes. The formal production-credit score
 is deliberately not recomputed from development-only evidence: notarization,
 live external acceptance and qualifying long-duration soak remain incomplete.
 
@@ -47,7 +48,7 @@ shutdown persistence races, same-length concurrent file rewrites, cached root
 replacement and renewable worktree lease identity were also closed before the
 gate.
 
-The 2026-09-20 isolated suite passed 660 tests with one explicit environment
+The 2026-09-25 isolated suite passed 744 tests with one explicit environment
 skip and zero failures. The optimized arm64 build, ad-hoc signing,
 bundle/extracted-bundle checks, canonical ZIP, SBOM/provenance and security audit
 passed. VS Code passed 17/17 and GitHub Action passed 14/14 Node tests. This is
@@ -93,7 +94,7 @@ replacement.
 | Automations and notifications | 4 | 0 | 0 | DEVELOPMENT-GATED | Durable scheduler/store/history, seven Task actions, dedicated worktrees, typed notifications, routing and passing focused tests | External event producers, native UI acceptance and soak remain |
 | Remote execution and control | 4 | 0 | 0 | PARTIAL / DEVELOPMENT-GATED | SSH runner/store/Keychain, strict host receipt, 16 closed tools, migration, Settings/UI, focused and disconnect-boundary tests | Live-host E2E, persistent remote PTY, richer backends, secure relay and soak remain |
 | CLI, App Server, SDK, IDE and GitHub | 4 | 0 | 0 | DEVELOPMENT-GATED | Shared-runtime CLI, authenticated server/SSE, Swift SDK, VS Code 17/17, GitHub Action 14/14 and package paths | Process-local idempotency and live transport/hosted-runner acceptance remain |
-| Release and cross-platform readiness | 3 | 3 | 3 | PARTIAL / DEVELOPMENT-GATED | 660-test release gate, updater rollback/failure tests, ad-hoc signing, canonical ZIP, metadata and security audit | Developer ID/notarization/stapling, production update feed, non-Darwin backend and qualifying soak |
+| Release and cross-platform readiness | 3 | 3 | 3 | PARTIAL / DEVELOPMENT-GATED | 744-test release gate, updater rollback/failure tests, ad-hoc signing, canonical ZIP, metadata and security audit | Developer ID/notarization/stapling, production update feed, non-Darwin backend and qualifying soak |
 | **Total** | **100** | **56** | **68.5** |  |  |  |
 
 The numeric total above remains the last formal production-credit score. It is
@@ -101,18 +102,18 @@ not a feature-completion percentage. Development phase progress is 8/8; rows
 marked `DEVELOPMENT-GATED` intentionally retain their prior numeric points until
 their listed external production gates are satisfied.
 
-## Combined development gate evidence — 2026-09-20
+## Combined development gate evidence — 2026-09-25
 
 - Archive contract 6/6, soak contract 4/4, security-report contract 1/1.
-- Swift: 660 tests, one explicit environment skip, zero failures, 192.445 s.
+- Swift: 744 tests, one explicit environment skip, zero failures, 189.790 s.
 - Failure shard: exact 10/10 scenarios for force quit, disk full, network and
   backend loss, MCP/Browser/PTY crash, Git lock, deleted worktree, and remote
   disconnect.
 - VS Code Node tests 17/17; GitHub Action Node tests 14/14.
-- Optimized arm64 build 181.87 s; ad-hoc hardened signature, plist, canonical
+- Optimized arm64 build 168.54 s; ad-hoc hardened signature, plist, canonical
   archive, extracted app, SBOM/provenance and security audit passed.
 - Development ZIP SHA-256:
-  `43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
+  `d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`.
 - Not executed or claimed: Developer ID/notarization/stapling, production update
   feed, real authorized external-service acceptance, native packaged UI smoke,
   and qualifying 2h/8h/24h/multi-day soak.
@@ -606,11 +607,11 @@ settings JSON or model context.
 - PR: retain controlled provider tests and add an explicitly authorized
   push→create→structured-link→Review PR acceptance run outside deterministic
   unit tests.
-- Current development regression/release gate completed: 660 tests, 1 explicit
+- Current development regression/release gate completed: 744 tests, 1 explicit
   skip, 0 failures; 6/6 archive contract tests; optimized build/ad-hoc sign/
   archive round-trip; SBOM/provenance/security audit; artifact SHA-256 recorded.
   The earlier Phase B packaged UI smoke remains historical evidence; the current
-  Phase C-H gate did not rerun native UI smoke.
+  1.4.1 combined gate did not rerun native UI smoke.
 
 ## Score change policy
 

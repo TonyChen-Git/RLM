@@ -40,7 +40,7 @@ final class LLMReasoningStreamTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let settings = AppSettings(
             provider: provider,
-            endpoint: "http://unit.test",
+            endpoint: "http://127.0.0.1:54321",
             selectedModel: "test-model"
         )
         let messages = [ChatMessage(role: .user, content: "hello")]

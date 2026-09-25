@@ -1,7 +1,7 @@
 # Automation, Notification, and SSH Remote Runner Architecture
 
-Last development audit: 2026-09-20, after the combined Phase C-H
-validation/release gate
+Last development audit: 2026-09-25, after the 744-test combined Phase A-H
+LumaChat 1.4.1 validation/release gate
 
 ## Scope and status
 
@@ -337,7 +337,7 @@ that such a service exists.
 | Local approval with remote identity | DEVELOPMENT-GATED | Backend/host/port/user/root shown in approval card |
 | Mac/Worktree to SSH and SSH to Mac | DEVELOPMENT-GATED / LIVE HOST PENDING | Bounded same-HEAD migration, verification, rollback/CAS, durable journal recovery and Task handoff orchestration |
 | Secure relay/mobile remote control | SEAM | `.futureCloud` exists but always fails closed |
-| Focused automated coverage | PASSED | Included in the 660-test development regression; remote-disconnect boundary injection also passes |
+| Focused automated coverage | PASSED | Included in the 744-test development regression; remote-disconnect boundary injection also passes |
 
 ## Known limitations and remaining Phase F gates
 

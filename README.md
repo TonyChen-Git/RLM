@@ -9,11 +9,11 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-20）**：原始 master prompt 的 Phase A–H 開發範圍已完成，
-> Phase C–H 的合併 development gate 通過 660 項 Swift 測試（1 項環境性 skip、
+> **目前狀態（2026-09-25）**：原始 master prompt 的 Phase A–H 開發範圍已完成，
+> 最終合併 development gate 通過 744 項 Swift 測試（1 項環境性 skip、
 > 0 failures）、optimized arm64 build、ad-hoc hardened signing、canonical ZIP、
 > SBOM/provenance 與安全稽核。VS Code 17/17、GitHub Action 14/14 Node 測試也通過。
-> 目前仍是 development snapshot；沒有 Developer ID/notarization/stapling、正式
+> `1.4.1` build `8` 仍是 development snapshot；沒有 Developer ID/notarization/stapling、正式
 > update feed、live backend/SSH/real-browser acceptance 或正式長時間 soak 證據，
 > 因此不是可對外宣稱的 production release。
 
@@ -61,7 +61,7 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 | Phase | 主題 | 目前紀錄 |
 | --- | --- | --- |
 | A | Managed worktrees、`.git` pointer、handoff、writable isolation | Release gate 已有證據 |
-| B | 真 PTY、Task Terminal、Advanced Git、Review、PR | Release gate 已有證據（1.4.0 development artifact） |
+| B | 真 PTY、Task Terminal、Advanced Git、Review、PR | Release gate 已有證據（1.4.0 為歷史 Phase B artifact；1.4.1 為目前合併 artifact） |
 | C | Subagents 與 scheduler | 實作完成；合併 Swift/release development gate 通過 |
 | D | Skills、plugins、hooks、OAuth | 實作完成；合併 Swift/release development gate 通過 |
 | E | Browser/CDP、annotations、Computer Use 2.0 | 實作與自動化 gate 通過；real-browser/native UI acceptance 仍屬外部 gate |
@@ -129,12 +129,12 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
-2026-09-20 的 development gate 結果：archive contract 6/6、soak contract 4/4、
-security report contract 1/1、Swift 660 tests（1 skip、0 failures）、VS Code
+2026-09-25 的 `1.4.1` development gate 結果：archive contract 6/6、soak contract 4/4、
+security report contract 1/1、Swift 744 tests（1 skip、0 failures）、VS Code
 17/17、GitHub Action 14/14；optimized arm64 build、bundle/extracted-bundle、
 signature、plist、canonical ZIP、SBOM/provenance 與 security audit 均通過。生成的
 development ZIP SHA-256 為
-`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`。
+`d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`。
 Production release 仍需要 Developer ID、notary profile、Ed25519 update key、
 team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確設定的
 環境變數提供。
@@ -231,6 +231,7 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
+- [1.4.1 development release notes](docs/RELEASE_NOTES_1.4.1.md)
 - [Full parity audit](docs/CODEX_FULL_PARITY_AUDIT.md)
 - [Replacement roadmap](docs/CODEX_REPLACEMENT_ROADMAP.md)
 - [Model parameter profiles](docs/MODEL_PARAMETER_PROFILES.md)

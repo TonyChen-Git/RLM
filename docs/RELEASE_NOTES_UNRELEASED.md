@@ -1,16 +1,15 @@
 # Luma Chat — Unreleased development notes
 
-Checkpoint date: 2026-09-20
+Checkpoint date: 2026-09-25
 
 Status: the Phase A–H development implementation and combined development
 release gate are complete. This is not a production release: Developer ID,
 notarization/stapling, production update credentials, live external acceptance,
 and the qualifying long-duration soak remain external gates.
 
-The current development-gate artifact is `LumaChat-1.4.0-arm64.zip`, SHA-256
-`43cc039b4da577193ed653625b5cc6e1e615898a8629010c84c527f072d724e9`.
-It is ad-hoc signed and has not been published or used to rewrite the existing
-historical tag. Phase B's earlier evidence remains recorded in
+The current development-gate artifact is `LumaChat-1.4.1-arm64.zip`, SHA-256
+`d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`.
+It is ad-hoc signed. Phase B's earlier evidence remains recorded in
 [`RELEASE_NOTES_1.4.0.md`](RELEASE_NOTES_1.4.0.md).
 
 ## Phase C — Subagents
@@ -239,13 +238,13 @@ historical tag. Phase B's earlier evidence remains recorded in
   filesystem. Release archive fixtures that deliberately contain AppleDouble
   metadata are retained in a dedicated project-`tmp` tree instead of poisoning
   the next release staging run.
-- The 2026-09-20 development gate passed archive contract 6/6, soak contract
-  4/4, security-report contract 1/1, and 660 Swift tests with one explicit
-  environment skip and zero failures in 192.445 seconds. The optimized arm64
-  build completed in 181.87 seconds; ad-hoc hardened signing, plist, canonical
+- The 2026-09-25 development gate passed archive contract 6/6, soak contract
+  4/4, security-report contract 1/1, and 744 Swift tests with one explicit
+  environment skip and zero failures in 189.790 seconds. The optimized arm64
+  build completed in 168.54 seconds; ad-hoc hardened signing, plist, canonical
   ZIP, extracted-app, SBOM/provenance, and static/package security audit passed.
-- The security audit inspected 355 source files / 9,000,247 bytes and 15
-  application files / 36,144,425 bytes; `get-task-allow` and update trust were
+- The security audit inspected 355 source files / 9,301,304 bytes and 15
+  application files / 36,619,705 bytes; `get-task-allow` and update trust were
   both disabled for this development artifact.
 
 ## Candidate scope

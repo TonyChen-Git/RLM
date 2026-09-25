@@ -1,7 +1,8 @@
 # Per-model Parameter Profiles
 
 Status: implemented; focused profile tests and the combined Phase C–H
-development release gate passed on 2026-09-20.
+development release gate passed on 2026-09-25 as part of the 744-test
+LumaChat 1.4.1 development release.
 
 ## Identity and persistence
 

@@ -270,6 +270,7 @@ public enum LumaUpdateError: LocalizedError, Equatable, Sendable {
     case updateNotNotarized
     case incompatibleSystem
     case untrustedApplication(String)
+    case transactionInProgress
     case invalidInstallRequest
     case unsafePath(String)
     case processFailure(String)
@@ -295,6 +296,8 @@ public enum LumaUpdateError: LocalizedError, Equatable, Sendable {
         case .updateNotNotarized: "The update feed does not require a notarized application."
         case .incompatibleSystem: "The update requires a newer macOS version."
         case .untrustedApplication(let detail): "The application signature is not trusted: \(detail)"
+        case .transactionInProgress:
+            "An unfinished update transaction must be resolved before another update can start."
         case .invalidInstallRequest: "The update helper request is invalid."
         case .unsafePath(let path): "The update path is unsafe: \(path)"
         case .processFailure(let detail): "An update verification process failed: \(detail)"

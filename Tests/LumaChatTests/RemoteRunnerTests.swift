@@ -4,6 +4,11 @@ import XCTest
 
 @testable import LumaChat
 
+private struct LegacyRemoteRunnerDocument: Codable {
+    var version: Int
+    var runners: [RemoteRunnerConfiguration]
+}
+
 final class RemoteRunnerTests: XCTestCase {
     func testConfigurationPathsAndAppleDoubleMutationsFailClosed() throws {
         let normalized = try makeRunner(
@@ -53,9 +58,13 @@ final class RemoteRunnerTests: XCTestCase {
 
         let stored = try await store.upsert(runner, credential: .replace(credential))
 
-        XCTAssertEqual(stored, [runner])
-        let account = RemoteRunnerStore.credentialAccount(runner.id)
-        XCTAssertEqual(account, "remote-runner|ssh|\(runner.id.uuidString.lowercased())")
+        let storedRunner = try XCTUnwrap(stored.first)
+        XCTAssertEqual(storedRunner.id, runner.id)
+        XCTAssertNotNil(storedRunner.credentialReference)
+        let account = RemoteRunnerStore.credentialAccount(for: storedRunner)
+        XCTAssertTrue(account.hasPrefix(
+            "remote-runner|ssh|\(runner.id.uuidString.lowercased())|generation|"
+        ))
         XCTAssertEqual(try secrets.load(account: account), credential.privateKey)
         let document = String(
             decoding: try Data(contentsOf: fileURL),
@@ -63,6 +72,7 @@ final class RemoteRunnerTests: XCTestCase {
         )
         XCTAssertTrue(document.contains(runner.id.uuidString))
         XCTAssertTrue(document.contains("\"version\" : 1"))
+        XCTAssertTrue(document.contains("\"credentialReference\""))
         XCTAssertFalse(document.contains(credential.privateKey))
         XCTAssertFalse(document.contains("PRIVATE KEY"))
 
@@ -71,6 +81,413 @@ final class RemoteRunnerTests: XCTestCase {
         let remaining = try await store.delete(id: runner.id)
         XCTAssertTrue(remaining.isEmpty)
         XCTAssertNil(try secrets.load(account: account))
+    }
+
+    func testRunnerStorePersistFailureRestoresPreviousCredentialState() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-persist-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = FaultInjectingRemoteRunnerSecretStore()
+        let store = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { _, _ in throw InjectedRemoteRunnerPersistenceError.failure }
+        )
+        let runner = makeRunner(name: "Persist failure")
+        let credential = makeCredential()
+
+        do {
+            _ = try await store.upsert(runner, credential: .replace(credential))
+            XCTFail("Injected metadata persistence failure should abort the transaction")
+        } catch {
+            XCTAssertTrue(error is InjectedRemoteRunnerPersistenceError)
+        }
+
+        XCTAssertTrue(secrets.snapshot().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testRunnerStoreReportsCombinedErrorWhenPersistAndRollbackBothFail() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-rollback-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = FaultInjectingRemoteRunnerSecretStore()
+        secrets.failNextDelete()
+        let store = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { _, _ in throw InjectedRemoteRunnerPersistenceError.failure }
+        )
+        let runner = makeRunner(name: "Rollback failure")
+        let credential = makeCredential()
+
+        do {
+            _ = try await store.upsert(runner, credential: .replace(credential))
+            XCTFail("A failed credential rollback must be reported as a combined error")
+        } catch let error as RemoteRunnerStoreTransactionError {
+            XCTAssertEqual(error.operation, .upsert)
+            XCTAssertTrue(error.primaryError is InjectedRemoteRunnerPersistenceError)
+            XCTAssertEqual(error.recoveryFailures.count, 1)
+            XCTAssertTrue(
+                error.recoveryFailures[0].underlyingError
+                    is FaultInjectingRemoteRunnerSecretStoreError
+            )
+            XCTAssertFalse(error.localizedDescription.contains(credential.privateKey))
+            XCTAssertFalse(error.localizedDescription.contains("PRIVATE KEY"))
+        } catch {
+            XCTFail("Expected combined remote-runner transaction error, got \(type(of: error))")
+        }
+
+        XCTAssertEqual(Array(secrets.snapshot().values), [credential.privateKey])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testRunnerCommittedThenThrowKeepsMetadataAndCredentialAligned() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-post-commit-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let normalStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let original = makeRunner(name: "Before commit")
+        let oldCredential = makeCredential()
+        let initialResults = try await normalStore.upsert(
+            original,
+            credential: .replace(oldCredential)
+        )
+        let initial = try XCTUnwrap(initialResults.first)
+        let oldAccount = RemoteRunnerStore.credentialAccount(for: initial)
+
+        let uncertainStore = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { data, url in
+                try AtomicFileWriter.write(data, to: url)
+                throw InjectedRemoteRunnerPersistenceError.failure
+            }
+        )
+        var updated = original
+        updated.name = "After commit"
+        let newCredential = RemoteRunnerCredential(
+            privateKey: oldCredential.privateKey.replacingOccurrences(
+                of: "abcdefghijklmnopqrstuvwxyz",
+                with: "zyxwvutsrqponmlkjihgfedcba"
+            )
+        )
+
+        do {
+            _ = try await uncertainStore.upsert(updated, credential: .replace(newCredential))
+            XCTFail("Post-commit durability uncertainty must remain visible.")
+        } catch let error as RemoteRunnerStoreDurabilityError {
+            XCTAssertTrue(error.primaryError is InjectedRemoteRunnerPersistenceError)
+            if case .requestedVisible = error.state {} else {
+                XCTFail("Exact post-rename readback must report requested-visible state.")
+            }
+            XCTAssertFalse(error.localizedDescription.contains(newCredential.privateKey))
+        }
+
+        let committedConfiguration = try await normalStore.configuration(id: original.id)
+        XCTAssertEqual(committedConfiguration.name, updated.name)
+        XCTAssertNotEqual(
+            committedConfiguration.credentialReference,
+            initial.credentialReference
+        )
+        XCTAssertEqual(
+            try secrets.load(
+                account: RemoteRunnerStore.credentialAccount(for: committedConfiguration)
+            ),
+            newCredential.privateKey
+        )
+        XCTAssertEqual(try secrets.load(account: oldAccount), oldCredential.privateKey)
+    }
+
+    func testRunnerThirdDocumentAfterWriterFailureNeverRollsCredentialBackward() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-third-version-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let normalStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let original = makeRunner(name: "Original")
+        let oldCredential = makeCredential()
+        let initialResults = try await normalStore.upsert(
+            original,
+            credential: .replace(oldCredential)
+        )
+        let initial = try XCTUnwrap(initialResults.first)
+        let oldAccount = RemoteRunnerStore.credentialAccount(for: initial)
+        let thirdDocument = Data(#"{"version":1,"runners":[]}"#.utf8)
+        let ambiguousStore = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { _, url in
+                try AtomicFileWriter.write(thirdDocument, to: url)
+                throw InjectedRemoteRunnerPersistenceError.failure
+            }
+        )
+        var updated = original
+        updated.name = "Requested"
+        let newCredential = RemoteRunnerCredential(
+            privateKey: oldCredential.privateKey.replacingOccurrences(
+                of: "abcdefghijklmnopqrstuvwxyz",
+                with: "bcdefghijklmnopqrstuvwxyza"
+            )
+        )
+
+        do {
+            _ = try await ambiguousStore.upsert(
+                updated,
+                credential: .replace(newCredential)
+            )
+            XCTFail("A third visible document must report durability uncertainty.")
+        } catch let error as RemoteRunnerStoreDurabilityError {
+            XCTAssertTrue(error.primaryError is InjectedRemoteRunnerPersistenceError)
+            if case .uncertain = error.state {} else {
+                XCTFail("A third document must report uncertain state.")
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), thirdDocument)
+        XCTAssertEqual(try secrets.load(account: oldAccount), oldCredential.privateKey)
+        XCTAssertTrue(secrets.snapshot().values.contains(newCredential.privateKey))
+        XCTAssertEqual(secrets.snapshot().count, 2)
+    }
+
+    func testRunnerNormalRotationCollectsOnlyThePreviousGeneration() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-normal-rotation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let store = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let runner = makeRunner(name: "Rotate")
+        let oldCredential = makeCredential()
+        let oldResults = try await store.upsert(
+            runner,
+            credential: .replace(oldCredential)
+        )
+        let oldConfiguration = try XCTUnwrap(oldResults.first)
+        let oldAccount = RemoteRunnerStore.credentialAccount(for: oldConfiguration)
+        let newCredential = RemoteRunnerCredential(
+            privateKey: oldCredential.privateKey.replacingOccurrences(
+                of: "abcdefghijklmnopqrstuvwxyz",
+                with: "zyxwvutsrqponmlkjihgfedcba"
+            )
+        )
+
+        let newResults = try await store.upsert(
+            runner,
+            credential: .replace(newCredential)
+        )
+        let newConfiguration = try XCTUnwrap(newResults.first)
+        let newAccount = RemoteRunnerStore.credentialAccount(for: newConfiguration)
+
+        XCTAssertNotEqual(newAccount, oldAccount)
+        XCTAssertNil(try secrets.load(account: oldAccount))
+        XCTAssertEqual(try secrets.load(account: newAccount), newCredential.privateKey)
+        XCTAssertEqual(secrets.snapshot().count, 1)
+    }
+
+    func testLegacyCredentialAccountLoadsAndMigratesOnRotation() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-legacy-credential-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let runner = makeRunner(name: "Legacy")
+        let oldCredential = makeCredential()
+        let legacyAccount = RemoteRunnerStore.credentialAccount(runner.id)
+        try secrets.save(oldCredential.privateKey, account: legacyAccount)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try AtomicFileWriter.write(
+            encoder.encode(LegacyRemoteRunnerDocument(version: 1, runners: [runner])),
+            to: fileURL
+        )
+        let store = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let provider = KeychainRemoteRunnerCredentialProvider(secretStore: secrets)
+
+        let loadedConfigurations = try await store.list()
+        let loaded = try XCTUnwrap(loadedConfigurations.first)
+        XCTAssertNil(loaded.credentialReference)
+        XCTAssertEqual(try provider.credential(for: loaded), oldCredential)
+        let newCredential = RemoteRunnerCredential(
+            privateKey: oldCredential.privateKey.replacingOccurrences(
+                of: "abcdefghijklmnopqrstuvwxyz",
+                with: "bcdefghijklmnopqrstuvwxyza"
+            )
+        )
+
+        let migratedConfigurations = try await store.upsert(
+            loaded,
+            credential: .replace(newCredential)
+        )
+        let migrated = try XCTUnwrap(migratedConfigurations.first)
+
+        XCTAssertNotNil(migrated.credentialReference)
+        XCTAssertNil(try secrets.load(account: legacyAccount))
+        XCTAssertEqual(try provider.credential(for: migrated), newCredential)
+    }
+
+    func testConcurrentRunnerStoreInstancesSerializeReadModifyWriteTransactions() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-concurrent-stores-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let firstWriterEntered = expectation(description: "first runner writer entered")
+        let firstStore = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { data, url in
+                firstWriterEntered.fulfill()
+                Darwin.usleep(150_000)
+                try AtomicFileWriter.write(data, to: url)
+            }
+        )
+        let secondStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let firstRunner = makeRunner(name: "First")
+        let secondRunner = makeRunner(name: "Second")
+
+        let firstTask = Task {
+            try await firstStore.upsert(firstRunner, credential: .replace(makeCredential()))
+        }
+        await fulfillment(of: [firstWriterEntered], timeout: 2)
+        let secondTask = Task {
+            try await secondStore.upsert(secondRunner, credential: .replace(makeCredential()))
+        }
+        _ = try await firstTask.value
+        _ = try await secondTask.value
+
+        let loadedNames = Set(try await secondStore.list().map(\.name))
+        XCTAssertEqual(loadedNames, ["First", "Second"])
+    }
+
+    func testRunnerDeletePersistFailureRestoresCredentialAndKeepsMetadata() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-delete-persist-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = FaultInjectingRemoteRunnerSecretStore()
+        let normalStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let runner = makeRunner(name: "Delete persist failure")
+        let credential = makeCredential()
+        let storedConfigurations = try await normalStore.upsert(
+            runner,
+            credential: .replace(credential)
+        )
+        let stored = try XCTUnwrap(storedConfigurations.first)
+        let account = RemoteRunnerStore.credentialAccount(for: stored)
+        let failingStore = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { _, _ in throw InjectedRemoteRunnerPersistenceError.failure }
+        )
+
+        do {
+            _ = try await failingStore.delete(id: runner.id)
+            XCTFail("Metadata persistence failure must abort runner deletion.")
+        } catch {
+            XCTAssertTrue(error is InjectedRemoteRunnerPersistenceError)
+        }
+
+        let retainedRunner = try await normalStore.configuration(id: runner.id)
+        XCTAssertEqual(retainedRunner, stored)
+        XCTAssertEqual(
+            try secrets.load(account: account),
+            credential.privateKey
+        )
+    }
+
+    func testRunnerDeleteCommitsMetadataBeforeBestEffortCredentialCleanup() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-delete-rollback-failure-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = FaultInjectingRemoteRunnerSecretStore()
+        let normalStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let runner = makeRunner(name: "Delete rollback failure")
+        let credential = makeCredential()
+        let storedConfigurations = try await normalStore.upsert(
+            runner,
+            credential: .replace(credential)
+        )
+        let stored = try XCTUnwrap(storedConfigurations.first)
+        let account = RemoteRunnerStore.credentialAccount(for: stored)
+        secrets.failNextDelete()
+
+        let remaining = try await normalStore.delete(id: runner.id)
+
+        XCTAssertTrue(remaining.isEmpty)
+        do {
+            _ = try await normalStore.configuration(id: runner.id)
+            XCTFail("Deleted runner metadata remained visible.")
+        } catch {
+            XCTAssertEqual(error as? RemoteExecutionError, .runnerNotFound(runner.id))
+        }
+        // Cleanup failure can leave only an unreachable orphan; it cannot
+        // leave live metadata pointing at a deleted credential.
+        XCTAssertEqual(try secrets.load(account: account), credential.privateKey)
+    }
+
+    func testRunnerDeleteLateWriterErrorPreservesCredentialForPossibleRollback() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "remote-runner-delete-late-error-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let fileURL = root.appendingPathComponent("runners.json", isDirectory: false)
+        defer { cleanupTestRoot(root, knownFiles: [fileURL]) }
+        let secrets = InMemoryRemoteRunnerSecretStore()
+        let normalStore = RemoteRunnerStore(fileURL: fileURL, secretStore: secrets)
+        let runner = makeRunner(name: "Late delete")
+        let credential = makeCredential()
+        let storedConfigurations = try await normalStore.upsert(
+            runner,
+            credential: .replace(credential)
+        )
+        let stored = try XCTUnwrap(storedConfigurations.first)
+        let account = RemoteRunnerStore.credentialAccount(for: stored)
+        let lateErrorStore = RemoteRunnerStore(
+            fileURL: fileURL,
+            secretStore: secrets,
+            writeData: { data, url in
+                try AtomicFileWriter.write(data, to: url)
+                throw InjectedRemoteRunnerPersistenceError.failure
+            }
+        )
+
+        do {
+            _ = try await lateErrorStore.delete(id: runner.id)
+            XCTFail("Late durability failure must remain visible.")
+        } catch let error as RemoteRunnerStoreDurabilityError {
+            if case .requestedVisible = error.state {} else {
+                XCTFail("Delete late error must report requested-visible state.")
+            }
+        }
+
+        let remainingConfigurations = try await normalStore.list()
+        XCTAssertTrue(remainingConfigurations.isEmpty)
+        XCTAssertEqual(try secrets.load(account: account), credential.privateKey)
     }
 
     func testSSHFramingQuotesEveryValueAndInvocationPinsSecurityOptions() throws {
@@ -519,7 +936,11 @@ final class RemoteRunnerTests: XCTestCase {
         )
         let runner = makeRunner(knownHostsFile: knownHostsURL.path)
         let credential = makeCredential()
-        _ = try await store.upsert(runner, credential: .replace(credential))
+        let storedConfigurations = try await store.upsert(
+            runner,
+            credential: .replace(credential)
+        )
+        let storedRunner = try XCTUnwrap(storedConfigurations.first)
         try Data("builder.example.test ssh-ed25519 AAAAtest\n".utf8)
             .write(to: knownHostsURL)
         let service = RemoteRunnerService(
@@ -534,7 +955,10 @@ final class RemoteRunnerTests: XCTestCase {
         let identity = try await service.executionIdentity(for: runner.id)
         let backend = try await service.backend(for: runner.id)
 
-        XCTAssertEqual(summaries, [RemoteRunnerSummary(configuration: runner, hasCredential: true)])
+        XCTAssertEqual(
+            summaries,
+            [RemoteRunnerSummary(configuration: storedRunner, hasCredential: true)]
+        )
         XCTAssertEqual(identity.runnerID, runner.id)
         XCTAssertEqual(identity.backendLabel, "SSH · system OpenSSH")
         XCTAssertEqual(identity.host, runner.host)
@@ -594,7 +1018,11 @@ final class RemoteRunnerTests: XCTestCase {
             secretStore: storeSecrets
         )
         let original = makeRunner(knownHostsFile: knownHostsURL.path)
-        _ = try await store.upsert(original, credential: .replace(credential))
+        let originalConfigurations = try await store.upsert(
+            original,
+            credential: .replace(credential)
+        )
+        let storedOriginal = try XCTUnwrap(originalConfigurations.first)
         try Data("builder.example.test ssh-ed25519 AAAAoriginal\n".utf8)
             .write(to: knownHostsURL)
         let transport = RecordingSSHTransport(responses: [
@@ -642,7 +1070,7 @@ final class RemoteRunnerTests: XCTestCase {
         _ = try await exactBackend.verifyConnection()
         let invocations = await transport.snapshot()
         let invocation = try XCTUnwrap(invocations.last)
-        XCTAssertEqual(invocation.configuration, original)
+        XCTAssertEqual(invocation.configuration, storedOriginal)
         XCTAssertEqual(invocation.credential, credential)
         XCTAssertEqual(
             invocation.knownHostsData,
@@ -841,7 +1269,8 @@ private actor RecordingSSHTransport: SSHCommandTransporting {
 private struct StaticRemoteCredentialProvider: RemoteRunnerCredentialProviding {
     var credential: RemoteRunnerCredential?
 
-    func credential(for runnerID: UUID) throws -> RemoteRunnerCredential? {
+    func credential(for configuration: RemoteRunnerConfiguration) throws
+        -> RemoteRunnerCredential? {
         credential
     }
 }
@@ -867,6 +1296,64 @@ private final class InMemoryRemoteRunnerSecretStore: RemoteRunnerSecretStore, @u
         values.removeValue(forKey: account)
         lock.unlock()
     }
+
+    func snapshot() -> [String: String] {
+        lock.withLock { values }
+    }
+}
+
+private final class FaultInjectingRemoteRunnerSecretStore:
+    RemoteRunnerSecretStore,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+    private var shouldFailSave = false
+    private var shouldFailDelete = false
+
+    func save(_ value: String, account: String) throws {
+        try lock.withLock {
+            if shouldFailSave {
+                shouldFailSave = false
+                throw FaultInjectingRemoteRunnerSecretStoreError.injectedFailure
+            }
+            values[account] = value
+        }
+    }
+
+    func load(account: String) throws -> String? {
+        lock.withLock { values[account] }
+    }
+
+    func delete(account: String) throws {
+        try lock.withLock {
+            if shouldFailDelete {
+                shouldFailDelete = false
+                throw FaultInjectingRemoteRunnerSecretStoreError.injectedFailure
+            }
+            values.removeValue(forKey: account)
+        }
+    }
+
+    func failNextDelete() {
+        lock.withLock { shouldFailDelete = true }
+    }
+
+    func failNextSave() {
+        lock.withLock { shouldFailSave = true }
+    }
+
+    func snapshot() -> [String: String] {
+        lock.withLock { values }
+    }
+}
+
+private enum FaultInjectingRemoteRunnerSecretStoreError: Error {
+    case injectedFailure
+}
+
+private enum InjectedRemoteRunnerPersistenceError: Error {
+    case failure
 }
 
 private actor RemoteResolverCounter {

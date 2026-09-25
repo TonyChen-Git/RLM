@@ -77,13 +77,13 @@ final class ChatViewModelConcurrencyTests: XCTestCase {
         let viewModel = ChatViewModel(llmClient: LLMClient(session: session))
         viewModel.settings = AppSettings(
             provider: .openAICompatible,
-            endpoint: "http://unit.test/v1",
+            endpoint: "http://127.0.0.1:54321/v1",
             selectedModel: "test-model"
         )
         let first = Conversation(
             model: "test-model",
             provider: .openAICompatible,
-            endpoint: "http://unit.test/v1"
+            endpoint: "http://127.0.0.1:54321/v1"
         )
         viewModel.conversations = [first]
         viewModel.selectedConversationID = first.id

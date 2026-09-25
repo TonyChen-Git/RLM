@@ -1,3 +1,4 @@
+import Darwin
 import CryptoKit
 import Foundation
 import XCTest
@@ -31,7 +32,552 @@ private final class InMemorySecureStorageBackend: SecureStorageBackend, @uncheck
     }
 }
 
+private final class PhaseHUpdateOfflineURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let requestLock = NSLock()
+    nonisolated(unsafe) private static var requestCount = 0
+
+    static func reset() {
+        requestLock.withLock { requestCount = 0 }
+    }
+
+    static func capturedRequestCount() -> Int {
+        requestLock.withLock { requestCount }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.requestLock.withLock { Self.requestCount += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+
+private final class PhaseHPostCommitStateWriter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writeCount = 0
+
+    func write(_ value: LumaUpdatePersistentState, to url: URL) throws {
+        lock.lock()
+        writeCount += 1
+        let currentWrite = writeCount
+        lock.unlock()
+
+        try LumaUpdateFileSecurity.writeJSONAtomically(value, to: url)
+        if currentWrite == 2 {
+            throw LumaUpdateError.persistenceFailure(
+                "injected post-commit compensation ambiguity"
+            )
+        }
+    }
+}
+
 final class PhaseHUpdateTests: XCTestCase {
+    override func tearDown() {
+        PhaseHUpdateOfflineURLProtocol.reset()
+        super.tearDown()
+    }
+
+    func testUnresolvedJournalBlocksEveryNewUpdateOperationWithoutBeingOverwritten() async throws {
+        let root = fixtureRoot("active-journal-gate")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        var journal = sampleJournal(
+            currentURL: root.appendingPathComponent("LumaChat.app", isDirectory: true),
+            candidateURL: root.appendingPathComponent("candidate.app", isDirectory: true),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        journal.stage = .failed
+        journal.failure = "injected unresolved transaction"
+        try store.saveJournal(journal)
+        let durableJournal = try store.loadJournal()
+        let service = LumaUpdateService(
+            configuration: updateConfiguration,
+            stateStore: store,
+            session: offlineSession(),
+            stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+            backupRoot: root.appendingPathComponent("backups", isDirectory: true)
+        )
+
+        for operation in [
+            { _ = try await service.check(); return () },
+            { _ = try await service.downloadAndPrepare(); return () }
+        ] {
+            do {
+                try await operation()
+                XCTFail("An unresolved journal must block update work.")
+            } catch let error as LumaUpdateError {
+                XCTAssertEqual(error, .transactionInProgress)
+            }
+        }
+        do {
+            _ = try await service.launchPreparedInstall()
+            XCTFail("An unresolved journal must block install launch.")
+        } catch let error as LumaUpdateError {
+            XCTAssertEqual(error, .transactionInProgress)
+        }
+        do {
+            _ = try await service.launchRollback()
+            XCTFail("An unresolved journal must block rollback launch.")
+        } catch let error as LumaUpdateError {
+            XCTAssertEqual(error, .transactionInProgress)
+        }
+        XCTAssertEqual(try store.loadJournal(), durableJournal)
+    }
+
+    func testCorruptStateAndJournalFailBeforeAnyNetworkFallback() async throws {
+        for damagedName in ["state.json", "journal.json"] {
+            let root = fixtureRoot("corrupt-\(damagedName)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = LumaUpdateStateStore(
+                preferencesURL: root.appendingPathComponent("preferences.json"),
+                stateURL: root.appendingPathComponent("state.json"),
+                journalURL: root.appendingPathComponent("journal.json")
+            )
+            try AtomicFileWriter.write(
+                Data("{ damaged".utf8),
+                to: root.appendingPathComponent(damagedName)
+            )
+            let service = LumaUpdateService(
+                configuration: updateConfiguration,
+                stateStore: store,
+                session: offlineSession(),
+                stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+                backupRoot: root.appendingPathComponent("backups", isDirectory: true)
+            )
+
+            do {
+                _ = try await service.check()
+                XCTFail("Damaged \(damagedName) must fail closed.")
+            } catch let error as LumaUpdateError {
+                guard case .persistenceFailure = error else {
+                    return XCTFail("Expected persistence failure, got \(error)")
+                }
+            }
+        }
+    }
+
+    func testFuturePreferencesAndStateSchemasFailClosedBeforeNetwork() async throws {
+        for damagedName in ["preferences.json", "state.json"] {
+            let root = fixtureRoot("future-schema-\(damagedName)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let preferencesURL = root.appendingPathComponent("preferences.json")
+            let stateURL = root.appendingPathComponent("state.json")
+            let store = LumaUpdateStateStore(
+                preferencesURL: preferencesURL,
+                stateURL: stateURL,
+                journalURL: root.appendingPathComponent("journal.json")
+            )
+            let target = damagedName == "preferences.json" ? preferencesURL : stateURL
+            try AtomicFileWriter.write(Data(#"{"schemaVersion":2}"#.utf8), to: target)
+
+            XCTAssertThrowsError(try {
+                if damagedName == "preferences.json" {
+                    _ = try store.loadPreferences()
+                } else {
+                    _ = try store.loadState()
+                }
+            }()) { error in
+                XCTAssertEqual(error as? LumaUpdateError, .unsupportedSchema)
+            }
+
+            if damagedName == "state.json" {
+                PhaseHUpdateOfflineURLProtocol.reset()
+                let service = LumaUpdateService(
+                    configuration: updateConfiguration,
+                    stateStore: store,
+                    session: offlineSession(),
+                    stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+                    backupRoot: root.appendingPathComponent("backups", isDirectory: true)
+                )
+                do {
+                    _ = try await service.check()
+                    XCTFail("A future update state schema must block checks.")
+                } catch let error as LumaUpdateError {
+                    XCTAssertEqual(error, .unsupportedSchema)
+                }
+                XCTAssertEqual(PhaseHUpdateOfflineURLProtocol.capturedRequestCount(), 0)
+            }
+
+            let controllerConfiguration = updateConfiguration
+            await MainActor.run {
+                let controller = LumaUpdateController(
+                    store: store,
+                    configuration: controllerConfiguration
+                )
+                XCTAssertEqual(controller.activity, .failed)
+                XCTAssertFalse(controller.canCheck)
+                XCTAssertFalse(controller.canPrepare)
+                XCTAssertFalse(controller.canInstall)
+                XCTAssertFalse(controller.canRollback)
+            }
+        }
+    }
+
+    func testPreparedUpdateCannotDowngradeAnewerCurrentBundle() async throws {
+        let root = fixtureRoot("stale-prepared-downgrade")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        let release = sampleRelease()
+        let prepared = LumaPreparedUpdate(
+            installationID: UUID(),
+            release: release,
+            envelopeBase64: Data("signed-envelope-placeholder".utf8).base64EncodedString(),
+            archivePath: root.appendingPathComponent("release.zip").path,
+            candidateApplicationPath: root.appendingPathComponent("candidate.app").path,
+            createdAt: Date()
+        )
+        try store.saveState(LumaUpdatePersistentState(preparedUpdate: prepared))
+        let currentBundle = try makeBundle(
+            root: root,
+            name: "Current.app",
+            version: "1.6.0",
+            build: 1
+        )
+        let service = LumaUpdateService(
+            configuration: updateConfiguration,
+            stateStore: store,
+            session: offlineSession(),
+            stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+            backupRoot: root.appendingPathComponent("backups", isDirectory: true),
+            currentBundle: currentBundle
+        )
+
+        do {
+            _ = try await service.launchPreparedInstall()
+            XCTFail("A stale prepared update must not downgrade the current bundle.")
+        } catch let error as LumaUpdateError {
+            XCTAssertEqual(error, .invalidInstallRequest)
+        }
+        XCTAssertNil(try store.loadJournal())
+
+        let currentIdentity = LumaUpdateApplicationIdentity(
+            bundleIdentifier: "com.lumachat.desktop",
+            version: "1.6.0",
+            build: 1,
+            teamIdentifier: "ABCDE12345"
+        )
+        let staleIdentity = LumaUpdateApplicationIdentity(
+            bundleIdentifier: "com.lumachat.desktop",
+            version: release.version,
+            build: release.build,
+            teamIdentifier: "ABCDE12345"
+        )
+        XCTAssertFalse(try LumaUpdateInstaller.isStrictlyNewer(
+            candidate: staleIdentity,
+            than: currentIdentity
+        ))
+    }
+
+    @MainActor
+    func testControllerSurfacesCorruptPreferencesAndStateAndDisablesActions() {
+        for damagedName in ["preferences.json", "state.json"] {
+            let root = fixtureRoot("controller-corrupt-\(damagedName)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = LumaUpdateStateStore(
+                preferencesURL: root.appendingPathComponent("preferences.json"),
+                stateURL: root.appendingPathComponent("state.json"),
+                journalURL: root.appendingPathComponent("journal.json")
+            )
+            try? AtomicFileWriter.write(
+                Data("{ damaged".utf8),
+                to: root.appendingPathComponent(damagedName)
+            )
+
+            let controller = LumaUpdateController(
+                store: store,
+                configuration: updateConfiguration
+            )
+            XCTAssertEqual(controller.activity, .failed)
+            XCTAssertTrue(controller.statusMessage.contains("更新資料損壞"))
+            XCTAssertFalse(controller.canCheck)
+            XCTAssertFalse(controller.canPrepare)
+            XCTAssertFalse(controller.canInstall)
+            XCTAssertFalse(controller.canRollback)
+            if damagedName == "preferences.json" {
+                XCTAssertFalse(controller.automaticallyChecksForUpdates)
+            }
+        }
+    }
+
+    @MainActor
+    func testControllerKeepsCorruptOrUnresolvedJournalWarningVisible() async throws {
+        for journalData in [Data("{ damaged".utf8), try encodedFailedJournal()] {
+            let root = fixtureRoot("controller-journal")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = LumaUpdateStateStore(
+                preferencesURL: root.appendingPathComponent("preferences.json"),
+                stateURL: root.appendingPathComponent("state.json"),
+                journalURL: root.appendingPathComponent("journal.json")
+            )
+            try AtomicFileWriter.write(journalData, to: root.appendingPathComponent("journal.json"))
+            let controller = LumaUpdateController(
+                store: store,
+                configuration: updateConfiguration
+            )
+
+            await controller.start()
+            let warning = controller.statusMessage
+            XCTAssertEqual(controller.activity, .failed)
+            XCTAssertFalse(controller.canCheck)
+            await controller.checkForUpdates()
+            await controller.downloadAndPrepare()
+            let didLaunch = await controller.launchInstall()
+            XCTAssertFalse(didLaunch)
+            XCTAssertEqual(controller.statusMessage, warning)
+        }
+    }
+
+    func testAtomicJSONWriterFailsBeforeRenameWhenParentCannotBeOpened() throws {
+        let root = fixtureRoot("atomic-parent-open")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("state.json")
+        let operations = LumaUpdateFileSecurity.AtomicJSONWriteOperations(
+            openParentDirectory: { _ in -1 },
+            syncFile: { Darwin.fsync($0) },
+            syncParentDirectory: { Darwin.fsync($0) }
+        )
+
+        XCTAssertThrowsError(try LumaUpdateFileSecurity.writeJSONAtomically(
+            LumaUpdatePersistentState(),
+            to: destination,
+            operations: operations
+        )) { error in
+            guard case LumaUpdateError.persistenceFailure = error else {
+                return XCTFail("Expected a persistence failure, got \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testAtomicJSONWriterReportsPostRenameDirectorySyncAmbiguity() throws {
+        let root = fixtureRoot("atomic-parent-sync")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        let store = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: stateURL,
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        let replacement = LumaUpdatePersistentState(availableRelease: sampleRelease())
+        let operations = LumaUpdateFileSecurity.AtomicJSONWriteOperations(
+            openParentDirectory: { path in
+                Darwin.open(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW_ANY)
+            },
+            syncFile: { Darwin.fsync($0) },
+            syncParentDirectory: { _ in -1 }
+        )
+
+        XCTAssertThrowsError(try LumaUpdateFileSecurity.writeJSONAtomically(
+            replacement,
+            to: stateURL,
+            operations: operations
+        )) { error in
+            guard case LumaUpdateError.persistenceFailure(let detail) = error else {
+                return XCTFail("Expected a persistence failure, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("parent directory"), detail)
+        }
+        XCTAssertEqual(
+            try store.loadState(),
+            replacement,
+            "A post-rename fsync error is ambiguous: the visible replacement must not be hidden."
+        )
+    }
+
+    func testBrokenUpdateDocumentSymlinksAreNotTreatedAsMissing() throws {
+        for documentName in ["preferences.json", "state.json", "journal.json"] {
+            let root = fixtureRoot("broken-\(documentName)-symlink")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let preferencesURL = root.appendingPathComponent("preferences.json")
+            let stateURL = root.appendingPathComponent("state.json")
+            let journalURL = root.appendingPathComponent("journal.json")
+            let documentURL = root.appendingPathComponent(documentName)
+            guard Darwin.symlink("missing-update-document-target", documentURL.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let store = LumaUpdateStateStore(
+                preferencesURL: preferencesURL,
+                stateURL: stateURL,
+                journalURL: journalURL
+            )
+
+            XCTAssertThrowsError(try {
+                switch documentName {
+                case "preferences.json": _ = try store.loadPreferences()
+                case "state.json": _ = try store.loadState()
+                default: _ = try store.loadJournal()
+                }
+            }()) { error in
+                guard case LumaUpdateError.unsafePath = error else {
+                    return XCTFail("Expected \(documentName) to fail as unsafe, got \(error)")
+                }
+            }
+        }
+    }
+
+    func testConfirmLaunchNeverPublishesReceiptBeforeStatePersistence() throws {
+        let root = fixtureRoot("confirm-state-first")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            stateWriter: { _, _ in
+                throw LumaUpdateError.persistenceFailure("injected state write failure")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.confirmationURL.path))
+        XCTAssertEqual(try fixture.store.loadState(), fixture.previousState)
+    }
+
+    func testConfirmLaunchDoesNotPublishReceiptAfterAmbiguousStateCommit() throws {
+        let root = fixtureRoot("confirm-state-post-commit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            stateWriter: { value, url in
+                try LumaUpdateFileSecurity.writeJSONAtomically(value, to: url)
+                throw LumaUpdateError.persistenceFailure("injected state sync ambiguity")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.confirmationURL.path))
+        let visibleState = try fixture.store.loadState()
+        XCTAssertNil(visibleState.availableRelease)
+        XCTAssertEqual(visibleState.lastKnownGood?.version, fixture.journal.fromVersion)
+    }
+
+    func testConfirmLaunchCompensatesStateWhenReceiptWriteFailsBeforeCommit() throws {
+        let root = fixtureRoot("confirm-receipt-failure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            confirmationWriter: { _, _ in
+                throw LumaUpdateError.persistenceFailure("injected receipt write failure")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.confirmationURL.path))
+        XCTAssertEqual(try fixture.store.loadState(), fixture.previousState)
+    }
+
+    func testConfirmLaunchPreservesMatchingStateWhenReceiptWriterFailsAfterCommit() throws {
+        let root = fixtureRoot("confirm-receipt-post-commit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            confirmationWriter: { data, url in
+                try AtomicFileWriter.write(data, to: url)
+                throw LumaUpdateError.persistenceFailure("injected receipt sync ambiguity")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        ))
+        XCTAssertEqual(
+            try LumaUpdateFileSecurity.readRegularFile(
+                fixture.confirmationURL,
+                maximumBytes: 256
+            ),
+            Data((fixture.journal.installationID.uuidString + "\n").utf8)
+        )
+        let durableState = try fixture.store.loadState()
+        XCTAssertNil(durableState.availableRelease)
+        XCTAssertEqual(durableState.lastKnownGood?.version, fixture.journal.fromVersion)
+    }
+
+    func testConfirmLaunchTreatsBrokenReceiptSymlinkAsUncertain() throws {
+        let root = fixtureRoot("confirm-receipt-broken-symlink")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            confirmationWriter: { _, url in
+                guard Darwin.symlink("missing-confirmation-target", url.path) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                throw LumaUpdateError.persistenceFailure("injected unsafe receipt")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        )) { error in
+            guard case LumaUpdateError.persistenceFailure(let detail) = error else {
+                return XCTFail("Expected a persistence failure, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("outcome is uncertain"), detail)
+        }
+        var information = Darwin.stat()
+        XCTAssertEqual(Darwin.lstat(fixture.confirmationURL.path, &information), 0)
+        XCTAssertEqual(information.st_mode & S_IFMT, S_IFLNK)
+        let durableState = try fixture.store.loadState()
+        XCTAssertNil(durableState.availableRelease)
+        XCTAssertEqual(durableState.lastKnownGood?.version, fixture.journal.fromVersion)
+    }
+
+    func testConfirmLaunchAcceptsVerifiedPostCommitCompensation() throws {
+        let root = fixtureRoot("confirm-compensation-post-commit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try prepareLaunchConfirmationFixture(root: root)
+        let stateWriter = PhaseHPostCommitStateWriter()
+        let failingStore = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json"),
+            stateWriter: { value, url in try stateWriter.write(value, to: url) },
+            confirmationWriter: { _, _ in
+                throw LumaUpdateError.persistenceFailure("injected receipt write failure")
+            }
+        )
+
+        XCTAssertThrowsError(try failingStore.confirmLaunch(
+            installationID: fixture.journal.installationID,
+            runningBundle: fixture.runningBundle
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.confirmationURL.path))
+        XCTAssertEqual(try fixture.store.loadState(), fixture.previousState)
+    }
+
     func testDiskFullAfterAtomicSwapRestoresPreviousApplication() throws {
         let root = fixtureRoot("swap-journal-disk-full")
         let currentURL = root.appendingPathComponent("LumaChat.app", isDirectory: true)
@@ -309,10 +855,78 @@ final class PhaseHUpdateTests: XCTestCase {
         )
     }
 
+    private var updateConfiguration: LumaUpdateTrustConfiguration {
+        LumaUpdateTrustConfiguration(
+            feedURL: URL(string: "https://updates.example.test/feed.json")!,
+            publicKeyBase64: Data(repeating: 7, count: 32).base64EncodedString(),
+            teamIdentifier: "ABCDE12345",
+            bundleIdentifier: "com.lumachat.desktop"
+        )
+    }
+
+    private func offlineSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [PhaseHUpdateOfflineURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private func encodedFailedJournal() throws -> Data {
+        let root = fixtureRoot("encoded-failed-journal")
+        var journal = sampleJournal(
+            currentURL: root.appendingPathComponent("current.app"),
+            candidateURL: root.appendingPathComponent("candidate.app"),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        journal.stage = .failed
+        journal.failure = "injected failure"
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(journal)
+    }
+
     private func encoded<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
+    }
+
+    private func prepareLaunchConfirmationFixture(root: URL) throws -> (
+        store: LumaUpdateStateStore,
+        previousState: LumaUpdatePersistentState,
+        journal: LumaUpdateJournal,
+        runningBundle: Bundle,
+        confirmationURL: URL
+    ) {
+        let store = LumaUpdateStateStore(
+            preferencesURL: root.appendingPathComponent("preferences.json"),
+            stateURL: root.appendingPathComponent("state.json"),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        let previousState = LumaUpdatePersistentState(
+            availableRelease: sampleRelease(),
+            availableEnvelopeBase64: Data("signed envelope".utf8).base64EncodedString()
+        )
+        try store.saveState(previousState)
+        let runningBundle = try makeBundle(
+            root: root,
+            name: "LumaChat.app",
+            version: "1.5.0",
+            build: 8
+        )
+        var journal = sampleJournal(
+            currentURL: runningBundle.bundleURL,
+            candidateURL: root.appendingPathComponent("candidate.app", isDirectory: true),
+            journalURL: root.appendingPathComponent("journal.json")
+        )
+        journal.stage = .launchRequested
+        try store.saveJournal(journal)
+        return (
+            store,
+            previousState,
+            journal,
+            runningBundle,
+            URL(fileURLWithPath: journal.confirmationPath, isDirectory: false)
+        )
     }
 
     private func sampleJournal(
@@ -347,5 +961,30 @@ final class PhaseHUpdateTests: XCTestCase {
             .appendingPathComponent("\(name)-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    private func makeBundle(
+        root: URL,
+        name: String,
+        version: String,
+        build: Int
+    ) throws -> Bundle {
+        let application = root.appendingPathComponent(name, isDirectory: true)
+        let contents = application.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist: [String: Any] = [
+            "CFBundleIdentifier": "com.lumachat.desktop",
+            "CFBundleName": "LumaChat",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": String(build)
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        try AtomicFileWriter.write(data, to: contents.appendingPathComponent("Info.plist"))
+        return try XCTUnwrap(Bundle(url: application))
     }
 }
