@@ -665,6 +665,9 @@ strict manifest writer and verifier encode directories/executable as `0755` and
 plist, icon, and CodeResources as `0644`. SwiftPM operations that insist on a
 volume-root `.TemporaryItems` directory are rejected instead of weakening the
 Agent sandbox. Classic Chat regression remains a separate required test group.
+Packaged UI smoke must use `Scripts/ui_smoke.sh` so its Project catalog, sessions,
+settings, and runtime scratch stay in a marked profile below repository `tmp`.
+The debug/test `LUMACHAT_APP_SUPPORT_PATH` override is ignored by packaged builds.
 
 ### Phase A release gate — 2026-08-31
 

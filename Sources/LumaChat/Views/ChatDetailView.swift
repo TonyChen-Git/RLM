@@ -8,7 +8,7 @@ struct ChatDetailView: View {
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            LumaTheme.canvas
                 .overlay(LumaTheme.ambientGradient)
                 .ignoresSafeArea()
 
@@ -222,7 +222,7 @@ private struct ChatHeader: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 11)
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.surface)
     }
 }
 
@@ -948,13 +948,16 @@ private struct ComposerView: View {
                         .background(.primary.opacity(0.07), in: Circle())
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .help("加入檔案、專案，或即時連接 App")
 
                 TextField("", text: $viewModel.draft, axis: .vertical)
                     .font(.body)
                     .textFieldStyle(.plain)
+                    .multilineTextAlignment(.leading)
                     .lineLimit(1...5)
-                    .frame(minHeight: 42)
+                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
                     .padding(.vertical, 4)
                     .accessibilityLabel("訊息輸入框")
 
@@ -986,20 +989,13 @@ private struct ComposerView: View {
                 .help(viewModel.selectedConversationIsGenerating ? "停止 ⌘." : "送出 ⌘↩")
             }
             .padding(11)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(.primary.opacity(0.10), lineWidth: 0.75)
+                    .strokeBorder(LumaTheme.border, lineWidth: 0.75)
             }
             .shadow(color: .black.opacity(0.045), radius: 12, y: 5)
 
-            Text(
-                viewModel.liveAppConnection == nil
-                    ? "內容會傳送到你設定的 \(viewModel.settings.provider.title) 伺服器"
-                    : "已連接 App 的最新內容會隨訊息傳送到 \(viewModel.settings.provider.title)，但不儲存在對話檔案中"
-            )
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: 780)
         .frame(maxWidth: .infinity)

@@ -7,6 +7,7 @@ project_root="${script_directory:h}"
 info_plist="${project_root}/AppBundle/Info.plist"
 entitlements_plist="${project_root}/AppBundle/LumaChat.entitlements"
 privacy_manifest="${project_root}/AppBundle/PrivacyInfo.xcprivacy"
+ui_smoke_capability="${project_root}/AppBundle/UISmokeProfileCapability.txt"
 archive_builder="${project_root}/Scripts/release_archive.py"
 update_feed_builder="${project_root}/Scripts/generate_update_feed.py"
 release_metadata_builder="${project_root}/Scripts/generate_release_metadata.py"
@@ -105,11 +106,16 @@ esac
 for required_file in \
     "${entitlements_plist}" \
     "${privacy_manifest}" \
+    "${ui_smoke_capability}" \
     "${update_feed_builder}" \
     "${release_metadata_builder}" \
     "${security_auditor}"; do
     [[ -f "${required_file}" && ! -L "${required_file}" ]]
 done
+if [[ "$(/bin/cat "${ui_smoke_capability}")" != "LumaChat UI smoke profile v1" ]]; then
+    print -u2 -r -- "UI smoke capability marker is invalid."
+    exit 1
+fi
 
 if /usr/bin/find "${distribution_directory}" -name '._*' -print -quit 2>/dev/null \
     | /usr/bin/grep -q .; then
@@ -256,6 +262,8 @@ fi
     "${application_path}/Contents/Resources/AppIcon.icns"
 /bin/cp "${privacy_manifest}" \
     "${application_path}/Contents/Resources/PrivacyInfo.xcprivacy"
+/bin/cp "${ui_smoke_capability}" \
+    "${application_path}/Contents/Resources/UISmokeProfileCapability.txt"
 if [[ "${release_mode}" == "production" ]]; then
     /usr/bin/plutil -replace LumaChatUpdateFeedURL \
         -string "${update_feed_url}" "${application_path}/Contents/Info.plist"
@@ -278,6 +286,7 @@ done
     "${application_path}/Contents/Info.plist" \
     "${application_path}/Contents/Resources/AppIcon.icns" \
     "${application_path}/Contents/Resources/PrivacyInfo.xcprivacy" \
+    "${application_path}/Contents/Resources/UISmokeProfileCapability.txt" \
     "${builtin_plugin_destination}/plugin.json"
 for skill_name in "${artifact_skills[@]}"; do
     /bin/chmod 644 "${builtin_plugin_destination}/skills/${skill_name}/SKILL.md"

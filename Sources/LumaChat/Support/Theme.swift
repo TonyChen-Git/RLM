@@ -1,24 +1,42 @@
+import AppKit
 import SwiftUI
 
 enum LumaTheme {
-    /// A restrained green accent keeps controls close to ChatGPT's neutral
-    /// palette without washing the whole interface in a brand colour.
-    static let accent = Color(red: 0.10, green: 0.55, blue: 0.44)
-    static let cyan = Color(red: 0.16, green: 0.49, blue: 0.46)
-    static let pink = Color(red: 0.30, green: 0.58, blue: 0.48)
+    // Neutral surfaces and a monochrome control accent keep both appearances
+    // close to the Codex desktop palette. Reserve colour for actual status.
+    static let canvas = adaptive(light: (0.969, 0.969, 0.961), dark: (0.114, 0.118, 0.118))
+    static let sidebar = adaptive(light: (0.941, 0.945, 0.937), dark: (0.090, 0.094, 0.094))
+    static let surface = adaptive(light: (1.000, 1.000, 1.000), dark: (0.145, 0.149, 0.149))
+    static let elevated = adaptive(light: (0.980, 0.980, 0.976), dark: (0.169, 0.173, 0.173))
+    static let border = adaptive(light: (0.871, 0.878, 0.867), dark: (0.255, 0.263, 0.259))
+    static let accent = adaptive(light: (0.231, 0.239, 0.231), dark: (0.914, 0.914, 0.906))
+
+    private static let brandTop = Color(red: 0.290, green: 0.302, blue: 0.302)
+    private static let brandBottom = Color(red: 0.157, green: 0.165, blue: 0.165)
 
     static let brandGradient = LinearGradient(
-        colors: [accent, Color(red: 0.08, green: 0.43, blue: 0.38)],
+        colors: [brandTop, brandBottom],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
 
     static let ambientGradient = RadialGradient(
-        colors: [accent.opacity(0.055), cyan.opacity(0.025), .clear],
+        colors: [Color.primary.opacity(0.012), .clear],
         center: .topTrailing,
         startRadius: 20,
         endRadius: 520
     )
+
+    private static func adaptive(
+        light: (CGFloat, CGFloat, CGFloat),
+        dark: (CGFloat, CGFloat, CGFloat)
+    ) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let rgb = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? dark : light
+            return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
+        })
+    }
 }
 
 struct GlassCard: ViewModifier {
@@ -28,12 +46,12 @@ struct GlassCard: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(LumaTheme.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.75)
+                    .strokeBorder(LumaTheme.border.opacity(0.7), lineWidth: 0.75)
             }
-            .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
+            .shadow(color: .black.opacity(0.06), radius: 14, y: 6)
     }
 }
 

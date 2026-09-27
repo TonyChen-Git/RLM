@@ -19,8 +19,8 @@ struct ModeSelector: View {
                         .foregroundStyle(selection == mode ? Color.primary : Color.secondary)
                         .background {
                             if selection == mode {
-                                Capsule().fill(.regularMaterial)
-                                    .overlay { Capsule().strokeBorder(.primary.opacity(0.10)) }
+                                Capsule().fill(LumaTheme.elevated)
+                                    .overlay { Capsule().strokeBorder(LumaTheme.border.opacity(0.7)) }
                             }
                         }
                 }
@@ -30,7 +30,7 @@ struct ModeSelector: View {
             }
         }
         .padding(3)
-        .background(.primary.opacity(0.055), in: Capsule())
+        .background(LumaTheme.surface, in: Capsule())
         .opacity(isDisabled ? 0.58 : 1)
     }
 }

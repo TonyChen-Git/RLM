@@ -44,13 +44,17 @@
 		<data>
 		1XyJJl/+XK0BA+jAJnJTThm/Ul0=
 		</data>
+		<key>Resources/UISmokeProfileCapability.txt</key>
+		<data>
+		GlLoZyAj+7FbqAo8IXQi33hgqTg=
+		</data>
 		<key>Resources/bin/lumachat</key>
 		<data>
-		flF2f19+RaRpWyEyZc2wzmeyy6A=
+		2r9qBdRedZaA+a5vay6ykBUYQCg=
 		</data>
 		<key>Resources/bin/lumachat-updater</key>
 		<data>
-		0kmIKaLyRR9dz9LM/643TuYFOpQ=
+		kan0pxrqqZjzJSz1slaDJ+mOQmQ=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -125,18 +129,25 @@
 			90D65qBf1AKyB/zvNhLfrljbs7rfjDs99ye4TyKhQFE=
 			</data>
 		</dict>
+		<key>Resources/UISmokeProfileCapability.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			QQ29JNuWp+JpiPgRd2TMnADH0/e+d1xrIMT90o4mwis=
+			</data>
+		</dict>
 		<key>Resources/bin/lumachat</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			Lpo1AUcc181Lmh7d21kL9bMij4d8d4G4YME82VqyfWg=
+			jXVsFD5STdbJVYcdX/j/n5UWvJFqW3v0mitIubohPYs=
 			</data>
 		</dict>
 		<key>Resources/bin/lumachat-updater</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			/GmoDP7zothQQaneYIC4pYaqBPW/8nBZpwDY3TUaF9M=
+			Ix00nYgv3NcUravw15GgPs4OuOIuF767TXEFArNFQzc=
 			</data>
 		</dict>
 	</dict>

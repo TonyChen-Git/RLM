@@ -57,7 +57,7 @@ struct AgentDetailView: View {
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            LumaTheme.canvas
                 .overlay(LumaTheme.ambientGradient)
                 .ignoresSafeArea()
 
@@ -972,7 +972,7 @@ private struct AgentHeader: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 11)
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.surface)
         .alert("自訂專案名稱", isPresented: $isRenamingProject) {
             TextField("留空使用資料夾名稱", text: $projectNameDraft)
             Button("取消", role: .cancel) {}
@@ -2122,8 +2122,8 @@ private struct AgentComposer: View {
                 .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(11)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.primary.opacity(0.10), lineWidth: 0.75) }
+            .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(LumaTheme.border, lineWidth: 0.75) }
             .shadow(color: .black.opacity(0.045), radius: 12, y: 5)
 
             Text(footerText)

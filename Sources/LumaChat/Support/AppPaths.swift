@@ -1,7 +1,20 @@
 import Foundation
 
 enum AppPaths {
+    static let uiSmokeProfileEnvironmentKey = "LUMACHAT_UI_SMOKE_PROFILE"
+    static let uiSmokeProfileMarker = ".lumachat-ui-smoke-profile"
+    static let uiSmokeProfileMarkerContents = "LumaChat UI smoke profile v1\n"
+
     static let appSupport: URL = {
+        // Packaged UI smoke runs the release executable, where the debug/test
+        // override below is unavailable. An explicitly marked, temporary QA
+        // profile keeps that run out of the user's real Project catalog.
+        if let profilePath = ProcessInfo.processInfo.environment[uiSmokeProfileEnvironmentKey] {
+            guard let profile = validatedUISmokeProfile(at: profilePath) else {
+                fatalError("Invalid \(uiSmokeProfileEnvironmentKey); refusing to use the normal Application Support directory")
+            }
+            return profile.appendingPathComponent("app-support", isDirectory: true)
+        }
 #if LUMACHAT_TESTING
         if let override = ProcessInfo.processInfo.environment["LUMACHAT_APP_SUPPORT_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -12,6 +25,29 @@ enum AppPaths {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("LumaChat", isDirectory: true)
     }()
+
+    static func validatedUISmokeProfile(at path: String) -> URL? {
+        guard path.hasPrefix("/"),
+              path == path.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.contains("\0") else { return nil }
+        let profile = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        guard profile.lastPathComponent.hasPrefix("ui-smoke-profile."),
+              profile.deletingLastPathComponent().lastPathComponent == "tmp",
+              let profileValues = try? profile.resourceValues(forKeys: [
+                  .isDirectoryKey, .isSymbolicLinkKey
+              ]),
+              profileValues.isDirectory == true,
+              profileValues.isSymbolicLink != true else { return nil }
+        let marker = profile.appendingPathComponent(uiSmokeProfileMarker)
+        guard let markerValues = try? marker.resourceValues(forKeys: [
+                  .isRegularFileKey, .isSymbolicLinkKey
+              ]),
+              markerValues.isRegularFile == true,
+              markerValues.isSymbolicLink != true,
+              (try? String(contentsOf: marker, encoding: .utf8))
+                  == uiSmokeProfileMarkerContents else { return nil }
+        return profile
+    }
 
     static let conversations = appSupport.appendingPathComponent("Conversations", isDirectory: true)
     static let settingsFile = appSupport.appendingPathComponent("settings.json")

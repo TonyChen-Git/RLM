@@ -87,7 +87,7 @@ struct SidebarView: View {
             }
             .padding(12)
         }
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.sidebar)
         .confirmationDialog(
             "永久刪除「\(pendingDelete?.title ?? "此對話")」？",
             isPresented: Binding(
@@ -176,7 +176,7 @@ struct BrandMark: View {
                 .foregroundStyle(.white)
         }
         .frame(width: size, height: size)
-        .shadow(color: LumaTheme.accent.opacity(0.28), radius: 7, y: 3)
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
     }
 }
 

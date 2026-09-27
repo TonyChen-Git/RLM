@@ -44,13 +44,23 @@ def run(command: list[str]) -> str:
     return completed.stdout[:65536].decode(errors="replace")
 
 
-def audit_tree(root: Path, *, scan_secrets: bool) -> tuple[int, int]:
+def audit_tree(
+    root: Path,
+    *,
+    scan_secrets: bool,
+    excluded_root_names: frozenset[str] = frozenset(),
+) -> tuple[int, int]:
     files = 0
     bytes_seen = 0
     for base, directories, names in os.walk(root, topdown=True, followlinks=False):
-        directories[:] = sorted(
-            name for name in directories if name not in {"tmp", "dist", ".git"}
-        )
+        # Only the project root's generated directories are outside the source
+        # audit. Identically named folders inside source or the app remain in
+        # scope, including any symlinks they contain.
+        if Path(base) == root:
+            directories[:] = sorted(name for name in directories if name not in excluded_root_names)
+            names = [name for name in names if name not in excluded_root_names]
+        else:
+            directories.sort()
         for name in directories + sorted(names):
             if name.startswith("._"):
                 raise ValueError(f"AppleDouble file is present: {Path(base, name)}")
@@ -96,7 +106,11 @@ def main() -> None:
     report = Path(options.report).resolve()
     if project not in application.parents or project not in report.parents:
         raise ValueError("audit paths must remain inside the project")
-    source_files, source_bytes = audit_tree(project, scan_secrets=True)
+    source_files, source_bytes = audit_tree(
+        project,
+        scan_secrets=True,
+        excluded_root_names=frozenset({"tmp", "dist", ".git", ".build"}),
+    )
     app_files, app_bytes = audit_tree(application, scan_secrets=True)
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(application)])
     entitlement_process = subprocess.run(

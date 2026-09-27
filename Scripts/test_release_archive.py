@@ -41,6 +41,9 @@ class ReleaseArchiveTests(unittest.TestCase):
         (self.application / "Contents/Resources/PrivacyInfo.xcprivacy").write_bytes(
             b"privacy"
         )
+        (self.application / "Contents/Resources/UISmokeProfileCapability.txt").write_bytes(
+            b"LumaChat UI smoke profile v1\n"
+        )
         (self.application / "Contents/Resources/bin/lumachat").write_bytes(b"cli")
         (self.application / "Contents/Resources/bin/lumachat-updater").write_bytes(
             b"updater"
@@ -87,6 +90,9 @@ class ReleaseArchiveTests(unittest.TestCase):
             modes["LumaChat.app/Contents/Resources/PrivacyInfo.xcprivacy"], 0o644
         )
         self.assertEqual(
+            modes["LumaChat.app/Contents/Resources/UISmokeProfileCapability.txt"], 0o644
+        )
+        self.assertEqual(
             modes["LumaChat.app/Contents/Resources/bin/lumachat"], 0o755
         )
         self.assertEqual(
@@ -110,6 +116,13 @@ class ReleaseArchiveTests(unittest.TestCase):
 
     def test_create_requires_every_artifact_workflow_skill(self) -> None:
         missing = self.plugin / "skills/visualization/SKILL.md"
+        missing.unlink()
+
+        with self.assertRaisesRegex(ArchiveError, "manifest mismatch.*missing"):
+            create_archive(self.application, self.archive)
+
+    def test_create_requires_ui_smoke_capability(self) -> None:
+        missing = self.application / "Contents/Resources/UISmokeProfileCapability.txt"
         missing.unlink()
 
         with self.assertRaisesRegex(ArchiveError, "manifest mismatch.*missing"):

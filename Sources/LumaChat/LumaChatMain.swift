@@ -12,6 +12,24 @@ enum LumaChatMain {
         let processArguments = ProcessInfo.processInfo.arguments
         let arguments = Array(processArguments.dropFirst())
 
+        // The QA launcher calls this before showing any UI. An older packaged
+        // binary cannot confirm the profile, so the launcher must not run it.
+        if arguments.first == "--verify-ui-smoke-profile" {
+            guard arguments.count == 1,
+                  let path = ProcessInfo.processInfo.environment[
+                      AppPaths.uiSmokeProfileEnvironmentKey
+                  ],
+                  let profile = AppPaths.validatedUISmokeProfile(at: path),
+                  AppPaths.appSupport == profile.appendingPathComponent(
+                      "app-support", isDirectory: true
+                  ) else {
+                writeStandardError("Invalid UI smoke profile.\n")
+                Darwin.exit(EX_CONFIG)
+            }
+            writeStandardOutput("LumaChat UI smoke profile v1 ready\n")
+            Darwin.exit(0)
+        }
+
         if arguments.first == "--cli" {
             let status = await runCLI(
                 executable: processArguments.first ?? "LumaChat",

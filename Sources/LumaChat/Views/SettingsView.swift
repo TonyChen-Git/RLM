@@ -161,7 +161,7 @@ struct SettingsView: View {
             }
         }
         .frame(width: 780, height: 660)
-        .background(Color(nsColor: .windowBackgroundColor).overlay(LumaTheme.ambientGradient))
+        .background(LumaTheme.canvas.overlay(LumaTheme.ambientGradient))
         .confirmationDialog("永久清除所有對話？", isPresented: $confirmClear) {
             Button("刪除全部訊息與附件", role: .destructive) {
                 Task { await viewModel.deleteAllConversations() }
@@ -243,7 +243,7 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .frame(width: 178)
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.sidebar)
     }
 
     @ViewBuilder
@@ -303,7 +303,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
         .padding(20)
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.surface)
     }
 
     private var pageSubtitle: String {
@@ -1162,7 +1162,7 @@ struct SettingsView: View {
             )
         }
         .padding(16)
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.surface)
     }
 
     private var footerMessage: String {

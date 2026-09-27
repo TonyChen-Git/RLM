@@ -8,6 +8,8 @@ struct ModelParameterEditor: View {
     let route: ModelParameterRoute
     let compact: Bool
     @State private var isAdvancedExpanded: Bool
+    @State private var isAdvancedHovered = false
+    @FocusState private var isAdvancedFocused: Bool
 
     init(
         viewModel: ChatViewModel,
@@ -41,7 +43,11 @@ struct ModelParameterEditor: View {
             }
             .padding(compact ? 14 : 16)
             .frame(width: compact ? 440 : nil, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(LumaTheme.border.opacity(0.7), lineWidth: 0.75)
+            }
             .task(id: route.key.storageKey) {
                 await viewModel.refreshModelParameterCapabilities(for: route)
             }
@@ -162,62 +168,116 @@ struct ModelParameterEditor: View {
     }
 
     private var advancedControls: some View {
-        DisclosureGroup("進階參數", isExpanded: $isAdvancedExpanded) {
-            VStack(alignment: .leading, spacing: 13) {
-                if profile.capabilities.supportsTemperature {
-                    sliderRow(
-                        title: "Temperature",
-                        value: doubleBinding(\.temperature),
-                        range: 0...2,
-                        step: 0.05
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geometry in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isAdvancedExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(LumaTheme.accent)
+                            .frame(width: 25, height: 25)
+                            .background(LumaTheme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                        Text("進階參數")
+                            .font(.callout.weight(.semibold))
+                        Spacer(minLength: 8)
+                        Text(isAdvancedExpanded ? "收合" : "展開")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isAdvancedExpanded ? 180 : 0))
+                            .frame(width: 12)
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .frame(width: geometry.size.width, height: 46)
+                    .background(
+                        isAdvancedHovered ? LumaTheme.accent.opacity(0.11) : LumaTheme.surface,
+                        in: RoundedRectangle(cornerRadius: 10)
                     )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                isAdvancedFocused ? LumaTheme.accent.opacity(0.8)
+                                    : (isAdvancedHovered ? LumaTheme.accent.opacity(0.36) : LumaTheme.border),
+                                lineWidth: isAdvancedFocused ? 2 : 1
+                            )
+                    }
+                    .contentShape(Rectangle())
                 }
-                if profile.capabilities.supportsTopP {
-                    sliderRow(
-                        title: "Top P",
-                        value: doubleBinding(\.topP),
-                        range: 0...1,
-                        step: 0.01
-                    )
-                }
-                if profile.capabilities.supportsTopK {
-                    integerRow(title: "Top K", value: intBinding(\.topK))
-                }
-                if profile.capabilities.supportsMinP {
-                    sliderRow(
-                        title: "Min P",
-                        value: doubleBinding(\.minP),
-                        range: 0...1,
-                        step: 0.01
-                    )
-                }
-                if profile.capabilities.supportsRepetitionPenalty {
-                    sliderRow(
-                        title: "Repetition Penalty",
-                        value: doubleBinding(\.repetitionPenalty),
-                        range: 0...2,
-                        step: 0.01
-                    )
-                }
-                if profile.capabilities.supportsPresencePenalty {
-                    sliderRow(
-                        title: "Presence Penalty",
-                        value: doubleBinding(\.presencePenalty),
-                        range: -2...2,
-                        step: 0.05
-                    )
-                }
-                Toggle("Preserve Thinking", isOn: boolBinding(\.preserveThinking))
-                    .disabled(!profile.capabilities.supportsPreserveThinking)
-                if !profile.capabilities.supportsPreserveThinking {
-                    Text("目前 provider contract 不安全支援跨輪重送 hidden thinking，因此此欄位不會送入 API。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                .buttonStyle(.plain)
+                .focused($isAdvancedFocused)
+                .focusEffectDisabled()
+                .onHover { isAdvancedHovered = $0 }
+                .accessibilityValue(isAdvancedExpanded ? "已展開" : "已收合")
+                .accessibilityHint("顯示或隱藏模型的進階參數")
             }
-            .padding(.top, 12)
+            .frame(height: 46)
+
+            if isAdvancedExpanded {
+                VStack(alignment: .leading, spacing: 13) {
+                    if profile.capabilities.supportsTemperature {
+                        sliderRow(
+                            title: "Temperature",
+                            value: doubleBinding(\.temperature),
+                            range: 0...2,
+                            step: 0.05
+                        )
+                    }
+                    if profile.capabilities.supportsTopP {
+                        sliderRow(
+                            title: "Top P",
+                            value: doubleBinding(\.topP),
+                            range: 0...1,
+                            step: 0.01
+                        )
+                    }
+                    if profile.capabilities.supportsTopK {
+                        integerRow(title: "Top K", value: intBinding(\.topK))
+                    }
+                    if profile.capabilities.supportsMinP {
+                        sliderRow(
+                            title: "Min P",
+                            value: doubleBinding(\.minP),
+                            range: 0...1,
+                            step: 0.01
+                        )
+                    }
+                    if profile.capabilities.supportsRepetitionPenalty {
+                        sliderRow(
+                            title: "Repetition Penalty",
+                            value: doubleBinding(\.repetitionPenalty),
+                            range: 0...2,
+                            step: 0.01
+                        )
+                    }
+                    if profile.capabilities.supportsPresencePenalty {
+                        sliderRow(
+                            title: "Presence Penalty",
+                            value: doubleBinding(\.presencePenalty),
+                            range: -2...2,
+                            step: 0.05
+                        )
+                    }
+                    Toggle("Preserve Thinking", isOn: boolBinding(\.preserveThinking))
+                        .disabled(!profile.capabilities.supportsPreserveThinking)
+                    if !profile.capabilities.supportsPreserveThinking {
+                        Text("目前 provider contract 不安全支援跨輪重送 hidden thinking，因此此欄位不會送入 API。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 12)
+                .padding(.leading, 10)
+            }
         }
         .font(.callout.weight(.medium))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func parameterLabel(_ title: String, icon: String) -> some View {

@@ -247,7 +247,7 @@ struct AgentSidebarView: View {
             }
             .padding(12)
         }
-        .background(.ultraThinMaterial)
+        .background(LumaTheme.sidebar)
         .confirmationDialog(
             "永久刪除「\(pendingDelete?.title ?? "此任務")」？",
             isPresented: Binding(

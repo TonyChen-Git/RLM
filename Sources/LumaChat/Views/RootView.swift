@@ -24,6 +24,7 @@ struct RootView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .tint(LumaTheme.accent)
+        .background(LumaTheme.canvas)
         .sheet(isPresented: $viewModel.isShowingSettings) {
             SettingsView(viewModel: viewModel, agentViewModel: agentViewModel)
         }
@@ -145,10 +146,10 @@ private struct LumaNoticeBanner: View {
         }
         .padding(12)
         .frame(width: 360, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .strokeBorder(style.color.opacity(0.28))
+                .strokeBorder(LumaTheme.border)
         }
         .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
         .transition(.move(edge: .top).combined(with: .opacity))

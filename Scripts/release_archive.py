@@ -48,6 +48,7 @@ ARCHIVE_FILES = {
     "LumaChat.app/Contents/MacOS/LumaChat": 0o755,
     "LumaChat.app/Contents/Resources/AppIcon.icns": 0o644,
     "LumaChat.app/Contents/Resources/PrivacyInfo.xcprivacy": 0o644,
+    "LumaChat.app/Contents/Resources/UISmokeProfileCapability.txt": 0o644,
     "LumaChat.app/Contents/Resources/bin/lumachat": 0o755,
     "LumaChat.app/Contents/Resources/bin/lumachat-updater": 0o755,
     f"{ARTIFACT_WORKFLOW_ARCHIVE_ROOT}/plugin.json": 0o644,

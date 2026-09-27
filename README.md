@@ -9,13 +9,13 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-25）**：原始 master prompt 的 Phase A–H 開發範圍已完成，
-> 最終合併 development gate 通過 744 項 Swift 測試（1 項環境性 skip、
-> 0 failures）、optimized arm64 build、ad-hoc hardened signing、canonical ZIP、
-> SBOM/provenance 與安全稽核。VS Code 17/17、GitHub Action 14/14 Node 測試也通過。
-> `1.4.1` build `8` 仍是 development snapshot；沒有 Developer ID/notarization/stapling、正式
-> update feed、live backend/SSH/real-browser acceptance 或正式長時間 soak 證據，
-> 因此不是可對外宣稱的 production release。
+> **目前狀態（2026-09-27）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
+> `1.4.2` build `9` 包含 Chat/模型參數 UI 修正與封裝版 UI smoke 的資料隔離。
+> 已完成 745 項 Swift 測試（1 項環境性 skip、0 failures）、optimized arm64
+> 封裝、ad-hoc signing、ZIP/archive、SBOM/provenance 驗證及修正後的直接安全稽核。
+> 原生 UI 驗證尚未完成，這一版仍是 development candidate；沒有 Developer ID/
+> notarization/stapling、正式 update feed、live backend/SSH/real-browser
+> acceptance 或正式長時間 soak 證據。
 
 ## 能力總覽
 
@@ -129,7 +129,17 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
-2026-09-25 的 `1.4.1` development gate 結果：archive contract 6/6、soak contract 4/4、
+2026-09-27 的 `1.4.2` development package 驗證結果：archive contract 7/7、
+soak contract 4/4、security-audit contract 3/3、Swift 745 tests（1 skip、
+0 failures）；optimized arm64 build、ad-hoc signed app、ZIP/archive 驗證及
+SBOM/provenance 均完成。Release script 的最後來源稽核初次遇到 SwiftPM 產生的
+`.build/debug` symlink；排除根目錄的生成 `.build` 並通過定向測試後，直接安全稽核
+通過。完整 release script 未重跑。ZIP SHA-256 為
+`8dcbea2a992a3aac7c8d28b55c52c779b47c9990136dded5277d6cd74e6f6ad7`。
+封裝版原生 UI smoke 尚待完成。
+
+以下是 **歷史的** 2026-09-25 `1.4.1` development gate 結果：
+archive contract 6/6、soak contract 4/4、
 security report contract 1/1、Swift 744 tests（1 skip、0 failures）、VS Code
 17/17、GitHub Action 14/14；optimized arm64 build、bundle/extracted-bundle、
 signature、plist、canonical ZIP、SBOM/provenance 與 security audit 均通過。生成的
@@ -159,6 +169,14 @@ Debug/test 可用 `LUMACHAT_APP_SUPPORT_PATH` 與
 `LUMACHAT_RUNTIME_TMP_PATH` 指向專案內的 `tmp/` 隔離目錄。不要把 credentials、
 browser profiles、release staging 或 test output 寫到 repository 外的 Desktop、
 Downloads、`/tmp` 或 `/var/tmp`。
+
+封裝版的手動 UI smoke 請從 repository 執行
+`Scripts/ui_smoke.sh [path/to/LumaChat.app]`。腳本會在 `tmp/` 建立帶標記的
+暫時 profile，以 `LUMACHAT_UI_SMOKE_PROFILE` 啟動封裝版，並在 App 結束後只
+清理該次建立的 profile。封裝版不採用 debug/test 的
+`LUMACHAT_APP_SUPPORT_PATH`；直接開啟封裝版測試會使用正式的 Project catalog。
+目前 `1.4.2` 封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
+腳本會在啟動前拒絕它。1.4.2 封裝版的原生 UI smoke 尚待完成。
 
 Model Profile 的規則如下：
 
@@ -231,7 +249,8 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
-- [1.4.1 development release notes](docs/RELEASE_NOTES_1.4.1.md)
+- [1.4.2 development release candidate notes](docs/RELEASE_NOTES_1.4.2.md)
+- [1.4.1 historical development release notes](docs/RELEASE_NOTES_1.4.1.md)
 - [Full parity audit](docs/CODEX_FULL_PARITY_AUDIT.md)
 - [Replacement roadmap](docs/CODEX_REPLACEMENT_ROADMAP.md)
 - [Model parameter profiles](docs/MODEL_PARAMETER_PROFILES.md)
