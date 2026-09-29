@@ -102,6 +102,8 @@ the historical 1.4.1 gate rather than being silently relabelled as 1.4.2.
 | Managed worktree maintenance | Registry-backed inspection, clean/unleased cleanup and repair surfaced in the desktop UI | Scheduled maintenance, retained-branch policy and orphan edge coverage remain |
 | MCP health and restart | Visible connection diagnostics, explicit reconnect and discovery refresh; atomic tool-registration replacement and transient-discovery fallback | Live provider breadth and advanced OAuth interoperability remain |
 | App Server restart idempotency and SSE buffering | Durable mutation request journal with pending/completed states; worst-case live SSE byte ceiling | Real transport/hosted-runner acceptance and long soak remain |
+| Opt-in local memories | Global, Project and Task use controls default off; bounded local Project store, explicit proposal/review/approval/edit/delete UI, redaction and transient model context | Manual capture only; no background suggestions, cross-Project retrieval, search or native UI acceptance yet |
+| Claude Code / Cursor import | Read-only preview of root `CLAUDE.md` and legacy `.cursorrules`, with path/size/text checks and explicit application to a Project System Prompt draft | Nested Claude references, scoped Cursor `.mdc` rules, settings and chat history are not imported |
 
 The 2026-09-29 source follow-up passed 778 Swift tests with one environment skip
 and zero failures, plus 17/17 VS Code and 14/14 GitHub Action tests. This is
@@ -109,10 +111,15 @@ development evidence; native packaged UI, live external and production release
 gates remain. The formal **68.5/100** score below is not increased by source
 changes alone.
 
+The subsequent combined working tree passed 792 Swift tests with one environment
+skip and zero failures, including the 12 focused local-memory/import tests.
+This is source-level verification; native UI and package acceptance for those
+new controls remain pending.
+
 The largest still-open functional differences are a persistent interactive SSH
-PTY with reconnect and scrollback; an opt-in local memory system with review
-controls; hosted Cloud execution/secure relay; voice interaction; import of
-Claude Code/Cursor setup and chats; external service integrations and live
+PTY with reconnect and scrollback; automatic memory suggestions and richer
+retrieval; hosted Cloud execution/secure relay; voice interaction; full import
+of Claude Code/Cursor setup and chats; external service integrations and live
 acceptance; and production signing, notarization, update feed and long-duration
 soak. Event-triggered scheduled tasks are currently documented for Codex
 web/mobile, not the desktop app or

@@ -208,6 +208,18 @@ Model Profile 的規則如下：
 完整規則與 request ownership 請見
 [`docs/MODEL_PARAMETER_PROFILES.md`](docs/MODEL_PARAMETER_PROFILES.md)。
 
+## 本機記憶與專案指令匯入（開發原始碼）
+
+Agent 設定中的本機記憶預設關閉。啟用後仍須對 Project 和 Task 分別開啟；
+使用者在 Task 的記憶面板輸入提案、審閱並核准，核准內容才會在下一次執行時
+作為暫時上下文傳給當前模型供應商。記憶依 Project ID 存於本機，不寫進
+Task 對話歷史；可以編輯、刪除或清空。此版不從對話自動擷取記憶。
+刪除 Project 時會一併清理其本機記憶檔。
+
+Project Settings 可安全預覽專案根目錄的 `CLAUDE.md` 或舊版 `.cursorrules`，
+審閱和修改後套用到 System Prompt 草稿，再按設定的儲存鍵持久化。讀取器不展開
+其他檔案參照，也不改寫來源；新版 Cursor 規則的啟用範圍與聊天歷史仍未匯入。
+
 ## Security boundary
 
 所有檔案、process、network、browser、remote、plugin 與 external side effect
@@ -258,8 +270,9 @@ docs/                           Architecture, roadmap, audit and release notes
 - 執行中 Queue 只接受文字；Steer 也只接受文字，且送入後到下一次 session snapshot
   持久化之前仍在記憶體，程序在這段時間崩潰可能遺失該訊息。Side chat 只有開啟時
   的有界文字摘要，沒有檔案檢查、工具、影像或持久對話。
-- 仍缺 opt-in local memory、託管 Cloud/安全 relay、可重連的互動式 remote PTY、
-  語音互動，以及 Claude Code/Cursor 設定與對話匯入。
+- 本機記憶目前只支援手動提案與審核；Claude Code/Cursor 匯入只涵蓋兩種
+  Project 根目錄指令檔。仍缺自動記憶建議、完整設定／聊天歷史匯入、託管
+  Cloud/安全 relay、可重連的互動式 remote PTY 與語音互動。
 - macOS native Computer Use 需要使用者主動授予 Screen Recording/Accessibility，
   並維持 capture-bound approval；它不是通用 GUI automation。
 - App Server 的 durable mutation journal 與 SSE live-buffer 位元組上限已在

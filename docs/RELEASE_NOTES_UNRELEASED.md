@@ -46,15 +46,29 @@ It is ad-hoc signed. Phase B's earlier evidence remains recorded in
 - Added a durable App Server mutation journal with pending/completed outcomes
   and a worst-case byte ceiling for live SSE buffering. Uncertain mutations
   require inspecting the Task before resubmission.
+- Added opt-in, Project-scoped local memories. Global, Project and Task use
+  controls default off; user-written proposals require a separate approval
+  before a bounded redacted snapshot reaches the selected model on a future
+  run. The Task sheet supports edit, delete and clear; runtime context is
+  transient and does not become a Session message. This first slice does not
+  generate suggestions from conversation history.
+- Added read-only import previews for root `CLAUDE.md` and legacy
+  `.cursorrules`. Users can edit the redacted preview and explicitly apply it
+  to the Project System Prompt draft before saving Settings. Nested includes,
+  scoped Cursor rules and chat history remain out of scope.
 
 The base source passed 778 Swift tests (one environment skip, zero failures),
 17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. The 1.4.3
 development package passed 780 Swift tests (one environment skip, zero failures)
-and archive, signature, and security validation; native UI evidence remains pending. Opt-in local memory,
-hosted Cloud/secure relay, persistent interactive remote PTY, voice, Claude
-Code/Cursor import, and external integration acceptance remain open. The 1.4.1
-ZIP hash above is historical; the new package hash is recorded in the 1.4.3
-release notes.
+and archive, signature, and security validation. Its hash is recorded in
+[`RELEASE_NOTES_1.4.3.md`](RELEASE_NOTES_1.4.3.md). Hosted Cloud/secure relay,
+persistent interactive remote PTY, voice, complete Claude Code/Cursor import,
+automatic memory suggestions and live external integration acceptance remain
+open. The 1.4.1 ZIP hash above is historical.
+
+The subsequent combined working tree passed 792 Swift tests with one environment
+skip and zero failures, including 12 focused local-memory/import tests. Its new
+desktop controls have not yet been validated in a packaged app.
 
 ## Phase C — Subagents
 

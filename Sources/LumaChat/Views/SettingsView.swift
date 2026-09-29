@@ -102,6 +102,9 @@ struct SettingsView: View {
     @State private var profileName: String
     @State private var activeProbeID: UUID?
     @State private var saveError: String?
+    @State private var instructionImportPreview: ProjectInstructionImportPreview?
+    @State private var instructionImportDraft = ""
+    @State private var isShowingInstructionImport = false
 
     init(viewModel: ChatViewModel, agentViewModel: AgentViewModel) {
         self.viewModel = viewModel
@@ -219,6 +222,9 @@ struct SettingsView: View {
             Button("好", role: .cancel) { saveError = nil }
         } message: {
             Text(saveError ?? "")
+        }
+        .sheet(isPresented: $isShowingInstructionImport) {
+            instructionImportSheet
         }
     }
 
@@ -682,6 +688,11 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                Toggle("啟用本機記憶", isOn: $agentDraft.memoriesEnabled)
+                Text("預設關閉。啟用後仍須在專案與 Task 明確允許；已核准的記憶會隨下一次執行傳給所選模型服務。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 HStack {
                     Text("Plan 模型")
                     Spacer()
@@ -1091,7 +1102,17 @@ struct SettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("System Prompt").font(.callout.weight(.medium))
+                        HStack {
+                            Text("System Prompt").font(.callout.weight(.medium))
+                            Spacer()
+                            Menu("從其他助理匯入…") {
+                                ForEach(ProjectInstructionImportSource.allCases) { source in
+                                    Button(source.title) {
+                                        previewProjectInstructions(source)
+                                    }
+                                }
+                            }
+                        }
                         TextEditor(text: Binding(
                             get: { projectDraft.systemPrompt ?? "" },
                             set: { projectDraft.systemPrompt = $0 }
@@ -1102,6 +1123,9 @@ struct SettingsView: View {
                         .padding(8)
                         .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
                         Text("優先序：System Safety → App Agent Instructions → Project Settings / AGENTS.md → User Request。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("目前支援專案根目錄的 CLAUDE.md 與舊版 .cursorrules。匯入前可預覽及編輯，套用後仍須儲存 Project Settings。")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -1128,6 +1152,77 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func previewProjectInstructions(_ source: ProjectInstructionImportSource) {
+        guard let workspace = agentViewModel.selectedHostSettingsWorkspace else {
+            saveError = "請先選擇本機 Project folder。"
+            return
+        }
+        do {
+            let preview = try ProjectInstructionImporter().preview(
+                source: source,
+                workspaceRootPath: workspace.rootPath
+            )
+            instructionImportPreview = preview
+            instructionImportDraft = preview.redactedContent
+            isShowingInstructionImport = true
+        } catch {
+            saveError = SecretRedactor().redact(error.localizedDescription)
+        }
+    }
+
+    private var instructionImportSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(instructionImportPreview?.source.title ?? "匯入預覽")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("取消") { isShowingInstructionImport = false }
+            }
+            Text(instructionImportPreview?.sourcePath ?? "")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("請審閱並修改內容。按「套用到草稿」會取代目前的 System Prompt 草稿；關閉設定前仍需按儲存。匯入檔案不會被改寫。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $instructionImportDraft)
+                .font(.system(.callout, design: .monospaced))
+                .frame(minHeight: 310)
+                .padding(7)
+                .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            HStack {
+                Text("\(instructionImportDraft.utf8.count) / \(AgentProjectSettingsLimits.maximumSystemPromptBytes) bytes")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("套用到草稿") { applyInstructionImport() }
+                    .disabled(instructionImportDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || instructionImportDraft.utf8.count
+                            > AgentProjectSettingsLimits.maximumSystemPromptBytes)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 620, minHeight: 500)
+    }
+
+    private func applyInstructionImport() {
+        guard let preview = instructionImportPreview,
+              let rootPath = agentViewModel.selectedHostSettingsWorkspace?.rootPath,
+              preview.belongs(toWorkspaceRootPath: rootPath) else {
+            saveError = "Project folder 已變更；請重新預覽指令檔。"
+            return
+        }
+        let redacted = SecretRedactor().redact(instructionImportDraft)
+        guard !redacted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              redacted.utf8.count <= AgentProjectSettingsLimits.maximumSystemPromptBytes else {
+            saveError = "匯入內容為空或超出 Project System Prompt 長度上限。"
+            return
+        }
+        projectDraft.systemPrompt = redacted
+        isShowingInstructionImport = false
     }
 
     private func projectCommandEditor(
