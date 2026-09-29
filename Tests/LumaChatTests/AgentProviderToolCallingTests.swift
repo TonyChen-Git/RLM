@@ -77,13 +77,45 @@ final class AgentProviderToolCallingTests: XCTestCase {
                 body: Data("{}".utf8)
             )
         )
+    }
+
+    func testRemoteOpenAICompatibleHTTPAndHTTPSAllowBearerCredential() throws {
+        let body = Data(#"{"model":"qwen3.8-27b","messages":[]}"#.utf8)
+        for scheme in ["http", "https"] {
+            let url = try ProviderRequestBuilder.routeURL(
+                endpoint: "\(scheme)://10.5.88.100:8003/v1",
+                provider: .openAICompatible,
+                route: ["chat", "completions"]
+            )
+            XCTAssertEqual(url.absoluteString, "\(scheme)://10.5.88.100:8003/v1/chat/completions")
+
+            let request = try ProviderRequestBuilder.jsonRequest(
+                url: url,
+                provider: .openAICompatible,
+                apiKey: "sk-local-vllm",
+                timeout: 30,
+                body: body
+            )
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/v1/chat/completions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-local-vllm")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            XCTAssertEqual(request.httpBody, body)
+        }
+    }
+
+    func testRemoteAnthropicHTTPStillRequiresTLS() {
         XCTAssertThrowsError(
             try ProviderRequestBuilder.routeURL(
-                endpoint: "http://192.168.50.20:8080",
-                provider: .openAICompatible,
-                route: ["v1", "chat", "completions"]
+                endpoint: "http://192.168.50.20:8080/v1",
+                provider: .anthropic,
+                route: ["messages"]
             )
-        )
+        ) { error in
+            guard case ProviderWireError.invalidEndpoint = error else {
+                return XCTFail("Expected invalidEndpoint, got \(error)")
+            }
+        }
     }
 
     func testRemoteNumericBoundariesDoNotTrapOrPoisonCapabilities() throws {

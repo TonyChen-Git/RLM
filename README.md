@@ -10,16 +10,15 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 或 proprietary Codex 服務。
 
 > **目前狀態（2026-09-29）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
-> 2026-09-27 的 `1.4.2` build `9` 包含 Chat/模型參數 UI 修正與封裝版 UI smoke
-> 的資料隔離，當時完成 745 項 Swift 測試（1 項環境性 skip、0 failures）、optimized arm64
-> 封裝、ad-hoc signing、ZIP/archive、SBOM/provenance 驗證及修正後的直接安全稽核。
-> 9 月 29 日的新原始碼包含 Steer/Queue、Side chat、Fork context、worktree/MCP
-> 維護與 App Server 安全界線補強；本次原始碼另通過 778 項 Swift 測試
-> （1 項環境性 skip、0 failures）、VS Code 17/17 與 GitHub Action 14/14。
-> 這些變更尚未完成重新封裝與封裝版驗收。
-> 原生 UI 驗證尚未完成，這一版仍是 development candidate；沒有 Developer ID/
-> notarization/stapling、正式 update feed、live backend/SSH/real-browser
-> acceptance 或正式長時間 soak 證據。
+> `1.4.3` build `10` development prerelease 已完成封裝，納入 9 月 29 日的
+> Steer/Queue、Side chat、Fork context、worktree/MCP 維護與 App Server 安全界線
+> 補強，以及遠端 OpenAI-compatible 服務的 HTTP 連線支援（含本地網路 vLLM）。
+> 本版發行腳本通過 780 項 Swift 測試（1 項環境性 skip、0 failures）、
+> archive/soak/security 契約測試、最佳化 arm64 建置、ad-hoc 簽章、ZIP 與安全稽核。
+> VS Code 17/17 與 GitHub Action 14/14 是 HTTP 修正前基礎原始碼的測試結果。
+> 原生 UI 與使用者 vLLM 的實際連線驗證仍待完成。此版本沒有 Developer ID/
+> notarization/stapling、正式 update feed、live SSH/real-browser acceptance 或
+> 正式長時間 soak 證據。詳見[1.4.3 版本說明](docs/RELEASE_NOTES_1.4.3.md)。
 
 ## 能力總覽
 
@@ -271,7 +270,8 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
-- [1.4.2 development release candidate notes](docs/RELEASE_NOTES_1.4.2.md)
+- [1.4.3 development prerelease notes](docs/RELEASE_NOTES_1.4.3.md)
+- [1.4.2 historical development candidate notes](docs/RELEASE_NOTES_1.4.2.md)
 - [1.4.1 historical development release notes](docs/RELEASE_NOTES_1.4.1.md)
 - [Full parity audit](docs/CODEX_FULL_PARITY_AUDIT.md)
 - [Replacement roadmap](docs/CODEX_REPLACEMENT_ROADMAP.md)

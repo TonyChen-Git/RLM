@@ -3,9 +3,9 @@
 Checkpoint date: 2026-09-29
 
 Status: the Phase A–H development implementation and its historical combined
-development gate are complete. The current 1.4.2 development candidate passed
-745 Swift tests on 2026-09-27; the follow-up changes below require their own
-validation. This is not a production release: Developer ID,
+development gate are complete. The 1.4.3 development prerelease packages the
+follow-up changes below; its validation is recorded in
+[`RELEASE_NOTES_1.4.3.md`](RELEASE_NOTES_1.4.3.md). This is not a production release: Developer ID,
 notarization/stapling, production update credentials, live external acceptance,
 and the qualifying long-duration soak remain external gates.
 
@@ -47,13 +47,14 @@ It is ad-hoc signed. Phase B's earlier evidence remains recorded in
   and a worst-case byte ceiling for live SSE buffering. Uncertain mutations
   require inspecting the Task before resubmission.
 
-The current source passed 778 Swift tests (one environment skip, zero failures),
-17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. Package and
-native UI evidence for these changes remain pending. Opt-in local memory,
+The base source passed 778 Swift tests (one environment skip, zero failures),
+17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. The 1.4.3
+development package passed 780 Swift tests (one environment skip, zero failures)
+and archive, signature, and security validation; native UI evidence remains pending. Opt-in local memory,
 hosted Cloud/secure relay, persistent interactive remote PTY, voice, Claude
 Code/Cursor import, and external integration acceptance remain open. The 1.4.1
-ZIP hash above is historical and does not identify a package containing these
-changes.
+ZIP hash above is historical; the new package hash is recorded in the 1.4.3
+release notes.
 
 ## Phase C — Subagents
 

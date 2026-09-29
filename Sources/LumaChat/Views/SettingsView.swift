@@ -462,6 +462,12 @@ struct SettingsView: View {
                 .padding(.vertical, 9)
                 .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
+                if usesRemoteOpenAIHTTP {
+                    Text("遠端 HTTP 未加密；API Key 與對話內容會以明文傳送到這台伺服器。")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
                 if let testResult {
                     Label(testResult, systemImage: isTesting ? "clock" : (testSucceeded == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
                         .font(.caption)
@@ -469,6 +475,13 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var usesRemoteOpenAIHTTP: Bool {
+        guard draft.provider == .openAICompatible,
+              let endpoint = EndpointNormalizer.normalized(draft.endpoint),
+              let url = URL(string: endpoint) else { return false }
+        return url.scheme == "http" && !AgentHTTPOrigin.isLoopback(url.host)
     }
 
     private var pullRequestProviderSection: some View {

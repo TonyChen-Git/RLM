@@ -269,11 +269,10 @@ enum ProviderRequestBuilder {
         guard components.query == nil, components.fragment == nil else {
             throw ProviderWireError.invalidEndpoint
         }
-        // Remote Ollama is commonly hosted on a user-selected LAN machine and
-        // its native API is frequently HTTP-only. Other provider kinds carry
-        // cloud credentials and therefore still require TLS off-loopback.
+        // User-selected Ollama and OpenAI-compatible servers may be hosted on
+        // LAN machines that expose HTTP only. Anthropic requires TLS remotely.
         if scheme == "http",
-           provider != .ollama,
+           provider == .anthropic,
            !AgentHTTPOrigin.isLoopback(components.host) {
             throw ProviderWireError.invalidEndpoint
         }
@@ -320,7 +319,8 @@ enum ProviderRequestBuilder {
         request.httpBody = body
 
         let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if url.scheme?.lowercased() == "http",
+        if provider != .openAICompatible,
+           url.scheme?.lowercased() == "http",
            !AgentHTTPOrigin.isLoopback(url.host),
            key?.isEmpty == false {
             throw ProviderWireError.invalidEndpoint

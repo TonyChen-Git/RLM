@@ -458,7 +458,8 @@ struct LLMClient: Sendable {
         }
 
         let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if request.url?.scheme?.lowercased() == "http",
+        if provider != .openAICompatible,
+           request.url?.scheme?.lowercased() == "http",
            !AgentHTTPOrigin.isLoopback(request.url?.host),
            key?.isEmpty == false {
             throw ChatError.invalidEndpoint
@@ -766,7 +767,7 @@ struct LLMClient: Sendable {
             throw ChatError.invalidEndpoint
         }
         if scheme == "http",
-           settings.provider != .ollama,
+           settings.provider == .anthropic,
            !AgentHTTPOrigin.isLoopback(components.host) {
             throw ChatError.invalidEndpoint
         }
