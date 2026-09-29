@@ -315,6 +315,74 @@ final class MCPRuntimeTests: XCTestCase {
         XCTAssertTrue(snapshot.lastError?.contains("Resources discovery failed") == true)
     }
 
+    func testRefreshDiscoveryReplacesToolsAndKeepsLastGoodResultsOnTransientFailure() async throws {
+        let transport = MockMCPTransport()
+        let registry = ToolRegistry()
+        let manager = MCPManager(
+            registry: registry,
+            transportFactory: MockMCPTransportFactory(transport: transport)
+        )
+        let configuration = MCPServerConfiguration(
+            name: "Refresh",
+            transport: .stdio(MCPStdioConfiguration(command: "/usr/bin/mock"))
+        )
+        _ = try await manager.connect(configuration)
+
+        await transport.setToolNames(["Inspect File"])
+        let refreshed = try await manager.refreshDiscovery(serverID: configuration.id)
+        XCTAssertEqual(refreshed.tools.map(\.name), ["Inspect File"])
+        var names = await registry.definitions(for: .agent).map(\.name)
+        XCTAssertFalse(names.contains("mcp.refresh.read_file"))
+        XCTAssertTrue(names.contains("mcp.refresh.inspect_file"))
+
+        await transport.setFailingMethod("tools/list")
+        let afterFailure = try await manager.refreshDiscovery(serverID: configuration.id)
+        XCTAssertEqual(afterFailure.tools.map(\.name), ["Inspect File"])
+        XCTAssertTrue(afterFailure.lastError?.contains("Tools discovery failed") == true)
+        names = await registry.definitions(for: .agent).map(\.name)
+        XCTAssertTrue(names.contains("mcp.refresh.inspect_file"))
+        let mapping = await manager.registeredToolMapping(serverID: configuration.id)
+        XCTAssertEqual(
+            mapping["mcp.refresh.inspect_file"],
+            "Inspect File"
+        )
+    }
+
+    func testRefreshRegistrationCollisionPreservesExistingToolsAndSnapshot() async throws {
+        let transport = MockMCPTransport()
+        let registry = ToolRegistry()
+        let manager = MCPManager(
+            registry: registry,
+            transportFactory: MockMCPTransportFactory(transport: transport)
+        )
+        let configuration = MCPServerConfiguration(
+            name: "Collision",
+            transport: .stdio(MCPStdioConfiguration(command: "/usr/bin/mock"))
+        )
+        _ = try await manager.connect(configuration)
+        try await registry.register(MCPRefreshCollisionTool())
+        await transport.setToolNames(["New File"])
+
+        do {
+            _ = try await manager.refreshDiscovery(serverID: configuration.id)
+            XCTFail("A conflicting tool name must reject the refresh")
+        } catch {
+            // The previous registration and snapshot remain usable.
+        }
+        let currentSnapshot = await manager.snapshot(serverID: configuration.id)
+        let snapshot = try XCTUnwrap(currentSnapshot)
+        XCTAssertEqual(snapshot.tools.map(\.name), ["Read File"])
+        XCTAssertNotNil(snapshot.lastError)
+        let names = await registry.definitions(for: .agent).map(\.name)
+        XCTAssertTrue(names.contains("mcp.collision.read_file"))
+        XCTAssertTrue(names.contains("mcp.collision.new_file"))
+        let mapping = await manager.registeredToolMapping(serverID: configuration.id)
+        XCTAssertEqual(
+            mapping["mcp.collision.read_file"],
+            "Read File"
+        )
+    }
+
     func testSettingsPersistenceKeepsSecretsOutOfJSON() async throws {
         let directory = URL(
             fileURLWithPath: "/Volumes/SD/Code/RLM/tmp/mcp-settings-\(UUID().uuidString)",
@@ -1052,7 +1120,8 @@ private struct MockMCPTransportFactory: MCPTransportFactory {
 }
 
 private actor MockMCPTransport: MCPTransport {
-    private let failingMethod: String?
+    private var failingMethod: String?
+    private var toolNames = ["Read File"]
     private var started = false
     private var starts = 0
     private var stops = 0
@@ -1105,9 +1174,9 @@ private actor MockMCPTransport: MCPTransport {
             ])
         case "tools/list":
             result = .object([
-                "tools": .array([
+                "tools": .array(toolNames.map { name in
                     .object([
-                        "name": .string("Read File"),
+                        "name": .string(name),
                         "description": .string("Read a fixture"),
                         "inputSchema": .object([
                             "type": .string("object"),
@@ -1121,7 +1190,7 @@ private actor MockMCPTransport: MCPTransport {
                             "destructiveHint": .bool(false)
                         ])
                     ])
-                ])
+                })
             ])
         case "resources/list":
             result = .object([
@@ -1175,6 +1244,23 @@ private actor MockMCPTransport: MCPTransport {
     func stopCount() -> Int { stops }
     func lastCalledTool() -> String? { calledTool }
     func methodCount(_ method: String) -> Int { methods.filter { $0 == method }.count }
+    func setToolNames(_ names: [String]) { toolNames = names }
+    func setFailingMethod(_ method: String?) { failingMethod = method }
+}
+
+private struct MCPRefreshCollisionTool: AgentTool {
+    let id = "test.mcp-refresh-collision"
+    let name = "mcp.collision.new_file"
+    let displayName = "Collision"
+    let description = "Test registration collision"
+    let inputSchema = JSONValue.objectSchema(properties: [:])
+    let category = AgentToolCategory.system
+    let permissionLevel = AgentPermissionLevel.read
+    let supportsParallelExecution = true
+
+    func execute(arguments: JSONValue, context: AgentToolContext) async throws -> AgentToolResult {
+        AgentToolResult(content: "collision")
+    }
 }
 
 private final class MockMCPSecretStore: MCPSecretStore, @unchecked Sendable {

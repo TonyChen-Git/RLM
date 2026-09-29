@@ -1,7 +1,9 @@
 # LumaChat Full Codex-Class Parity Audit
 
-Last audited: 2026-09-25, after the LumaChat 1.4.1 combined Phase A-H
-development gate
+Formal score and release evidence last audited: 2026-09-25, after the LumaChat
+1.4.1 combined Phase A-H development gate. Current-Codex comparison refreshed
+2026-09-29 against official OpenAI documentation; the 1.4.2 candidate evidence
+and subsequent source changes are recorded separately below.
 
 ## Scope and scoring rule
 
@@ -71,7 +73,52 @@ production distribution remain incomplete.
 slice is releasable; it does not rename the whole product a Codex-class
 replacement.
 
-## 100-point capability matrix
+## Current Codex differential — 2026-09-29
+
+The official baseline now explicitly includes [Steer and Queue while a run is
+active](https://learn.chatgpt.com/docs/prompting),
+[Local/Worktree/Cloud execution](https://learn.chatgpt.com/docs/environments/modes),
+[scheduled local worktree tasks and web/mobile event triggers](https://learn.chatgpt.com/docs/automations),
+[opt-in local memories](https://learn.chatgpt.com/docs/customization/memories),
+[MCP and OAuth](https://learn.chatgpt.com/docs/extend/mcp), and
+[code review](https://learn.chatgpt.com/docs/code-review). Codex also documents
+[ephemeral side chats](https://learn.chatgpt.com/docs/developer-commands),
+[voice in Codex](https://learn.chatgpt.com/docs/features/voice), and
+[import from Claude Code/Cursor](https://learn.chatgpt.com/docs/import). The comparison is
+capability by capability: Codex account services and OpenAI-hosted cloud compute
+are not implied by the presence of local protocol types in LumaChat.
+
+The 1.4.2 development candidate has 745 Swift tests (one environment skip), an
+optimized ad-hoc signed arm64 package, and source/package audit evidence. Its
+native packaged UI smoke and live external acceptance are still pending; the
+2026-09-25 count, ZIP hash and formal scores elsewhere in this document remain
+the historical 1.4.1 gate rather than being silently relabelled as 1.4.2.
+
+| Gap found against the current baseline | 2026-09-29 source follow-up | Remaining boundary |
+| --- | --- | --- |
+| Active-run Steer and Queue | Text Steer joins the current run at a model-turn boundary; durable per-Task text Queue supports edit/reorder/remove, automatic next run after a successful durable finish, and fail-closed recovery of an uncertain send. Settings chooses the primary action; `⌘↩` uses it and `⌘⇧↩` uses the alternate action | New image attachments cannot be queued or steered. Accepted Steer is process-memory state until the next session snapshot is persisted, so a crash in that interval may lose it; native UI acceptance pending |
+| Fork context | Redacted user/assistant text from at most the latest 80 source messages and 64 KiB is copied to the new Task; tool calls/results, reasoning, images, approvals and live state are omitted | This is bounded context inheritance, not a full transcript or live process fork; older context may be omitted |
+| Side chat | Separate ephemeral text conversation with a bounded, redacted parent snapshot and no Agent tools, workspace lease, approval or persistence authority | Snapshot can become stale and has no file inspection, image, tool or durable transcript support; native UI acceptance pending |
+| Managed worktree maintenance | Registry-backed inspection, clean/unleased cleanup and repair surfaced in the desktop UI | Scheduled maintenance, retained-branch policy and orphan edge coverage remain |
+| MCP health and restart | Visible connection diagnostics, explicit reconnect and discovery refresh; atomic tool-registration replacement and transient-discovery fallback | Live provider breadth and advanced OAuth interoperability remain |
+| App Server restart idempotency and SSE buffering | Durable mutation request journal with pending/completed states; worst-case live SSE byte ceiling | Real transport/hosted-runner acceptance and long soak remain |
+
+The 2026-09-29 source follow-up passed 778 Swift tests with one environment skip
+and zero failures, plus 17/17 VS Code and 14/14 GitHub Action tests. This is
+development evidence; native packaged UI, live external and production release
+gates remain. The formal **68.5/100** score below is not increased by source
+changes alone.
+
+The largest still-open functional differences are a persistent interactive SSH
+PTY with reconnect and scrollback; an opt-in local memory system with review
+controls; hosted Cloud execution/secure relay; voice interaction; import of
+Claude Code/Cursor setup and chats; external service integrations and live
+acceptance; and production signing, notarization, update feed and long-duration
+soak. Event-triggered scheduled tasks are currently documented for Codex
+web/mobile, not the desktop app or
+CLI, so they are a broader product parity item rather than a desktop-only gate.
+
+## 100-point capability matrix (formal 2026-09-25 gate)
 
 | Capability | Weight | Before | After | State | Evidence and tests | Known limitations |
 | --- | ---: | ---: | ---: | --- | --- | --- |
@@ -80,7 +127,7 @@ replacement.
 | Projects | 5 | 5 | 5 | COMPLETE | Projects 2.0 catalog/migration/UI/tests; location metadata remains one-folder scoped | Complete for documented local scope |
 | Tasks, concurrency, crash resume | 5 | 5 | 5 | PARTIAL | Per-Task Runtime, durable sessions, background navigation, transaction recovery; Task PTYs survive navigation and Agent Stop; Review Tasks persist a locked source contract and structured result | PTY process reattachment, browser/subagent structured resume and kill-stage drills |
 | Goals, context, compaction, memory | 4 | 4 | 4 | PARTIAL | Durable Goal/Todo/context bounds and tests | Searchable session/project/user memory and category budgets |
-| Managed worktrees and writable isolation | 6 | 1 | 5.5 | PARTIAL | Registry, leases, create/reuse/list/inspect/remove/cleanup/repair, location UI, lifecycle/E2E tests | No maintenance UI/scheduler; retained branches; orphan edge coverage |
+| Managed worktrees and writable isolation | 6 | 1 | 5.5 | PARTIAL | Registry, leases, create/reuse/list/inspect/remove/cleanup/repair, location UI, lifecycle/E2E tests | Historical gate lacked maintenance UI; scheduler, retained branches and orphan edge coverage remain |
 | Task handoff and Task fork | 4 | 0 | 3 | PARTIAL / DEVELOPMENT-GATED | Release-gated Local ↔ Worktree CAS/Fork plus development-gated bounded Local/Worktree ↔ SSH migration and host rollback | Remote routes await live-host acceptance; SSH-to-SSH and broader kill/storage matrix remain |
 | PTY terminal and task terminal sessions | 6 | 4 | 5.5 | PARTIAL / DEVELOPMENT-GATED | Local `forkpty`/Task Terminal plus bounded one-shot `remote_pty_run`; signal-crash test passes | No old-process/scrollback reattach; no persistent remote input/resize/reconnect; non-Darwin and long soak remain |
 | Git lifecycle and advanced Git | 5 | 4 | 5 | COMPLETE | Normal/pointer/submodule/detached layouts; closed status/diff/log/show/branch/commit plus fetch/pull/push/switch/hard-reset/merge/rebase/cherry-pick/stash/tag/remote API; 21/21 focused and integrated release gate | Remote effects lack local Undo; linked-metadata limitations are surfaced rather than hidden |
@@ -88,12 +135,12 @@ replacement.
 | Subagents and scheduler | 5 | 0 | 0 | DEVELOPMENT-GATED | Durable child Tasks, seven tools, actor scheduler, budgets, scoped read/worktree isolation, structured aggregation, UI and passing focused tests | Live high-concurrency/long-duration acceptance remains |
 | Skills | 4 | 0.5 | 0.5 | DEVELOPMENT-GATED | Five-source `SKILL.md` discovery, precedence, `$skill`/description selection, transient instructions, loaded metadata, exact-ID resource tool, UI and passing focused tests | Scripts intentionally do not auto-execute; live ecosystem breadth remains |
 | Plugins, Hooks, OAuth connectors | 5 | 0 | 0 | DEVELOPMENT-GATED | Manifest/manager, atomic lifecycle, permission UI, sandboxed tools, typed hooks, PKCE and Keychain store pass combined gate | No hosted marketplace/signature transparency, OAuth live-provider refresh/device flow, or portable WASM sandbox |
-| MCP tools/resources/prompts | 4 | 4 | 4 | PARTIAL / DEVELOPMENT-GATED | STDIO/Streamable HTTP, tools/resources/prompts, Keychain/tests, plugin ownership, and real child-process crash coverage | Richer health/restart UX and live-server breadth remain |
+| MCP tools/resources/prompts | 4 | 4 | 4 | PARTIAL / DEVELOPMENT-GATED | STDIO/Streamable HTTP, tools/resources/prompts, Keychain/tests, plugin ownership, and real child-process crash coverage | Historical gate lacked richer health/restart UX; live-server breadth remains |
 | Browser and DOM/CDP automation | 5 | 1.5 | 1.5 | DEVELOPMENT-GATED | Task-owned Chromium/CDP, isolated/persistent/attached profiles, bounded surfaces, downloads, annotations, focused tests and crash cleanup | Real-Chromium/package UI and long soak remain; bounded selectors do not cover every dynamic/shadow-DOM app |
 | Computer Use | 2 | 2 | 2 | DEVELOPMENT-GATED | Opt-in allowlist, safe-window selection, capture-bound AX, verification, approval UI, secret refusal and passing focused tests | Live native packaged UI pending; no broad AX action surface or locked-screen execution |
 | Automations and notifications | 4 | 0 | 0 | DEVELOPMENT-GATED | Durable scheduler/store/history, seven Task actions, dedicated worktrees, typed notifications, routing and passing focused tests | External event producers, native UI acceptance and soak remain |
 | Remote execution and control | 4 | 0 | 0 | PARTIAL / DEVELOPMENT-GATED | SSH runner/store/Keychain, strict host receipt, 16 closed tools, migration, Settings/UI, focused and disconnect-boundary tests | Live-host E2E, persistent remote PTY, richer backends, secure relay and soak remain |
-| CLI, App Server, SDK, IDE and GitHub | 4 | 0 | 0 | DEVELOPMENT-GATED | Shared-runtime CLI, authenticated server/SSE, Swift SDK, VS Code 17/17, GitHub Action 14/14 and package paths | Process-local idempotency and live transport/hosted-runner acceptance remain |
+| CLI, App Server, SDK, IDE and GitHub | 4 | 0 | 0 | DEVELOPMENT-GATED | Shared-runtime CLI, authenticated server/SSE, Swift SDK, VS Code 17/17, GitHub Action 14/14 and package paths | Historical gate had process-local idempotency; live transport/hosted-runner acceptance remains |
 | Release and cross-platform readiness | 3 | 3 | 3 | PARTIAL / DEVELOPMENT-GATED | 744-test release gate, updater rollback/failure tests, ad-hoc signing, canonical ZIP, metadata and security audit | Developer ID/notarization/stapling, production update feed, non-Darwin backend and qualifying soak |
 | **Total** | **100** | **56** | **68.5** |  |  |  |
 

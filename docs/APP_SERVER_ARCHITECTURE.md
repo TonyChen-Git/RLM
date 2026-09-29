@@ -55,6 +55,19 @@ payload fails with `409 conflict`. Task states use stable snake-case wire values
 including `awaiting_approval` and `step_limit`. Approval decisions are
 `allowOnce`, `allowForTask`, and `deny`.
 
+The development tree persists mutation reservations and completed acceptance
+responses in `AppServer/mutations.json` under Application Support. A completed
+request ID replays its recorded response after server restart while it remains
+in the bounded journal (at most 1,024 entries / 16 MiB). A pending reservation
+means its outcome may be uncertain, so retry returns a conflict and the caller
+must inspect the task. A corrupt or unavailable journal fails closed rather
+than silently allowing the mutation to run again. Oldest completed entries may
+be evicted at capacity; a much later resend outside that window is not
+guaranteed to replay. Uncertain entries are retained. Approval decisions have
+no durable completion receipt yet: after a successful `202 Accepted`, that
+request ID remains pending and a resend returns `409 conflict` with an uncertain
+outcome. The journal therefore does not promise general exactly-once execution.
+
 The request's `backendID` and `modelID` are authority constraints. The runtime
 probes the configured backend and exact model before create/send/resume. An
 unavailable route returns `503 backend_unavailable`; it never selects another
@@ -71,6 +84,12 @@ subscribers and oversized events fail closed. Terminal streams close after the
 terminal snapshot; an explicit Resume reopens the same task channel without
 resetting its sequence.
 
+Live subscriber queues now have a conservative aggregate byte ceiling. With
+the default 512 KiB maximum event and 16 MiB live-buffer budget, each queue
+holds at most 32 events, so even a stalled reader cannot retain more than the
+byte budget. The in-memory event broker and its replay window do not survive a
+server process restart; durable mutation replay above is a separate guarantee.
+
 Runtime events are projected in observation order through one per-task delivery
 tail. Message and reasoning deltas, tool progress, approval requests, state,
 errors, and terminal snapshots all originate from the same persisted task used
@@ -83,6 +102,8 @@ another task cannot pause background work.
 - HTTP headers: 64 KiB by default.
 - JSON request/response: 4 MiB by default.
 - One SSE event: 512 KiB by default.
+- One live SSE subscriber queue: at most 16 MiB by default, enforced through
+  the maximum event size and a derived event-count ceiling.
 - JSON nesting: 32 levels and 20,000 nodes.
 - Message content: 1 MiB; identifiers, paths, titles, and metadata are bounded.
 - Transfer-Encoding, request pipelining, duplicate/continued headers, GET
@@ -109,8 +130,11 @@ is present.
 
 ## Known development limitations
 
-- Request idempotency replay is process-bounded; durable tasks persist, but the
-  mutation response cache is not yet recovered after a server restart.
+- Durable mutation response replay and the live SSE byte ceiling are implemented
+  and covered by focused tests in the development tree. Approval decisions
+  remain pending after acceptance, completed entries have a bounded retention
+  window, and the event broker's replay history remains process-scoped.
+  Production and long-duration client acceptance have not yet been completed.
 - The built-in transport is intentionally loopback HTTP. Remote use requires a
   separately designed TLS/relay trust boundary; setting a non-loopback URL in a
   client does not make this listener remote-capable.

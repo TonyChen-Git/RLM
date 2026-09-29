@@ -8,6 +8,7 @@ actor MCPManager {
     private var namespaces: [UUID: String] = [:]
     private var toolMappings: [UUID: [String: String]] = [:]
     private var connectionTokens: [UUID: UUID] = [:]
+    private var discoveryRefreshes: [UUID: Task<MCPServerSnapshot, Error>] = [:]
     private var logs: [UUID: [MCPLogEntry]] = [:]
 
     init(
@@ -147,6 +148,11 @@ actor MCPManager {
     }
 
     func disconnect(serverID: UUID) async {
+        // A refresh replaces the registered tool group atomically. Let that
+        // replacement finish before tearing down its client and namespace.
+        if let refresh = discoveryRefreshes[serverID] {
+            _ = try? await refresh.value
+        }
         connectionTokens.removeValue(forKey: serverID)
         if let namespace = namespaces.removeValue(forKey: serverID) {
             await registry.unregister(namespace: namespace)
@@ -182,9 +188,21 @@ actor MCPManager {
 
     @discardableResult
     func refreshDiscovery(serverID: UUID) async throws -> MCPServerSnapshot {
+        if let refresh = discoveryRefreshes[serverID] {
+            return try await refresh.value
+        }
+        let refresh = Task { try await performDiscoveryRefresh(serverID: serverID) }
+        discoveryRefreshes[serverID] = refresh
+        defer { discoveryRefreshes.removeValue(forKey: serverID) }
+        return try await refresh.value
+    }
+
+    private func performDiscoveryRefresh(serverID: UUID) async throws -> MCPServerSnapshot {
         guard let client = clients[serverID],
               var snapshot = snapshots[serverID],
-              let namespace = namespaces[serverID] else {
+              snapshot.state == .connected,
+              let namespace = namespaces[serverID],
+              let connectionToken = connectionTokens[serverID] else {
             throw MCPError.serverNotFound(serverID)
         }
 
@@ -192,22 +210,32 @@ actor MCPManager {
         let resourceDiscovery = await optionalResources(from: client)
         let templateDiscovery = await optionalResourceTemplates(from: client)
         let promptDiscovery = await optionalPrompts(from: client)
-        let tools = toolDiscovery.values
-        let resources = resourceDiscovery.values
-        let resourceTemplates = templateDiscovery.values
-        let prompts = promptDiscovery.values
-        await registry.unregister(namespace: namespace)
+        // A transient discovery error must not silently revoke previously
+        // published capabilities. An explicit empty successful response does.
+        let tools = toolDiscovery.warning == nil ? toolDiscovery.values : snapshot.tools
+        let resources = resourceDiscovery.warning == nil ? resourceDiscovery.values : snapshot.resources
+        let resourceTemplates = templateDiscovery.warning == nil
+            ? templateDiscovery.values : snapshot.resourceTemplates
+        let prompts = promptDiscovery.warning == nil ? promptDiscovery.values : snapshot.prompts
+        try requireCurrentConnection(serverID, token: connectionToken)
         do {
-            let registration = try await register(
+            let registration = makeToolRegistration(
                 tools: tools,
                 for: snapshot.configuration,
                 client: client,
                 namespace: namespace
             )
+            try await registry.replace(
+                removingNames: Set(toolMappings[serverID].map { Array($0.keys) } ?? []),
+                with: registration.adapters
+            )
             toolMappings[serverID] = registration.mapping
         } catch {
-            toolMappings[serverID] = [:]
-            throw error
+            let safeError = redactedError(error)
+            snapshot.lastError = safeError.localizedDescription
+            snapshots[serverID] = snapshot
+            appendLog(serverID: serverID, level: .error, message: "Discovery refresh failed: \(safeError.localizedDescription)")
+            throw safeError
         }
 
         snapshot.tools = tools
@@ -224,6 +252,11 @@ actor MCPManager {
             .joined(separator: "\n")
             .nilIfEmpty
         snapshots[serverID] = snapshot
+        appendLog(
+            serverID: serverID,
+            level: snapshot.lastError == nil ? .info : .warning,
+            message: "Discovery refreshed: \(tools.count) tools, \(resources.count) resources, \(resourceTemplates.count) resource templates, \(prompts.count) prompts"
+        )
         return snapshot
     }
 
@@ -335,6 +368,27 @@ actor MCPManager {
         client: MCPClient,
         namespace: String
     ) async throws -> (mapping: [String: String], names: [String]) {
+        let registration = makeToolRegistration(
+            tools: tools,
+            for: configuration,
+            client: client,
+            namespace: namespace
+        )
+        do {
+            try await registry.register(registration.adapters)
+        } catch {
+            await registry.unregister(namespace: namespace)
+            throw error
+        }
+        return (registration.mapping, registration.names)
+    }
+
+    private func makeToolRegistration(
+        tools: [MCPToolDescriptor],
+        for configuration: MCPServerConfiguration,
+        client: MCPClient,
+        namespace: String
+    ) -> (mapping: [String: String], names: [String], adapters: [any AgentTool]) {
         var mapping: [String: String] = [:]
         var names: [String] = []
         var occurrences: [String: Int] = [:]
@@ -359,13 +413,7 @@ actor MCPManager {
             )
         }
 
-        do {
-            try await registry.register(adapters)
-        } catch {
-            await registry.unregister(namespace: namespace)
-            throw error
-        }
-        return (mapping, names)
+        return (mapping, names, adapters)
     }
 
     private func uniqueNamespace(for configuration: MCPServerConfiguration) -> String {

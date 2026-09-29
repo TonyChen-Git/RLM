@@ -662,6 +662,13 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                Picker("執行中送出訊息", selection: $agentDraft.followUpBehavior) {
+                    ForEach(AgentFollowUpBehavior.allCases) { behavior in
+                        Text(behavior.title).tag(behavior)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 HStack {
                     Text("Plan 模型")
                     Spacer()

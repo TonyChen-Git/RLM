@@ -3,6 +3,13 @@
 Last audited: 2026-09-25 after the LumaChat 1.4.1 combined Phase A-H development gate;
 all eight implementation phases are complete, with production gates remaining
 
+Current Codex documentation was rechecked on 2026-09-28. A follow-up source
+implementation for durable queued prompts, worktree maintenance, MCP recovery,
+and App Server restart idempotency is tracked in
+[`CODEX_FULL_PARITY_AUDIT.md`](CODEX_FULL_PARITY_AUDIT.md). The 84/100 formal
+score and 2026-09-25 gate below remain historical until those changes pass
+their own validation and release path.
+
 ## Definition of 100
 
 `100/100` means Luma Chat can replace Codex for this Mac's daily coding
@@ -18,7 +25,10 @@ worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees), [scoped
 terminals](https://learn.chatgpt.com/docs/integrated-terminal), [code
 review](https://learn.chatgpt.com/docs/code-review), and
 [subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents), plus
-[Computer Use](https://learn.chatgpt.com/docs/computer-use).
+[Computer Use](https://learn.chatgpt.com/docs/computer-use). The refreshed
+comparison also covers [Steer/Queue](https://learn.chatgpt.com/docs/prompting),
+[opt-in local memories](https://learn.chatgpt.com/docs/customization/memories),
+and [scheduled tasks](https://learn.chatgpt.com/docs/automations).
 
 Points are awarded only when the implementation, persistence/recovery behavior,
 UI, automated tests, and release packaging all pass. A mock screen or an
@@ -267,8 +277,16 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   backend, model, workspace, mode, and existing-Task identity.
 - Added a loopback-only, bearer-authenticated versioned App Server over the same
   Agent runtime. It supports Task creation/message/status/diff/control,
-  approvals, idempotency, and replayable SSE with monotonic Task sequences,
-  heartbeats, bounded buffers, request/write deadlines, and request IDs.
+  approvals, request-ID idempotency, and replayable SSE with monotonic Task
+  sequences, heartbeats, bounded buffers, and request/write deadlines.
+- The 2026-09-28 follow-up development tree adds an on-disk mutation journal:
+  completed responses replay across server restart while retained (at most
+  1,024 entries / 16 MiB), and uncertain requests fail closed. Approval
+  decisions remain pending after successful acceptance because they have no
+  durable completion receipt; resending the same ID returns `409 conflict`.
+  Completed entries can be evicted, so this is not a general exactly-once
+  guarantee. The live SSE queue now has an aggregate byte ceiling derived from
+  the maximum event size.
 - Added a language-neutral v1 protocol description and Swift SDK. The client
   rejects redirects and non-origin URLs and verifies media type, content
   length, API version, request ID, Task/backend/model identity, and SSE sequence.
@@ -285,11 +303,14 @@ transport, persistence, lifecycle, safety, emulator, UI and focused-test chain.
   Installation, enablement, and permission revocation share the normal plugin
   state; release packaging checks the exact manifest and Skill payload.
 - Focused Swift, Node, schema, packaging, and integration tests pass in the
-  combined development gate. Process-local
-  idempotency, count-bounded rather than aggregate-byte-bounded live SSE queues,
-  VS Code filesystem races, and same-machine App Server workspace visibility
-  remain documented limitations. See [`CLI_ARCHITECTURE.md`](CLI_ARCHITECTURE.md)
-  and [`APP_SERVER_ARCHITECTURE.md`](APP_SERVER_ARCHITECTURE.md).
+  2026-09-25 combined development gate. The follow-up source tree also has
+  focused durable mutation journal and aggregate-byte-ceiling SSE tests; this
+  later work has not been promoted into the historical release score. SSE
+  replay history still lives in the server process. VS Code filesystem races,
+  same-machine App Server workspace visibility, live clients, and long-duration
+  acceptance remain documented limitations. See
+  [`CLI_ARCHITECTURE.md`](CLI_ARCHITECTURE.md) and
+  [`APP_SERVER_ARCHITECTURE.md`](APP_SERVER_ARCHITECTURE.md).
 
 ### Phase B release verification
 

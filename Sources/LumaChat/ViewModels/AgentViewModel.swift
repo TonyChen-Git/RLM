@@ -97,6 +97,12 @@ final class AgentViewModel: ObservableObject {
         /// clears its own active task before this value reaches the view model,
         /// so stop/pause must retain it until one terminal owner persists it.
         var terminalSession: AgentSession?
+        var followUpRoute: AppSettings?
+        var followUpAPIKey = ""
+        var claimedFollowUp: AgentQueuedFollowUp?
+        /// Accepted Steer texts are retained until preflight succeeds, so a
+        /// failed or cancelled preflight can put them back in the composer.
+        var acceptedSteers: [String] = []
         /// Once natural completion starts freezing Last Agent Turn it owns the
         /// terminal transaction. Stop/pause must not revoke event acceptance in
         /// the middle of that transaction or the frozen snapshot can be lost.
@@ -152,6 +158,9 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var oauthConnectors: [OAuthConnectorConfiguration] = []
     @Published private(set) var lifecycleHookHistory: [LifecycleHookResult] = []
     @Published private(set) var isAttachingImage = false
+    @Published private(set) var queuedFollowUpsBySession: [UUID: [AgentQueuedFollowUp]] = [:]
+    private var queueSnapshotRevisionBySession: [UUID: UInt64] = [:]
+    private var resolvingQueueClaims: Set<UUID> = []
     @Published private(set) var goalMutationSessionIDs: Set<UUID> = []
     @Published private(set) var locationMutationSessionIDs: Set<UUID> = []
     @Published private var taskTerminalMutationSessionIDs: Set<UUID> = []
@@ -170,6 +179,11 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var remoteRunnerBusyIDs: Set<UUID> = []
     @Published private(set) var recoveryBlockedRemoteRunnerIDs: Set<UUID> = []
     @Published private(set) var remoteHandoffRecoveryUnavailable = false
+    @Published private(set) var managedWorktreeRecords: [ManagedWorktreeRecord] = []
+    @Published private(set) var managedWorktreeInspections: [UUID: ManagedWorktreeInspection] = [:]
+    @Published private(set) var managedWorktreeMaintenanceReport: WorktreeMaintenanceReport?
+    @Published private(set) var isMaintainingManagedWorktrees = false
+    @Published private(set) var managedWorktreeMaintenanceError: String?
 
     private let sessionStore: any AgentSessionPersisting
     private let projectCatalogStore: any AgentProjectCatalogPersisting
@@ -180,6 +194,7 @@ final class AgentViewModel: ObservableObject {
     private let toolEnvironment: BuiltinToolEnvironment
     private let checkpointManager: AgentCheckpointManager
     private let imageAttachmentStore: AgentImageAttachmentStore
+    private let queuedFollowUpStore: any AgentQueuedFollowUpPersisting
     private let mcpSettingsStore: MCPSettingsStore
     private let mcpManager: MCPManager
     private let keychainStore: KeychainStore
@@ -231,6 +246,7 @@ final class AgentViewModel: ObservableObject {
         toolEnvironment: BuiltinToolEnvironment = BuiltinToolEnvironment(),
         checkpointManager: AgentCheckpointManager = AgentCheckpointManager(),
         imageAttachmentStore: AgentImageAttachmentStore = AgentImageAttachmentStore(),
+        queuedFollowUpStore: any AgentQueuedFollowUpPersisting = AgentQueuedFollowUpStore(),
         mcpSettingsStore: MCPSettingsStore = MCPSettingsStore(),
         mcpManager: MCPManager? = nil,
         keychainStore: KeychainStore = KeychainStore(),
@@ -260,6 +276,7 @@ final class AgentViewModel: ObservableObject {
         self.toolEnvironment = toolEnvironment
         self.checkpointManager = checkpointManager
         self.imageAttachmentStore = imageAttachmentStore
+        self.queuedFollowUpStore = queuedFollowUpStore
         self.mcpSettingsStore = mcpSettingsStore
         self.mcpManager = mcpManager ?? MCPManager(registry: registry)
         self.keychainStore = keychainStore
@@ -446,6 +463,46 @@ final class AgentViewModel: ObservableObject {
             || !pendingImageAttachments.isEmpty
     }
 
+    var selectedQueuedFollowUps: [AgentQueuedFollowUp] {
+        guard let selectedSessionID else { return [] }
+        return queuedFollowUpsBySession[selectedSessionID] ?? []
+    }
+
+    var canQueueFollowUp: Bool {
+        let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let session = selectedSession,
+              selectedSessionIsRunning,
+              session.resolvedTaskType == .coding,
+              !request.isEmpty,
+              !Self.isGoalCommand(request),
+              // A just-started run can still own these image references until
+              // its first user message is saved. Do not queue the same files
+              // into a second turn under the same attachment IDs.
+              pendingImageAttachments.isEmpty,
+              request.utf8.count <= AgentQueuedFollowUpStore.maximumPromptBytes,
+              selectedQueuedFollowUps.count < AgentQueuedFollowUpStore.maximumEntries else {
+            return false
+        }
+        return true
+    }
+
+    var canSteerCurrentRun: Bool {
+        let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let session = selectedSession,
+              selectedSessionIsRunning,
+              !selectedSessionIsStopping,
+              session.mode.usesAgentRuntime,
+              !request.isEmpty,
+              !Self.isGoalCommand(request),
+              pendingImageAttachments.isEmpty,
+              request.utf8.count <= AgentSteerMailbox.maximumPromptBytes,
+              let control = activeRunsBySession[session.id],
+              !control.isFinalizing else { return false }
+        return true
+    }
+
+    var preferredFollowUpBehavior: AgentFollowUpBehavior { settings.followUpBehavior }
+
     var filteredSessions: [AgentSession] {
         let query = sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = sessions
@@ -559,6 +616,9 @@ final class AgentViewModel: ObservableObject {
         do {
             settings = try await settingsStore.load()
             try await restoreProjectCatalogState()
+            for session in sessions {
+                await refreshQueuedFollowUps(sessionID: session.id)
+            }
             activeMode = settings.defaultMode
             let initialSessionID = Self.initialSessionID(
                 in: sessions,
@@ -2435,16 +2495,18 @@ final class AgentViewModel: ObservableObject {
         content: String,
         route: AppSettings,
         apiKey: String
-    ) throws -> Bool {
+    ) async throws -> Bool {
         let request = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty, request.utf8.count <= 1_048_576 else {
             throw AgentHeadlessAccessError.invalidRequest(
                 "Message content must contain 1 to 1048576 UTF-8 bytes."
             )
         }
-        guard sessions.contains(where: { $0.id == sessionID }) else {
+        guard let session = sessions.first(where: { $0.id == sessionID }) else {
             throw AgentHeadlessAccessError.taskNotFound
         }
+        let priorUserMessageIDs = Set(session.messages.filter { $0.role == .user }.map(\.id))
+        let priorStepIDs = Set(session.steps.map(\.id))
         guard run(
             sessionID: sessionID,
             userRequest: request,
@@ -2455,6 +2517,12 @@ final class AgentViewModel: ObservableObject {
                 "Task cannot accept a message in its current state."
             )
         }
+        try await awaitHeadlessSubmissionEvidence(
+            sessionID: sessionID,
+            priorUserMessageIDs: priorUserMessageIDs,
+            priorStepIDs: priorStepIDs,
+            expectedUserContent: redactor.redact(request)
+        )
         return true
     }
 
@@ -2464,7 +2532,7 @@ final class AgentViewModel: ObservableObject {
         content: String?,
         route: AppSettings,
         apiKey: String
-    ) throws -> Bool {
+    ) async throws -> Bool {
         guard let session = sessions.first(where: { $0.id == sessionID }) else {
             throw AgentHeadlessAccessError.taskNotFound
         }
@@ -2480,6 +2548,8 @@ final class AgentViewModel: ObservableObject {
         let request = supplied?.isEmpty == false
             ? supplied
             : session.goal.flatMap { $0.completedAt == nil ? $0.runtimeRequest : nil }
+        let priorUserMessageIDs = Set(session.messages.filter { $0.role == .user }.map(\.id))
+        let priorStepIDs = Set(session.steps.map(\.id))
         guard run(
             sessionID: sessionID,
             userRequest: request,
@@ -2490,7 +2560,48 @@ final class AgentViewModel: ObservableObject {
                 "Task cannot resume in its current state."
             )
         }
+        try await awaitHeadlessSubmissionEvidence(
+            sessionID: sessionID,
+            priorUserMessageIDs: priorUserMessageIDs,
+            priorStepIDs: priorStepIDs,
+            expectedUserContent: request.map(redactor.redact)
+        )
         return true
+    }
+
+    /// HTTP acceptance is recorded only after the ordinary session writer has
+    /// committed evidence of this run. A preflight can take time or fail; on
+    /// uncertainty the App Server keeps its prior pending journal entry and
+    /// refuses to replay the request after restart.
+    private func awaitHeadlessSubmissionEvidence(
+        sessionID: UUID,
+        priorUserMessageIDs: Set<UUID>,
+        priorStepIDs: Set<UUID>,
+        expectedUserContent: String?
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(12))
+        while true {
+            try Task.checkCancellation()
+            let persisted = try await sessionStore.loadSessions().first { $0.id == sessionID }
+            if let persisted {
+                let hasMatchingUserMessage = persisted.messages.contains {
+                    $0.role == .user
+                        && !priorUserMessageIDs.contains($0.id)
+                        && (expectedUserContent == nil || $0.content == expectedUserContent)
+                }
+                let hasNewStep = persisted.steps.contains { !priorStepIDs.contains($0.id) }
+                if expectedUserContent != nil ? hasMatchingUserMessage : (hasMatchingUserMessage || hasNewStep) {
+                    return
+                }
+            }
+            guard clock.now < deadline else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request outcome is uncertain; inspect the task before submitting a new request."
+                )
+            }
+            try await Task.sleep(for: .milliseconds(125))
+        }
     }
 
     @discardableResult
@@ -2510,27 +2621,60 @@ final class AgentViewModel: ObservableObject {
     }
 
     @discardableResult
-    func pauseHeadlessSession(id: UUID) throws -> Bool {
-        guard sessions.contains(where: { $0.id == id }) else {
+    func pauseHeadlessSession(id: UUID) async throws -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else {
             throw AgentHeadlessAccessError.taskNotFound
         }
         guard activeRunsBySession[id] != nil else {
             throw AgentHeadlessAccessError.invalidState("Task is not running.")
         }
         pause(sessionID: id)
+        try await awaitHeadlessStateEvidence(
+            sessionID: id,
+            baselineUpdatedAt: session.updatedAt,
+            expectedState: .paused
+        )
         return true
     }
 
     @discardableResult
-    func stopHeadlessSession(id: UUID) throws -> Bool {
-        guard sessions.contains(where: { $0.id == id }) else {
+    func stopHeadlessSession(id: UUID) async throws -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else {
             throw AgentHeadlessAccessError.taskNotFound
         }
         guard activeRunsBySession[id] != nil else {
             throw AgentHeadlessAccessError.invalidState("Task is not running.")
         }
         stop(sessionID: id)
+        try await awaitHeadlessStateEvidence(
+            sessionID: id,
+            baselineUpdatedAt: session.updatedAt,
+            expectedState: .cancelled
+        )
         return true
+    }
+
+    private func awaitHeadlessStateEvidence(
+        sessionID: UUID,
+        baselineUpdatedAt: Date,
+        expectedState: AgentRunState
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(12))
+        while true {
+            try Task.checkCancellation()
+            if let persisted = try await sessionStore.loadSessions().first(where: { $0.id == sessionID }),
+               persisted.state == expectedState,
+               persisted.updatedAt > baselineUpdatedAt {
+                return
+            }
+            guard clock.now < deadline else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request outcome is uncertain; inspect the task before submitting a new request."
+                )
+            }
+            try await Task.sleep(for: .milliseconds(125))
+        }
     }
 
     func headlessDiff(sessionID: UUID) async throws -> AgentHeadlessDiffSnapshot {
@@ -2583,7 +2727,8 @@ final class AgentViewModel: ObservableObject {
     /// also isolated so a later Execute Plan can never inherit another Task's
     /// lease.
     func forkSession(id sourceID: UUID) async {
-        guard !locationMutationSessionIDs.contains(sourceID),
+        guard !isMaintainingManagedWorktrees,
+              !locationMutationSessionIDs.contains(sourceID),
               !taskTerminalMutationSessionIDs.contains(sourceID),
               !recoveryBlockedSessionIDs.contains(sourceID),
               !isRunning(sessionID: sourceID),
@@ -2763,7 +2908,8 @@ final class AgentViewModel: ObservableObject {
     /// checkout is left untouched; its staged/unstaged/untracked and explicit
     /// Task-owned ignored files are copied and verified in the destination.
     func handoffSessionToWorktree(id sessionID: UUID) async {
-        guard !locationMutationSessionIDs.contains(sessionID),
+        guard !isMaintainingManagedWorktrees,
+              !locationMutationSessionIDs.contains(sessionID),
               !taskTerminalMutationSessionIDs.contains(sessionID),
               !recoveryBlockedSessionIDs.contains(sessionID),
               !isRunning(sessionID: sessionID),
@@ -2974,7 +3120,8 @@ final class AgentViewModel: ObservableObject {
     /// filesystem mutation. The source worktree remains leased until the
     /// Session and Undo history are durably committed at Local.
     func handoffSessionToLocal(id sessionID: UUID) async {
-        guard !locationMutationSessionIDs.contains(sessionID),
+        guard !isMaintainingManagedWorktrees,
+              !locationMutationSessionIDs.contains(sessionID),
               !taskTerminalMutationSessionIDs.contains(sessionID),
               !recoveryBlockedSessionIDs.contains(sessionID),
               !isRunning(sessionID: sessionID),
@@ -3256,7 +3403,8 @@ final class AgentViewModel: ObservableObject {
     /// checkout, verifies it on that host, and only then commits the Task's
     /// durable execution binding. This is an explicit migration, not sync.
     func handoffSessionToRemote(id sessionID: UUID, runnerID: UUID) async {
-        guard !locationMutationSessionIDs.contains(sessionID),
+        guard !isMaintainingManagedWorktrees,
+              !locationMutationSessionIDs.contains(sessionID),
               !taskTerminalMutationSessionIDs.contains(sessionID),
               !recoveryBlockedSessionIDs.contains(sessionID),
               !isRunning(sessionID: sessionID),
@@ -3568,7 +3716,8 @@ final class AgentViewModel: ObservableObject {
     /// with a baseline CAS. The remote checkout is intentionally retained and
     /// no background synchronization is implied.
     func handoffSessionFromRemoteToLocal(id sessionID: UUID) async {
-        guard !locationMutationSessionIDs.contains(sessionID),
+        guard !isMaintainingManagedWorktrees,
+              !locationMutationSessionIDs.contains(sessionID),
               !taskTerminalMutationSessionIDs.contains(sessionID),
               !recoveryBlockedSessionIDs.contains(sessionID),
               !isRunning(sessionID: sessionID),
@@ -4151,6 +4300,103 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
+    var canRunManagedWorktreeMaintenance: Bool {
+        !isMaintainingManagedWorktrees
+            && !isStarting
+            && runningSessionIDs.isEmpty
+            && stoppingSessionIDs.isEmpty
+            && locationMutationSessionIDs.isEmpty
+            && taskTerminalMutationSessionIDs.isEmpty
+    }
+
+    /// Inspection is deliberately explicit: listing a registry record does not
+    /// prove that the checkout still exists or that its contents are clean.
+    func refreshManagedWorktrees() async {
+        guard !isMaintainingManagedWorktrees else { return }
+        isMaintainingManagedWorktrees = true
+        managedWorktreeMaintenanceError = nil
+        defer { isMaintainingManagedWorktrees = false }
+        do {
+            try await reloadManagedWorktreeRecords()
+        } catch {
+            managedWorktreeMaintenanceError = redactor.redact(error.localizedDescription)
+        }
+    }
+
+    func inspectManagedWorktree(id: UUID) async {
+        guard !isMaintainingManagedWorktrees else { return }
+        isMaintainingManagedWorktrees = true
+        managedWorktreeMaintenanceError = nil
+        defer { isMaintainingManagedWorktrees = false }
+        do {
+            let inspection = try await worktreeService.inspect(id: id)
+            let records = try await worktreeService.list()
+            managedWorktreeRecords = Self.sortedManagedWorktrees(records)
+            let recordIDs = Set(records.map(\.id))
+            managedWorktreeInspections = managedWorktreeInspections.filter {
+                recordIDs.contains($0.key)
+            }
+            managedWorktreeInspections[id] = inspection
+        } catch {
+            managedWorktreeMaintenanceError = redactor.redact(error.localizedDescription)
+        }
+    }
+
+    /// The service re-inspects every candidate and removes only unleased,
+    /// clean records older than seven days. The UI cannot request force removal.
+    func cleanupManagedWorktrees() async {
+        guard canRunManagedWorktreeMaintenance else {
+            managedWorktreeMaintenanceError = "仍有 Task 或位置交易執行中，請完成後再清理。"
+            return
+        }
+        isMaintainingManagedWorktrees = true
+        managedWorktreeMaintenanceError = nil
+        managedWorktreeMaintenanceReport = nil
+        defer { isMaintainingManagedWorktrees = false }
+        do {
+            managedWorktreeMaintenanceReport = try await worktreeService.cleanup(
+                olderThan: ManagedWorktreeLimits.defaultCleanupAge,
+                now: nil
+            )
+            try await reloadManagedWorktreeRecords()
+        } catch {
+            managedWorktreeMaintenanceError = redactor.redact(error.localizedDescription)
+        }
+    }
+
+    /// Repair may complete a previously pending clean removal. Keep that
+    /// mutation away from live Task and handoff transitions.
+    func repairManagedWorktrees() async {
+        guard canRunManagedWorktreeMaintenance else {
+            managedWorktreeMaintenanceError = "仍有 Task 或位置交易執行中，請完成後再修復。"
+            return
+        }
+        isMaintainingManagedWorktrees = true
+        managedWorktreeMaintenanceError = nil
+        managedWorktreeMaintenanceReport = nil
+        defer { isMaintainingManagedWorktrees = false }
+        do {
+            managedWorktreeMaintenanceReport = try await worktreeService.repair()
+            try await reloadManagedWorktreeRecords()
+        } catch {
+            managedWorktreeMaintenanceError = redactor.redact(error.localizedDescription)
+        }
+    }
+
+    private func reloadManagedWorktreeRecords() async throws {
+        managedWorktreeRecords = Self.sortedManagedWorktrees(try await worktreeService.list())
+        managedWorktreeInspections = [:]
+    }
+
+    nonisolated private static func sortedManagedWorktrees(
+        _ records: [ManagedWorktreeRecord]
+    ) -> [ManagedWorktreeRecord] {
+        records.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
     func toggleSessionPinned(id: UUID) async {
         guard !isRunning(sessionID: id), !goalMutationSessionIDs.contains(id),
               let index = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -4205,7 +4451,8 @@ final class AgentViewModel: ObservableObject {
     }
 
     func deleteSession(id: UUID) async {
-        guard !isRunning(sessionID: id),
+        guard !isMaintainingManagedWorktrees,
+              !isRunning(sessionID: id),
               !goalMutationSessionIDs.contains(id),
               !locationMutationSessionIDs.contains(id),
               !taskTerminalMutationSessionIDs.contains(id),
@@ -4269,6 +4516,8 @@ final class AgentViewModel: ObservableObject {
             }
             sessions.removeAll { $0.id == id }
             pendingImagesBySession.removeValue(forKey: id)
+            queuedFollowUpsBySession.removeValue(forKey: id)
+            queueSnapshotRevisionBySession.removeValue(forKey: id)
             draftsBySession.removeValue(forKey: id)
             workspaceLeases.removeValue(forKey: id)
             if selectedSessionID == id {
@@ -4578,6 +4827,179 @@ final class AgentViewModel: ObservableObject {
         )
     }
 
+    /// Queue a follow-up without modifying the running model's captured
+    /// context. The separate durable file prevents run snapshots from erasing
+    /// the queued request while the provider is still streaming.
+    @discardableResult
+    func queueFollowUp(route: AppSettings, apiKey: String) async -> Bool {
+        guard canQueueFollowUp, let sessionID = selectedSessionID else {
+            errorMessage = "執行中的 Task 需要純文字、非空且最多 16 KiB 的訊息才能排隊；/goal 請在完成後使用。"
+            return false
+        }
+        let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entry = AgentQueuedFollowUp(text: request)
+        do {
+            _ = try await queuedFollowUpStore.enqueue(entry, sessionID: sessionID)
+            await refreshQueuedFollowUps(sessionID: sessionID)
+            if draftText(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines) == request {
+                setDraft("", for: sessionID)
+            }
+            statusMessage = "訊息已排隊；目前執行完成後會依序送出。"
+            if !isRunning(sessionID: sessionID) {
+                await sendNextQueuedFollowUp(sessionID: sessionID, route: route, apiKey: apiKey)
+            }
+            return true
+        } catch {
+            errorMessage = "訊息無法排隊：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    /// Deliver a text instruction to the active run's next model turn.
+    @discardableResult
+    func steerCurrentRun() async -> Bool {
+        guard canSteerCurrentRun,
+              let sessionID = selectedSessionID,
+              let control = activeRunsBySession[sessionID],
+              let runtime = control.runtime else {
+            errorMessage = "Steer 需要執行中的 Task、純文字且最多 16 KiB；影像可改用排隊訊息。"
+            return false
+        }
+        let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let acceptance = await runtime.steerWithPhase(request)
+        guard acceptance != .rejected else {
+            errorMessage = "目前執行已結束或 Steer 暫存已滿；訊息仍留在草稿。"
+            return false
+        }
+        if acceptance == .preRun {
+            // A cancelled preflight has no Runtime session to carry this
+            // instruction. Keep the draft unless this run still owns it.
+            guard runControl(runID: control.runID) === control,
+                  control.acceptsRuntimeEvents,
+                  !control.isStopping else { return false }
+            control.acceptedSteers.append(request)
+        }
+        if draftText(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines) == request {
+            setDraft("", for: sessionID)
+        }
+        statusMessage = "Steer 已送入目前執行；若已達步驟上限，會保留供繼續執行。"
+        return true
+    }
+
+    func removeQueuedFollowUp(id: UUID, sessionID: UUID) async {
+        guard let entry = queuedFollowUpsBySession[sessionID]?.first(where: { $0.id == id }),
+              entry.claimID == nil else { return }
+        do {
+            _ = try await queuedFollowUpStore.removeQueued(
+                id: id,
+                sessionID: sessionID
+            )
+            await refreshQueuedFollowUps(sessionID: sessionID)
+            for attachment in entry.imageAttachments {
+                try? imageAttachmentStore.remove(attachment, sessionID: sessionID)
+            }
+        } catch {
+            errorMessage = "排隊訊息無法移除：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func updateQueuedFollowUp(id: UUID, sessionID: UUID, text: String) async {
+        do {
+            _ = try await queuedFollowUpStore.updateQueued(
+                id: id,
+                text: text,
+                sessionID: sessionID
+            )
+            await refreshQueuedFollowUps(sessionID: sessionID)
+        } catch {
+            errorMessage = "排隊訊息無法更新：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func moveQueuedFollowUp(id: UUID, sessionID: UUID, by offset: Int) async {
+        do {
+            _ = try await queuedFollowUpStore.moveQueued(
+                id: id,
+                by: offset,
+                sessionID: sessionID
+            )
+            await refreshQueuedFollowUps(sessionID: sessionID)
+        } catch {
+            errorMessage = "排隊順序無法更新：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    /// After a relaunch, a claimed prompt may already be in the transcript.
+    /// The user explicitly resolves that uncertainty before it can be sent
+    /// again. An exact later user message proves it was delivered.
+    func resolveClaimedFollowUp(id: UUID, sessionID: UUID) async {
+        guard !isRunning(sessionID: sessionID),
+              !resolvingQueueClaims.contains(sessionID),
+              let entry = queuedFollowUpsBySession[sessionID]?.first(where: { $0.id == id }),
+              let claimID = entry.claimID else { return }
+        resolvingQueueClaims.insert(sessionID)
+        defer { resolvingQueueClaims.remove(sessionID) }
+        do {
+            // An in-memory snapshot can lag a durable user message. Manual
+            // recovery must inspect the saved Task, and must not release an
+            // in-flight claim before its first runtime update is persisted.
+            guard await sessionStore.presence(id: sessionID) == .found,
+                  let saved = try await sessionStore.loadSessions().first(where: {
+                      $0.id == sessionID
+                  }),
+                  !isRunning(sessionID: sessionID) else {
+                errorMessage = "Task 尚在執行或儲存狀態無法確認；排隊訊息維持待核對。"
+                return
+            }
+            let delivered = saved.messages.contains { message in
+                message.createdAt >= entry.queuedAt
+                    && queuedFollowUpMatchesUserMessage(entry, message: message)
+            } == true
+            _ = delivered
+                ? try await queuedFollowUpStore.acknowledge(
+                    id: id, claimID: claimID, sessionID: sessionID
+                )
+                : try await queuedFollowUpStore.release(
+                    id: id, claimID: claimID, sessionID: sessionID
+                )
+            await refreshQueuedFollowUps(sessionID: sessionID)
+            statusMessage = delivered
+                ? "訊息已在 Task 對話中，排隊記錄已清除。"
+                : "未找到已送出的訊息；排隊記錄已恢復，可再次送出。"
+        } catch {
+            errorMessage = "排隊訊息無法核對：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func sendNextQueuedFollowUp(sessionID: UUID, route: AppSettings, apiKey: String) async {
+        guard !isRunning(sessionID: sessionID),
+              sessions.contains(where: { $0.id == sessionID }) else { return }
+        do {
+            guard let entry = try await queuedFollowUpStore.claimNext(sessionID: sessionID),
+                  let claimID = entry.claimID else { return }
+            guard !isRunning(sessionID: sessionID),
+                  let task = run(
+                    sessionID: sessionID,
+                    userRequest: entry.text,
+                    userImageAttachments: entry.imageAttachments,
+                    route: route,
+                    apiKey: apiKey
+                  ),
+                  let control = activeRunsBySession[sessionID] else {
+                _ = try await queuedFollowUpStore.release(
+                    id: entry.id, claimID: claimID, sessionID: sessionID
+                )
+                await refreshQueuedFollowUps(sessionID: sessionID)
+                return
+            }
+            control.claimedFollowUp = entry
+            await refreshQueuedFollowUps(sessionID: sessionID)
+            _ = task
+        } catch {
+            errorMessage = "排隊訊息無法送出：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
     /// Persist the Goal before starting any provider or tool work. Once this
     /// returns success, an app/provider failure cannot erase the user's outcome.
     @discardableResult
@@ -4816,6 +5238,7 @@ final class AgentViewModel: ObservableObject {
             // runtime already returned but `finish` has not delivered its value.
             await control.generationTask?.value
             guard self.runControl(runID: control.runID) === control else { return }
+            await self.restoreSteersIfRuntimeNeverStarted(control)
             if let terminal = self.controlledTerminationSession(
                 runtimeSession: stoppedSession ?? control.terminalSession,
                 sessionID: sessionID,
@@ -4847,6 +5270,7 @@ final class AgentViewModel: ObservableObject {
             await self.toolEnvironment.stopProcesses(sessionID: sessionID)
             await control.generationTask?.value
             guard self.runControl(runID: control.runID) === control else { return }
+            await self.restoreSteersIfRuntimeNeverStarted(control)
             if let terminal = self.controlledTerminationSession(
                 runtimeSession: pausedSession ?? control.terminalSession,
                 sessionID: sessionID,
@@ -4869,11 +5293,21 @@ final class AgentViewModel: ObservableObject {
     ) async -> Bool {
         let finalized = await sessionFinalizingLastAgentTurn(originalSession, runID: runID)
         let session = sessionApplyingGoalLifecycle(finalized)
+        let control = runControl(runID: runID)
+        let queuedBaseline = control?.submittedDraft?.baselineUserMessageCount
         do {
             try await sessionStore.save(session)
             apply(session, synchronizeMode: true)
             clearSubmittedDraftIfPersisted(in: session, runID: runID)
             consumeSentPendingImages(in: session)
+            if let control {
+                await reconcileClaimedFollowUp(
+                    in: session,
+                    control: control,
+                    baselineUserMessageCount: queuedBaseline,
+                    releaseUndelivered: true
+                )
+            }
             return true
         } catch {
             // Surface truthful paused/cancelled state in this process while
@@ -4928,6 +5362,7 @@ final class AgentViewModel: ObservableObject {
             await control.generationTask?.value
             await waitForOwnedFinalization(control)
             guard runControl(runID: control.runID) === control else { continue }
+            await restoreSteersIfRuntimeNeverStarted(control)
             if let terminal = controlledTerminationSession(
                 runtimeSession: stoppedSession ?? control.terminalSession,
                 sessionID: control.sessionID,
@@ -6483,13 +6918,61 @@ final class AgentViewModel: ObservableObject {
             errorMessage = "MCP「\(configuration.name)」只允許在指定 Project 連線。"
             return
         }
-        await disconnectMCP(serverID: serverID)
-        await connectMCP(
-            configuration: configuration,
-            workspaceRoot: workspaceRoot,
-            projectSettings: scopedSettings,
-            executionLocation: executionLocation
-        )
+        guard !mcpBusyServerIDs.contains(serverID), configuration.enabled else { return }
+        mcpBusyServerIDs.insert(serverID)
+        defer { mcpBusyServerIDs.remove(serverID) }
+        do {
+            await toolExecutor?.clearAllPermissions()
+            _ = try await mcpManager.reconnect(serverID: serverID)
+            let currentWorkspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
+            guard mcpServers.first(where: { $0.id == serverID }) == configuration,
+                  Self.mcpTransportIsAvailable(
+                    configuration,
+                    executionLocation: selectedSession?.resolvedExecutionLocation.kind
+                  ),
+                  Self.mcpServerIsSelected(
+                    serverID,
+                    projectSettings: projectSettingsForRun(session: selectedSession)
+                  ),
+                  Self.mcpServer(configuration, matchesWorkspaceRoot: currentWorkspaceRoot) else {
+                await mcpManager.disconnect(serverID: serverID)
+                await refreshMCPSnapshots()
+                return
+            }
+            await refreshMCPSnapshots()
+            statusMessage = "MCP「\(configuration.name)」已重新連線。"
+        } catch is CancellationError {
+            await refreshMCPSnapshots()
+        } catch {
+            await refreshMCPSnapshots()
+            errorMessage = "MCP「\(configuration.name)」重新連線失敗：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func refreshMCPDiscovery(serverID: UUID) async {
+        let workspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
+        let executionLocation = selectedSession?.resolvedExecutionLocation.kind
+        let scopedSettings = projectSettingsForRun(session: selectedSession)
+        guard let configuration = mcpServers.first(where: { $0.id == serverID }),
+              configuration.enabled,
+              Self.mcpTransportIsAvailable(configuration, executionLocation: executionLocation),
+              Self.mcpServerIsSelected(serverID, projectSettings: scopedSettings),
+              Self.mcpServer(configuration, matchesWorkspaceRoot: workspaceRoot),
+              mcpSnapshot(serverID: serverID)?.state == .connected,
+              !mcpBusyServerIDs.contains(serverID) else { return }
+        mcpBusyServerIDs.insert(serverID)
+        defer { mcpBusyServerIDs.remove(serverID) }
+        do {
+            await toolExecutor?.clearAllPermissions()
+            _ = try await mcpManager.refreshDiscovery(serverID: serverID)
+            await refreshMCPSnapshots()
+            statusMessage = "MCP「\(configuration.name)」的 Discovery 已重新整理。"
+        } catch is CancellationError {
+            await refreshMCPSnapshots()
+        } catch {
+            await refreshMCPSnapshots()
+            errorMessage = "MCP「\(configuration.name)」的 Discovery 無法重新整理：\(redactor.redact(error.localizedDescription))"
+        }
     }
 
     @discardableResult
@@ -7030,6 +7513,14 @@ final class AgentViewModel: ObservableObject {
               let targetSessionID,
               let index = sessions.firstIndex(where: { $0.id == targetSessionID }),
               sessions[index].workspace != nil else { return nil }
+        guard !isMaintainingManagedWorktrees else {
+            errorMessage = "Managed Worktree 維護中；請完成後再執行 Task。"
+            return nil
+        }
+        guard !resolvingQueueClaims.contains(targetSessionID) else {
+            errorMessage = "Task 的排隊訊息核對中；請稍候再執行。"
+            return nil
+        }
         guard !isRunning(sessionID: targetSessionID) else { return nil }
         guard !recoveryBlockedSessionIDs.contains(targetSessionID),
               !locationMutationSessionIDs.contains(targetSessionID),
@@ -7100,6 +7591,8 @@ final class AgentViewModel: ObservableObject {
         beginRunTracking(runID: runID, session: snapshot, userRequest: userRequest)
         guard let control = runControl(runID: runID) else { return nil }
         control.runtime = runtime
+        control.followUpRoute = route
+        control.followUpAPIKey = apiKey
 
         let task = Task { [weak self] in
             guard let self else { return }
@@ -7263,6 +7756,7 @@ final class AgentViewModel: ObservableObject {
                 succeeded: nil,
                 detail: "mode=\(runtimeSnapshot.mode.rawValue) provider=\(runtimeSnapshot.provider.rawValue) model=\(runtimeSnapshot.model)"
             )
+            guard !Task.isCancelled, self.runAcceptsEvents(runID: runID) else { return }
             let result = await runtime.run(
                 session: runtimeSnapshot,
                 userRequest: userRequest,
@@ -7341,8 +7835,19 @@ final class AgentViewModel: ObservableObject {
             )
         )
         apply(failed, synchronizeMode: false)
-        try? await sessionStore.save(failed)
+        do {
+            try await sessionStore.save(failed)
+            await reconcileClaimedFollowUp(
+                in: failed,
+                control: control,
+                baselineUserMessageCount: control.submittedDraft?.baselineUserMessageCount,
+                releaseUndelivered: true
+            )
+        } catch {
+            exposeSessionPersistenceFailure(error)
+        }
         errorMessage = "Agent 未啟動：Checkpoint 建立失敗。\(detail)"
+        await restoreSteersIfRuntimeNeverStarted(control)
         completeRun(control)
     }
 
@@ -7367,8 +7872,19 @@ final class AgentViewModel: ObservableObject {
             completedAt: failed.updatedAt
         ))
         apply(failed, synchronizeMode: false)
-        try? await sessionStore.save(failed)
+        do {
+            try await sessionStore.save(failed)
+            await reconcileClaimedFollowUp(
+                in: failed,
+                control: control,
+                baselineUserMessageCount: control.submittedDraft?.baselineUserMessageCount,
+                releaseUndelivered: true
+            )
+        } catch {
+            exposeSessionPersistenceFailure(error)
+        }
         errorMessage = "Agent 未啟動：無法建立 Last Agent Turn 安全基線。\(detail)"
+        await restoreSteersIfRuntimeNeverStarted(control)
         completeRun(control)
     }
 
@@ -7391,8 +7907,19 @@ final class AgentViewModel: ObservableObject {
             completedAt: failed.updatedAt
         ))
         apply(failed, synchronizeMode: false)
-        try? await sessionStore.save(failed)
+        do {
+            try await sessionStore.save(failed)
+            await reconcileClaimedFollowUp(
+                in: failed,
+                control: control,
+                baselineUserMessageCount: control.submittedDraft?.baselineUserMessageCount,
+                releaseUndelivered: true
+            )
+        } catch {
+            exposeSessionPersistenceFailure(error)
+        }
         errorMessage = "Agent 未啟動：\(detail)"
+        await restoreSteersIfRuntimeNeverStarted(control)
         completeRun(control)
     }
 
@@ -7503,7 +8030,7 @@ final class AgentViewModel: ObservableObject {
         guard control.acceptsRuntimeEvents, !control.isStopping else { return }
         control.isFinalizing = true
         let finalized = await sessionFinalizingLastAgentTurn(session, runID: runID)
-        await persistRunUpdate(finalized, runID: runID)
+        let persisted = await persistRunUpdate(finalized, runID: runID)
         guard runControl(runID: runID) === control else { return }
         try? await AgentLogger.shared.record(
             sessionID: finalized.id,
@@ -7524,7 +8051,16 @@ final class AgentViewModel: ObservableObject {
                 deduplicationKey: "task-completed:\(finalized.id.uuidString.lowercased()):\(runID.uuidString.lowercased())"
             ))
         }
+        let followUpRoute = control.followUpRoute
+        let followUpAPIKey = control.followUpAPIKey
         completeRun(control)
+        if persisted, finalized.state == .completed, let followUpRoute {
+            await sendNextQueuedFollowUp(
+                sessionID: finalized.id,
+                route: followUpRoute,
+                apiKey: followUpAPIKey
+            )
+        }
     }
 
     /// Freezes Last Agent Turn exactly once at a terminal runtime boundary.
@@ -8304,9 +8840,89 @@ final class AgentViewModel: ObservableObject {
         guard runControl(runID: runID) === control, control.acceptsRuntimeEvents else { return false }
         control.persistedSnapshot = PersistedRunSnapshot(runID: runID, session: session)
         apply(session, synchronizeMode: true)
+        let queuedBaseline = control.submittedDraft?.baselineUserMessageCount
         clearSubmittedDraftIfPersisted(in: session, runID: runID)
         consumeSentPendingImages(in: session)
+        await reconcileClaimedFollowUp(
+            in: session,
+            control: control,
+            baselineUserMessageCount: queuedBaseline,
+            releaseUndelivered: session.state != .running
+                && session.state != .awaitingApproval
+                && session.state != .idle
+        )
         return true
+    }
+
+    /// Resolve a claim only after the matching Session snapshot is durable.
+    /// A prompt absent from a terminal snapshot can safely be released for a
+    /// later send; a failed or uncertain Session write leaves the claim held.
+    private func reconcileClaimedFollowUp(
+        in session: AgentSession,
+        control: ActiveRun,
+        baselineUserMessageCount: Int?,
+        releaseUndelivered: Bool
+    ) async {
+        guard runControl(runID: control.runID) === control,
+              let entry = control.claimedFollowUp,
+              let claimID = entry.claimID,
+              let baselineUserMessageCount else { return }
+        let delivered = session.messages
+            .filter { $0.role == .user }
+            .dropFirst(baselineUserMessageCount)
+            .contains { queuedFollowUpMatchesUserMessage(entry, message: $0) }
+        guard delivered || releaseUndelivered else { return }
+        do {
+            if delivered {
+                _ = try await queuedFollowUpStore.acknowledge(
+                    id: entry.id,
+                    claimID: claimID,
+                    sessionID: session.id
+                )
+            } else {
+                _ = try await queuedFollowUpStore.release(
+                    id: entry.id,
+                    claimID: claimID,
+                    sessionID: session.id
+                )
+            }
+            guard runControl(runID: control.runID) === control else { return }
+            control.claimedFollowUp = nil
+            await refreshQueuedFollowUps(sessionID: session.id)
+        } catch {
+            errorMessage = "排隊訊息狀態無法核對：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    /// Each mutation refreshes from the actor's current durable state. The
+    /// generation check prevents an older suspended read from overwriting a
+    /// newer refresh when MainActor continuations resume out of order.
+    private func refreshQueuedFollowUps(sessionID: UUID) async {
+        let revision = (queueSnapshotRevisionBySession[sessionID] ?? 0) &+ 1
+        queueSnapshotRevisionBySession[sessionID] = revision
+        do {
+            let entries = try await queuedFollowUpStore.load(sessionID: sessionID)
+            guard queueSnapshotRevisionBySession[sessionID] == revision else { return }
+            queuedFollowUpsBySession[sessionID] = entries
+        } catch {
+            errorMessage = "排隊訊息無法重新載入：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func queuedFollowUpMatchesUserMessage(
+        _ entry: AgentQueuedFollowUp,
+        message: AgentMessage
+    ) -> Bool {
+        guard message.role == .user,
+              message.imageAttachments.map(\.id) == entry.imageAttachments.map(\.id) else {
+            return false
+        }
+        let expectedText = redactor.redact(entry.text)
+        if entry.imageAttachments.isEmpty { return message.content == expectedText }
+        // Older queued entries may contain image references. AgentRuntime
+        // appends image metadata after the text when it stores that user turn.
+        return message.content == expectedText
+            || message.content.hasPrefix(expectedText + "\n\n")
     }
 
     private func sessionApplyingGoalLifecycle(_ original: AgentSession) -> AgentSession {
@@ -8330,6 +8946,24 @@ final class AgentViewModel: ObservableObject {
 
     private func runAcceptsEvents(runID: UUID) -> Bool {
         runControl(runID: runID)?.acceptsRuntimeEvents == true
+    }
+
+    /// Steer is process-memory state until Runtime saves it in the Task. If a
+    /// preflight fails or is cancelled before Runtime starts, return accepted
+    /// text to the composer in this process so the user can retry it.
+    private func restoreSteersIfRuntimeNeverStarted(_ control: ActiveRun) async {
+        guard !control.acceptedSteers.isEmpty,
+              let runtime = control.runtime,
+              !(await runtime.hasStartedRun()),
+              runControl(runID: control.runID) === control else { return }
+        _ = await runtime.stop()
+        guard runControl(runID: control.runID) === control else { return }
+        let restored = control.acceptedSteers.joined(separator: "\n\n")
+        let current = draftText(for: control.sessionID)
+        setDraft(current.isEmpty ? restored : "\(restored)\n\n\(current)",
+                 for: control.sessionID)
+        control.acceptedSteers.removeAll()
+        statusMessage = "啟動前 Steer 尚未執行，已退回 Task 草稿。"
     }
 
     private func completeRun(_ control: ActiveRun) {

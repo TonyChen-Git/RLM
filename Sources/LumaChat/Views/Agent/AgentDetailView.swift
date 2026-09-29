@@ -1913,6 +1913,21 @@ private struct AgentComposer: View {
     @EnvironmentObject private var agentViewModel: AgentViewModel
     @EnvironmentObject private var chatViewModel: ChatViewModel
     @State private var presentedSheet: AgentComposerSheet?
+    @State private var editingQueuedFollowUp: AgentQueuedFollowUp?
+    @State private var editingQueuedSessionID: UUID?
+    @State private var queuedEditText = ""
+
+    private var prefersSteerFollowUp: Bool {
+        agentViewModel.preferredFollowUpBehavior == .steer
+    }
+
+    private var canPrimarySend: Bool {
+        if agentViewModel.selectedSessionIsRunning {
+            return prefersSteerFollowUp
+                ? agentViewModel.canSteerCurrentRun : agentViewModel.canQueueFollowUp
+        }
+        return agentViewModel.canSend
+    }
 
     private var executionLocationKind: AgentExecutionLocationKind? {
         agentViewModel.selectedSession?.resolvedExecutionLocation.kind
@@ -2094,37 +2109,178 @@ private struct AgentComposer: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    Button {
+                        agentViewModel.stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if agentViewModel.selectedSessionIsRunning {
+                    Button {
+                        Task {
+                            if prefersSteerFollowUp {
+                                await agentViewModel.queueFollowUp(
+                                    route: chatViewModel.settings,
+                                    apiKey: chatViewModel.apiKey
+                                )
+                            } else {
+                                await agentViewModel.steerCurrentRun()
+                            }
+                        }
+                    } label: {
+                        Label(
+                            prefersSteerFollowUp ? "排隊" : "Steer",
+                            systemImage: prefersSteerFollowUp ? "text.badge.plus" : "arrow.up.right"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(prefersSteerFollowUp
+                        ? !agentViewModel.canQueueFollowUp : !agentViewModel.canSteerCurrentRun)
+                    .help(prefersSteerFollowUp
+                        ? "目前執行完成後送出（⌘⇧↩）"
+                        : "送入目前執行的下一模型回合（⌘⇧↩）")
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
                 }
 
                 Button {
                     if agentViewModel.selectedSessionIsRunning {
-                        agentViewModel.stop()
+                        Task {
+                            if prefersSteerFollowUp {
+                                await agentViewModel.steerCurrentRun()
+                            } else {
+                                await agentViewModel.queueFollowUp(
+                                    route: chatViewModel.settings,
+                                    apiKey: chatViewModel.apiKey
+                                )
+                            }
+                        }
                     } else {
                         agentViewModel.send(route: chatViewModel.settings, apiKey: chatViewModel.apiKey)
                     }
                 } label: {
-                    Image(systemName: agentViewModel.selectedSessionIsRunning ? "stop.fill" : "arrow.up")
+                    Image(systemName: agentViewModel.selectedSessionIsRunning && !prefersSteerFollowUp
+                          ? "text.badge.plus" : "arrow.up")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(
-                            agentViewModel.canSend || agentViewModel.selectedSessionIsRunning
+                            canPrimarySend
                                 ? Color(nsColor: .windowBackgroundColor) : Color.secondary
                         )
                         .frame(width: 32, height: 32)
                         .background(
-                            agentViewModel.canSend || agentViewModel.selectedSessionIsRunning
+                            canPrimarySend
                                 ? AnyShapeStyle(Color.primary)
                                 : AnyShapeStyle(Color.secondary.opacity(0.16)),
                             in: Circle()
                         )
                 }
                 .buttonStyle(.plain)
-                .disabled(!agentViewModel.canSend && !agentViewModel.selectedSessionIsRunning)
+                .disabled(!canPrimarySend)
+                .help(agentViewModel.selectedSessionIsRunning
+                    ? (prefersSteerFollowUp
+                        ? "Steer：在目前執行的下一模型回合生效"
+                        : "排隊：目前執行完成後送出")
+                    : "送出訊息")
                 .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(11)
             .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 20))
             .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(LumaTheme.border, lineWidth: 0.75) }
             .shadow(color: .black.opacity(0.045), radius: 12, y: 5)
+
+            if !agentViewModel.selectedQueuedFollowUps.isEmpty,
+               let sessionID = agentViewModel.selectedSessionID {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("排隊訊息 · \(agentViewModel.selectedQueuedFollowUps.count)", systemImage: "text.line.first.and.arrowtriangle.forward")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        if !agentViewModel.selectedSessionIsRunning,
+                           agentViewModel.selectedQueuedFollowUps.first?.claimID == nil {
+                            Button("送出下一則") {
+                                Task {
+                                    await agentViewModel.sendNextQueuedFollowUp(
+                                        sessionID: sessionID,
+                                        route: chatViewModel.settings,
+                                        apiKey: chatViewModel.apiKey
+                                    )
+                                }
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
+                    ForEach(agentViewModel.selectedQueuedFollowUps) { entry in
+                        HStack(spacing: 8) {
+                            Text(entry.text.replacingOccurrences(of: "\n", with: " "))
+                                .lineLimit(1)
+                                .font(.caption)
+                            Spacer()
+                            if entry.claimID != nil {
+                                Text("待核對").font(.caption2).foregroundStyle(.orange)
+                                Button("核對") {
+                                    Task {
+                                        await agentViewModel.resolveClaimedFollowUp(
+                                            id: entry.id,
+                                            sessionID: sessionID
+                                        )
+                                    }
+                                }
+                                .disabled(agentViewModel.selectedSessionIsRunning)
+                            } else {
+                                Button {
+                                    queuedEditText = entry.text
+                                    editingQueuedSessionID = sessionID
+                                    editingQueuedFollowUp = entry
+                                } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .help("編輯排隊訊息")
+                                Button {
+                                    Task {
+                                        await agentViewModel.moveQueuedFollowUp(
+                                            id: entry.id,
+                                            sessionID: sessionID,
+                                            by: -1
+                                        )
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.up")
+                                }
+                                .disabled(agentViewModel.selectedQueuedFollowUps.first?.id == entry.id)
+                                .help("提前")
+                                Button {
+                                    Task {
+                                        await agentViewModel.moveQueuedFollowUp(
+                                            id: entry.id,
+                                            sessionID: sessionID,
+                                            by: 1
+                                        )
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.down")
+                                }
+                                .disabled(agentViewModel.selectedQueuedFollowUps.last?.id == entry.id)
+                                .help("延後")
+                                Button("移除") {
+                                    Task {
+                                        await agentViewModel.removeQueuedFollowUp(
+                                            id: entry.id,
+                                            sessionID: sessionID
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        .font(.caption2)
+                    }
+                }
+                .padding(9)
+                .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+            }
 
             Text(footerText)
                 .font(.caption2)
@@ -2149,6 +2305,33 @@ private struct AgentComposer: View {
                     .environmentObject(agentViewModel)
                     .environmentObject(chatViewModel)
             }
+        }
+        .sheet(item: $editingQueuedFollowUp) { entry in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("編輯排隊訊息").font(.headline)
+                TextEditor(text: $queuedEditText)
+                    .frame(minHeight: 120)
+                HStack {
+                    Spacer()
+                    Button("取消") { editingQueuedFollowUp = nil }
+                    Button("儲存") {
+                        guard let sessionID = editingQueuedSessionID else { return }
+                        Task {
+                            await agentViewModel.updateQueuedFollowUp(
+                                id: entry.id,
+                                sessionID: sessionID,
+                                text: queuedEditText
+                            )
+                        }
+                        editingQueuedFollowUp = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(queuedEditText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || queuedEditText.utf8.count > AgentQueuedFollowUpStore.maximumPromptBytes)
+                }
+            }
+            .padding(20)
+            .frame(width: 460)
         }
     }
 

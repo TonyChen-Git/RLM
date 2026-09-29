@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LumaChatSDK
 
@@ -14,22 +15,10 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         var reasoning: String?
     }
 
-    private enum CachedMutationResponse {
-        case task(LumaChatTaskSnapshot)
-        case operation(LumaChatAcceptedOperation)
-    }
-
-    private struct CachedMutation {
-        var signature: Data
-        var response: CachedMutationResponse
-    }
-
     private struct ConfiguredRoute {
         var identifier: String
         var settings: AppSettings
     }
-
-    static let maximumRetainedMutations = 1_024
 
     let agentViewModel: AgentViewModel
     private let settingsStore: SettingsStore
@@ -43,8 +32,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
     private var eventDeliveryTails: [UUID: Task<Void, Never>] = [:]
     private var runtimeObserverIDs: [UUID: UUID] = [:]
     private var messageProjections: [UUID: [UUID: MessageProjection]] = [:]
-    private var mutationCache: [UUID: CachedMutation] = [:]
-    private var mutationOrder: [UUID] = []
+    private var mutationJournal: LumaChatHeadlessMutationJournal
     private var didStart = false
 
     init(
@@ -52,6 +40,9 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         settingsStore: SettingsStore,
         keychainStore: KeychainStore = KeychainStore(),
         eventBroker: LumaChatHeadlessEventBroker = LumaChatHeadlessEventBroker(),
+        mutationJournalURL: URL = AppPaths.appSupport
+            .appendingPathComponent("AppServer", isDirectory: true)
+            .appendingPathComponent("mutations.json"),
         backendProbe: @escaping BackendProbe = { settings, apiKey in
             try await LLMClient().fetchModels(settings: settings, apiKey: apiKey)
         }
@@ -60,6 +51,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         self.settingsStore = settingsStore
         self.keychainStore = keychainStore
         self.eventBroker = eventBroker
+        self.mutationJournal = LumaChatHeadlessMutationJournal(fileURL: mutationJournalURL)
         self.backendProbe = backendProbe
     }
 
@@ -78,6 +70,9 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 "LumaChat configuration is unavailable."
             )
         }
+        // Refuse to serve mutations if a prior request journal cannot be
+        // recovered. Treating it as empty could repeat an applied side effect.
+        try mutationJournal.load()
         await agentViewModel.start()
         guard agentViewModel.headlessRuntimeIsReady else {
             throw LumaChatHeadlessRuntimeFailure.backendUnavailable(
@@ -323,6 +318,14 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             modelID: request.modelID
         )
         try await requireAvailable(route.settings, modelID: request.modelID)
+        if let cached = try reserveMutation(id: requestID, signature: signature) {
+            guard case .task(let snapshot) = cached else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request ID was already used for another operation."
+                )
+            }
+            return snapshot
+        }
 
         do {
             let session = try await agentViewModel.createHeadlessSession(
@@ -334,7 +337,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             )
             let result = snapshot(session)
             installRuntimeObserverIfNeeded(taskID: session.id, initialSession: session)
-            recordMutation(
+            try recordMutation(
                 id: requestID,
                 signature: signature,
                 response: .task(result)
@@ -378,8 +381,16 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         let route = try route(for: session)
         try await requireAvailable(route, modelID: session.model)
         installRuntimeObserverIfNeeded(taskID: taskID, initialSession: session)
+        if let cached = try reserveMutation(id: requestID, signature: signature) {
+            guard case .operation(let operation) = cached else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request ID was already used for another operation."
+                )
+            }
+            return operation
+        }
         do {
-            try agentViewModel.sendHeadlessMessage(
+            try await agentViewModel.sendHeadlessMessage(
                 sessionID: taskID,
                 content: request.content,
                 route: route,
@@ -396,7 +407,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 payload: .object(["status": .string(LumaChatTaskState.running.rawValue)]),
                 reopensStream: true
             )
-            recordMutation(
+            try recordMutation(
                 id: requestID,
                 signature: signature,
                 response: .operation(operation)
@@ -448,6 +459,20 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         case .allowForTask: decision = .allowForSession
         case .deny: decision = .deny
         }
+        guard agentViewModel.headlessSession(id: taskID) != nil else {
+            throw LumaChatHeadlessRuntimeFailure.notFound()
+        }
+        guard agentViewModel.pendingApprovalsBySession[taskID]?.id == request.approvalID else {
+            throw LumaChatHeadlessRuntimeFailure.approvalNotFound()
+        }
+        if let cached = try reserveMutation(id: requestID, signature: signature) {
+            guard case .operation(let operation) = cached else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request ID was already used for another operation."
+                )
+            }
+            return operation
+        }
         do {
             try agentViewModel.resolveHeadlessApproval(
                 decision,
@@ -459,11 +484,9 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 taskID: taskID,
                 status: .running
             )
-            recordMutation(
-                id: requestID,
-                signature: signature,
-                response: .operation(operation)
-            )
+            // The approval continuation can start a tool before its resulting
+            // Task state is durable. Keep this ID pending so interruption can
+            // never replay the decision a second time.
             return operation
         } catch {
             throw mapAccessFailure(error, operation: "approve")
@@ -481,7 +504,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             requestedState: .paused,
             value: request
         ) {
-            try self.agentViewModel.pauseHeadlessSession(id: taskID)
+            try await self.agentViewModel.pauseHeadlessSession(id: taskID)
         }
     }
 
@@ -510,8 +533,16 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         let route = try route(for: session)
         try await requireAvailable(route, modelID: session.model)
         installRuntimeObserverIfNeeded(taskID: taskID, initialSession: session)
+        if let cached = try reserveMutation(id: requestID, signature: signature) {
+            guard case .operation(let operation) = cached else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request ID was already used for another operation."
+                )
+            }
+            return operation
+        }
         do {
-            try agentViewModel.resumeHeadlessSession(
+            try await agentViewModel.resumeHeadlessSession(
                 sessionID: taskID,
                 content: request.content,
                 route: route,
@@ -528,7 +559,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 payload: .object(["status": .string(LumaChatTaskState.running.rawValue)]),
                 reopensStream: true
             )
-            recordMutation(
+            try recordMutation(
                 id: requestID,
                 signature: signature,
                 response: .operation(operation)
@@ -550,7 +581,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             requestedState: .cancelled,
             value: request
         ) {
-            try self.agentViewModel.stopHeadlessSession(id: taskID)
+            try await self.agentViewModel.stopHeadlessSession(id: taskID)
         }
     }
 
@@ -584,7 +615,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         action: String,
         requestedState: LumaChatTaskState,
         value: Value,
-        operation: () throws -> Bool
+        operation: () async throws -> Bool
     ) async throws -> LumaChatAcceptedOperation {
         try requireStarted()
         let requestID = optionalRequestID ?? UUID()
@@ -601,8 +632,24 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
             }
             return result
         }
+        guard agentViewModel.headlessSession(id: taskID) != nil else {
+            throw LumaChatHeadlessRuntimeFailure.notFound()
+        }
+        guard agentViewModel.isRunning(sessionID: taskID) else {
+            throw LumaChatHeadlessRuntimeFailure.invalidState(
+                "Task is not running."
+            )
+        }
+        if let cached = try reserveMutation(id: requestID, signature: signature) {
+            guard case .operation(let result) = cached else {
+                throw LumaChatHeadlessRuntimeFailure.conflict(
+                    "The request ID was already used for another operation."
+                )
+            }
+            return result
+        }
         do {
-            _ = try operation()
+            _ = try await operation()
             let result = LumaChatAcceptedOperation(
                 requestID: requestID,
                 taskID: taskID,
@@ -613,7 +660,7 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 kind: .stateChanged,
                 payload: .object(["status": .string(requestedState.rawValue)])
             )
-            recordMutation(
+            try recordMutation(
                 id: requestID,
                 signature: signature,
                 response: .operation(result)
@@ -1048,34 +1095,42 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
                 message: "Request cannot be encoded."
             )
         }
-        return signature
+        return Data(SHA256.hash(data: signature))
     }
 
     private func cachedMutation(
         id: UUID,
         matching signature: Data
-    ) throws -> CachedMutationResponse? {
-        guard let cached = mutationCache[id] else { return nil }
-        guard cached.signature == signature else {
-            throw LumaChatHeadlessRuntimeFailure.conflict(
-                "The request ID was reused with a different payload."
+    ) throws -> LumaChatHeadlessMutationResponse? {
+        try mutationJournal.replay(id: id, signature: signature)
+    }
+
+    private func reserveMutation(
+        id: UUID,
+        signature: Data
+    ) throws -> LumaChatHeadlessMutationResponse? {
+        do {
+            return try mutationJournal.reserve(id: id, signature: signature)
+        } catch let failure as LumaChatHeadlessRuntimeFailure {
+            throw failure
+        } catch {
+            throw LumaChatHeadlessRuntimeFailure.backendUnavailable(
+                "The App Server request journal is unavailable."
             )
         }
-        return cached.response
     }
 
     private func recordMutation(
         id: UUID,
         signature: Data,
-        response: CachedMutationResponse
-    ) {
-        if mutationCache[id] == nil { mutationOrder.append(id) }
-        mutationCache[id] = CachedMutation(signature: signature, response: response)
-        if mutationOrder.count > Self.maximumRetainedMutations {
-            let expirationCount = mutationOrder.count - Self.maximumRetainedMutations
-            let expired = Array(mutationOrder.prefix(expirationCount))
-            mutationOrder.removeFirst(expirationCount)
-            expired.forEach { mutationCache.removeValue(forKey: $0) }
+        response: LumaChatHeadlessMutationResponse
+    ) throws {
+        do {
+            try mutationJournal.complete(id: id, signature: signature, response: response)
+        } catch {
+            throw LumaChatHeadlessRuntimeFailure.conflict(
+                "The request outcome is uncertain; inspect the task before submitting a new request."
+            )
         }
     }
 

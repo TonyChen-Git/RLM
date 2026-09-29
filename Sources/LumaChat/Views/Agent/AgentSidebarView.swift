@@ -5,6 +5,9 @@ struct AgentSidebarView: View {
     @EnvironmentObject private var chatViewModel: ChatViewModel
     @State private var pendingDelete: AgentSession?
     @State private var isShowingProjectManager = false
+    @State private var isShowingWorktreeMaintenance = false
+    @State private var sideChatConfiguration: SideChatConfiguration?
+    @State private var sideChatError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,6 +83,13 @@ struct AgentSidebarView: View {
                                 .tag(session.id)
                                 .contextMenu {
                                     Section("Task Actions") {
+                                        Button {
+                                            openSideChat(for: session)
+                                        } label: {
+                                            Label("Side chat（唯讀）", systemImage: "bubble.left.and.bubble.right")
+                                        }
+                                        .disabled(!canOpenSideChat(for: session))
+
                                         Button {
                                             Task { await agentViewModel.forkSession(id: session.id) }
                                         } label: {
@@ -239,6 +249,21 @@ struct AgentSidebarView: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                Button {
+                    guard let session = agentViewModel.selectedSession else { return }
+                    openSideChat(for: session)
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(agentViewModel.selectedSession.map { !canOpenSideChat(for: $0) } ?? true)
+                .help("開啟唯讀 Side chat ⌥⌘S")
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                Button { isShowingWorktreeMaintenance = true } label: {
+                    Image(systemName: "arrow.triangle.branch")
+                }
+                .buttonStyle(.plain)
+                .help("Managed Worktrees 維護")
                 Button { chatViewModel.isShowingSettings = true } label: {
                     Image(systemName: "slider.horizontal.3")
                 }
@@ -268,6 +293,23 @@ struct AgentSidebarView: View {
             AgentProjectManagerView()
                 .environmentObject(agentViewModel)
                 .environmentObject(chatViewModel)
+        }
+        .sheet(isPresented: $isShowingWorktreeMaintenance) {
+            ManagedWorktreeMaintenancePane(agentViewModel: agentViewModel)
+        }
+        .sheet(item: $sideChatConfiguration) { configuration in
+            SideChatPane(configuration: configuration, agentViewModel: agentViewModel)
+        }
+        .alert(
+            "無法開啟 Side chat",
+            isPresented: Binding(
+                get: { sideChatError != nil },
+                set: { if !$0 { sideChatError = nil } }
+            )
+        ) {
+            Button("好") { sideChatError = nil }
+        } message: {
+            Text(sideChatError ?? "請檢查 Task 模型與連線設定。")
         }
     }
 
@@ -310,6 +352,37 @@ struct AgentSidebarView: View {
             || agentViewModel.goalMutationSessionIDs.contains(session.id)
             || agentViewModel.locationMutationSessionIDs.contains(session.id)
             || agentViewModel.recoveryBlockedSessionIDs.contains(session.id)
+    }
+
+    private func canOpenSideChat(for session: AgentSession) -> Bool {
+        guard let connection = session.connection else { return false }
+        return connection.provider == session.provider
+            && !session.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func openSideChat(for session: AgentSession) {
+        guard canOpenSideChat(for: session), let connection = session.connection else {
+            sideChatError = "此 Task 沒有可確認的原始模型連線。"
+            return
+        }
+        let route = connection.providerSettings(
+            model: session.model,
+            modelParameterProfiles: chatViewModel.settings.modelParameterProfiles
+        )
+        do {
+            let apiKey = try KeychainStore().loadAPIKey(for: route)
+            if route.provider.requiresAPIKey && (apiKey?.isEmpty ?? true) {
+                sideChatError = "此 Task 的模型連線缺少 API 金鑰。"
+                return
+            }
+            sideChatConfiguration = SideChatConfiguration(
+                parent: session,
+                route: route,
+                apiKey: apiKey
+            )
+        } catch {
+            sideChatError = SecretRedactor().redact(error.localizedDescription)
+        }
     }
 }
 

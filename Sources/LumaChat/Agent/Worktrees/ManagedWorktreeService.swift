@@ -181,6 +181,14 @@ actor ManagedWorktreeService {
 
         for original in originalRecords {
             do {
+                // A pending removal with a lease may still be referenced by a
+                // durable Task or handoff journal. Repair has no proof that
+                // releasing that exact Task checkout was committed, so leave
+                // it for the transaction recovery owner.
+                if original.state == .removalPending, original.lease != nil {
+                    report.skippedIDs.append(original.id)
+                    continue
+                }
                 var record = original
                 var inspection = await inspectRecord(record)
 
@@ -194,7 +202,7 @@ actor ManagedWorktreeService {
                     if inspection.isRegistered, inspection.isClean == true {
                         try await removeLocked(
                             record: record,
-                            lease: record.lease,
+                            lease: nil,
                             force: false
                         )
                         report.removedIDs.append(record.id)

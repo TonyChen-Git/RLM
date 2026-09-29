@@ -14,12 +14,13 @@ enum AgentTaskForkError: LocalizedError, Equatable {
     }
 }
 
-/// Builds durable fork state without sharing any live Runtime object.  A fork
-/// receives a bounded context message, copied Goal/Todo values with fresh IDs,
-/// and an independently supplied execution location/workspace.
+/// Builds durable fork state without sharing any live Runtime object. A fork
+/// receives bounded, redacted user/assistant history, copied Goal/Todo values
+/// with fresh IDs, and an independently supplied execution location/workspace.
 struct AgentTaskForkBuilder: Sendable {
-    static let maximumSummaryBytes = 64 * 1_024
+    static let maximumHistoryBytes = 64 * 1_024
     static let maximumSourceMessages = 80
+    private static let truncationMarker = "\n… [fork message truncated]"
 
     private let redactor = SecretRedactor()
 
@@ -54,13 +55,13 @@ struct AgentTaskForkBuilder: Sendable {
         fork.projectFolderID = executionLocation.kind == .local
             ? source.projectFolderID
             : nil
-        fork.messages = summaryMessage(from: source, createdAt: now).map { [$0] } ?? []
+        fork.messages = inheritedMessages(from: source, createdAt: now)
         fork.steps = []
         fork.todos = source.todos.map {
             AgentTodo(
                 id: UUID(),
-                title: $0.title,
-                detail: $0.detail,
+                title: redactor.redact($0.title),
+                detail: $0.detail.map(redactor.redact),
                 status: $0.status,
                 createdAt: now,
                 updatedAt: now
@@ -70,8 +71,8 @@ struct AgentTaskForkBuilder: Sendable {
             do {
                 fork.goal = try AgentGoal(
                     id: UUID(),
-                    objective: goal.objective,
-                    completionCriteria: goal.completionCriteria,
+                    objective: redactor.redact(goal.objective),
+                    completionCriteria: goal.completionCriteria.map(redactor.redact),
                     createdAt: now,
                     updatedAt: now,
                     completedAt: goal.completedAt == nil ? nil : now
@@ -106,65 +107,88 @@ struct AgentTaskForkBuilder: Sendable {
         return fork
     }
 
-    private func summaryMessage(from session: AgentSession, createdAt: Date) -> AgentMessage? {
-        let candidates = session.messages
-            .filter { $0.role == .user || $0.role == .assistant }
-            .suffix(Self.maximumSourceMessages)
-        var sections: [String] = []
-        if let goal = session.goal {
-            sections.append("Goal: \(goal.objective)")
-            if let criteria = goal.completionCriteria {
-                sections.append("Completion criteria: \(criteria)")
-            }
-        }
-        if !session.todos.isEmpty {
-            let todo = session.todos.map {
-                "[\($0.status.rawValue)] \($0.title)" + ($0.detail.map { ": \($0)" } ?? "")
-            }.joined(separator: "\n")
-            sections.append("Todo state:\n\(todo)")
-        }
-        let conversation = candidates.compactMap { message -> String? in
-            let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { return nil }
-            return "\(message.role.rawValue.uppercased()): \(content)"
-        }.joined(separator: "\n\n")
-        if !conversation.isEmpty { sections.append("Recent parent conversation:\n\(conversation)") }
-        guard !sections.isEmpty else { return nil }
-
-        let header = """
-        This Task was forked from \(session.id.uuidString). The following is bounded,
-        inherited context only. Re-inspect files and Git state before making claims;
-        no terminal, approval, active process, or Runtime state was shared.
-        """
-        let value = redactor.redact(([header] + sections).joined(separator: "\n\n"))
-        let bounded = Self.utf8Prefix(value, maximumBytes: Self.maximumSummaryBytes)
-        return AgentMessage(
+    private func inheritedMessages(from session: AgentSession, createdAt: Date) -> [AgentMessage] {
+        let header = AgentMessage(
             role: .system,
-            content: bounded,
+            content: """
+            This Task was forked from \(session.id.uuidString). Earlier user and assistant messages
+            are inherited context only. Re-inspect files and Git state before making claims. Tool
+            calls, tool results, reasoning, review payloads, and image attachments were not carried;
+            no terminal, approval, active process, or Runtime state was shared. Older messages may
+            be omitted to fit the bounded fork history.
+            """,
             name: "luma-task-fork-context",
             createdAt: createdAt
         )
+        var remainingBytes = Self.maximumHistoryBytes - header.content.utf8.count
+        var newestFirst: [AgentMessage] = []
+        let candidates = session.messages
+            .filter {
+                ($0.role == .user || $0.role == .assistant)
+                    && (!$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !$0.imageAttachments.isEmpty)
+            }
+            .suffix(Self.maximumSourceMessages)
+
+        for original in candidates.reversed() {
+            var content = redactor.redact(original.content)
+            if !original.imageAttachments.isEmpty {
+                content += (content.isEmpty ? "" : "\n")
+                    + "[Parent image attachment omitted; reattach it if needed.]"
+            }
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            guard remainingBytes > 0 else { break }
+            let inheritedContent: String
+            if content.utf8.count <= remainingBytes {
+                inheritedContent = content
+            } else if newestFirst.isEmpty {
+                inheritedContent = Self.utf8Prefix(
+                    content,
+                    maximumBytes: remainingBytes,
+                    marker: Self.truncationMarker
+                )
+            } else {
+                break
+            }
+            guard !inheritedContent.isEmpty else { break }
+            // Create fresh message identities and carry text only. In particular,
+            // provider tool-call/result pairs and parent attachment paths must
+            // never be replayed in the child session.
+            newestFirst.append(AgentMessage(
+                role: original.role,
+                content: inheritedContent,
+                createdAt: original.createdAt
+            ))
+            remainingBytes -= inheritedContent.utf8.count
+            if inheritedContent != content { break }
+        }
+        return [header] + Array(newestFirst.reversed())
     }
 
     private func boundedTitle(_ source: String) -> String {
         let prefix = "Fork · "
         let maximumCharacters = 80
         let remainder = max(1, maximumCharacters - prefix.count)
-        let normalized = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = redactor.redact(source).trimmingCharacters(in: .whitespacesAndNewlines)
         return prefix + String((normalized.isEmpty ? "Coding Task" : normalized).prefix(remainder))
     }
 
-    private static func utf8Prefix(_ value: String, maximumBytes: Int) -> String {
+    private static func utf8Prefix(
+        _ value: String,
+        maximumBytes: Int,
+        marker: String
+    ) -> String {
         guard value.utf8.count > maximumBytes else { return value }
+        guard maximumBytes > marker.utf8.count else { return "" }
         var result = ""
-        result.reserveCapacity(maximumBytes)
+        result.reserveCapacity(maximumBytes - marker.utf8.count)
         var used = 0
         for character in value {
             let count = String(character).utf8.count
-            guard used <= maximumBytes - count else { break }
+            guard used <= maximumBytes - marker.utf8.count - count else { break }
             result.append(character)
             used += count
         }
-        return result + "\n… [fork context truncated]"
+        return result + marker
     }
 }

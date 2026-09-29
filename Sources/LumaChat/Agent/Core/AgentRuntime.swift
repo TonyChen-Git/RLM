@@ -24,6 +24,54 @@ final class AgentRunCancellationController: @unchecked Sendable {
     }
 }
 
+/// A per-run, process-memory mailbox. Enqueue never interrupts a provider or
+/// tool operation; the loop consumes messages only at a model-turn boundary.
+/// Until the loop publishes its next session snapshot, a process crash can
+/// lose an accepted Steer. Queue has separate durable storage for that case.
+actor AgentSteerMailbox {
+    static let maximumEntries = 8
+    static let maximumPromptBytes = 16 * 1024
+
+    private var pending: [String] = []
+    private var accepting = true
+
+    func enqueue(_ rawText: String) -> Bool {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard accepting, !text.isEmpty,
+              text.utf8.count <= Self.maximumPromptBytes,
+              pending.count < Self.maximumEntries else { return false }
+        pending.append(text)
+        return true
+    }
+
+    func drain() -> [String] {
+        let messages = pending
+        pending.removeAll()
+        return messages
+    }
+
+    /// Atomically closes acceptance when the model is ready to finish. A
+    /// concurrent Steer is either returned for another turn or rejected.
+    func drainOrClose() -> [String] {
+        let messages = drain()
+        if messages.isEmpty { accepting = false }
+        return messages
+    }
+
+    func closeAndDrain() -> [String] {
+        accepting = false
+        return drain()
+    }
+
+    func close() { accepting = false }
+}
+
+enum AgentSteerAcceptance: Equatable, Sendable {
+    case rejected
+    case preRun
+    case active
+}
+
 struct AgentLoop: Sendable {
     let registry: ToolRegistry
     let executor: ToolExecutor
@@ -64,6 +112,7 @@ struct AgentLoop: Sendable {
         hookResultHandler: LifecycleHookResultHandler? = nil,
         hookFailureHandler: PluginHookFailureHandler? = nil,
         cancellationController: AgentRunCancellationController,
+        steerMailbox: AgentSteerMailbox? = nil,
         eventHandler: @escaping AgentEventHandler
     ) async -> AgentSession {
         var session = original
@@ -311,6 +360,13 @@ struct AgentLoop: Sendable {
 
             while stepCount < maximumSteps {
                 try Task.checkCancellation()
+                if let steerMailbox {
+                    let pending = await steerMailbox.drain()
+                    if !pending.isEmpty {
+                        appendSteerMessages(pending, to: &session)
+                        await eventHandler(.sessionUpdated(session))
+                    }
+                }
                 if case .subagent(_, let childID, _) = session.resolvedTaskType,
                    let subagentController {
                     let messages = await subagentController.takePendingSubagentMessages(id: childID)
@@ -705,6 +761,21 @@ struct AgentLoop: Sendable {
                         )
                     }
 
+                    if let steerMailbox {
+                        let pending = await steerMailbox.drainOrClose()
+                        if !pending.isEmpty {
+                            appendSteerMessages(pending, to: &session)
+                            await eventHandler(.sessionUpdated(session))
+                            if stepCount >= maximumSteps {
+                                markStepLimit(maximumSteps, in: &session)
+                                await eventHandler(.sessionUpdated(session))
+                                await finishLifecycleHooks("step-limit", terminalSession: session)
+                                return session
+                            }
+                            continue
+                        }
+                    }
+
                     if workspace.gitRepository,
                        reviewState == nil,
                        !didCaptureFinalGitDiff {
@@ -1046,6 +1117,17 @@ struct AgentLoop: Sendable {
             await eventHandler(.failed(sanitizedError))
             return session
         }
+    }
+
+    private func appendSteerMessages(_ messages: [String], to session: inout AgentSession) {
+        for text in messages {
+            session.messages.append(AgentMessage(
+                role: .user,
+                content: redactor.redact(text),
+                name: "luma-agent-steer"
+            ))
+        }
+        session.updatedAt = Date()
     }
 
     private func dispatchTerminalLifecycleHooks(
@@ -2229,6 +2311,12 @@ actor AgentRuntime {
     private var activeTask: Task<AgentSession, Never>?
     private var activeRunID: UUID?
     private var activeCancellationController: AgentRunCancellationController?
+    private var activeSteerMailbox: AgentSteerMailbox?
+    private var didStartRun = false
+    /// The view model exposes this runtime while run preflight is still in
+    /// progress. Reserve one mailbox for that first run so Steer accepted in
+    /// the gap reaches its first model turn. It is consumed at most once.
+    private var preRunSteerMailbox: AgentSteerMailbox? = AgentSteerMailbox()
 
     init(
         registry: ToolRegistry,
@@ -2265,18 +2353,32 @@ actor AgentRuntime {
         hookFailureHandler: PluginHookFailureHandler? = nil,
         eventHandler: @escaping AgentEventHandler
     ) async -> AgentSession {
+        // A cancelled view-model preflight may enter this actor after Stop or
+        // Pause observed that no model task had started yet. Never create a
+        // fresh unstructured model task on behalf of that cancelled caller.
+        guard !Task.isCancelled else {
+            let pendingPreRun = preRunSteerMailbox
+            preRunSteerMailbox = nil
+            await pendingPreRun?.close()
+            return session
+        }
         if let existing = activeTask {
+            await activeSteerMailbox?.close()
             activeCancellationController?.set(.stop)
             existing.cancel()
             _ = await existing.value
         }
+        guard !Task.isCancelled else { return session }
         let runID = UUID()
         let cancellationController = AgentRunCancellationController()
+        let steerMailbox = preRunSteerMailbox ?? AgentSteerMailbox()
+        preRunSteerMailbox = nil
         activeRunID = runID
         activeCancellationController = cancellationController
+        activeSteerMailbox = steerMailbox
         let loop = loop
         let task = Task {
-            await loop.run(
+            var result = await loop.run(
                 session: session,
                 userRequest: userRequest,
                 userImageAttachments: userImageAttachments,
@@ -2294,27 +2396,84 @@ actor AgentRuntime {
                 hookResultHandler: hookResultHandler,
                 hookFailureHandler: hookFailureHandler,
                 cancellationController: cancellationController,
+                steerMailbox: steerMailbox,
                 eventHandler: eventHandler
             )
+            let undelivered = await steerMailbox.closeAndDrain()
+            if !undelivered.isEmpty {
+                let redactor = SecretRedactor()
+                for text in undelivered {
+                    result.messages.append(AgentMessage(
+                        role: .user,
+                        content: redactor.redact(text),
+                        name: "luma-agent-steer"
+                    ))
+                }
+                result.updatedAt = Date()
+                if result.state == .completed {
+                    result.state = .stepLimit
+                    result.lastError = "Steer 已送入，但目前執行沒有剩餘模型回合；請繼續 Task。"
+                    result.steps.append(AgentStep(
+                        kind: .failed,
+                        title: "Steer 待續跑",
+                        detail: result.lastError,
+                        status: .failed,
+                        completedAt: Date()
+                    ))
+                }
+                await eventHandler(.sessionUpdated(result))
+            }
+            return result
         }
         activeTask = task
+        didStartRun = true
         let result = await task.value
         if activeRunID == runID {
             activeTask = nil
             activeRunID = nil
             activeCancellationController = nil
+            activeSteerMailbox = nil
         }
         return result
     }
 
+    /// Accept a text instruction for the first run's preflight or an active
+    /// run's next model turn. This never cancels an in-flight operation, and a
+    /// mailbox is never carried over into a later run.
+    func steer(_ text: String) async -> Bool {
+        await steerWithPhase(text) != .rejected
+    }
+
+    func steerWithPhase(_ text: String) async -> AgentSteerAcceptance {
+        if activeTask != nil, let activeSteerMailbox {
+            return await activeSteerMailbox.enqueue(text) ? .active : .rejected
+        }
+        guard let preRunSteerMailbox else { return .rejected }
+        let accepted = await preRunSteerMailbox.enqueue(text)
+        // Enqueue is an actor hop. Stop/Pause may close the pre-run mailbox
+        // while this call is suspended; in that case leave the draft intact.
+        guard accepted else { return .rejected }
+        if activeTask != nil, activeSteerMailbox === preRunSteerMailbox {
+            return .active
+        }
+        return self.preRunSteerMailbox === preRunSteerMailbox ? .preRun : .rejected
+    }
+
+    func hasStartedRun() -> Bool { didStartRun }
+
     @discardableResult
     func pause() async -> AgentSession? {
         guard let task = activeTask else {
+            let pendingPreRun = preRunSteerMailbox
+            preRunSteerMailbox = nil
             activeRunID = nil
             activeCancellationController = nil
+            activeSteerMailbox = nil
+            await pendingPreRun?.close()
             return nil
         }
         let runID = activeRunID
+        await activeSteerMailbox?.close()
         activeCancellationController?.set(.pause)
         task.cancel()
         let result = await task.value
@@ -2322,6 +2481,7 @@ actor AgentRuntime {
             activeTask = nil
             activeRunID = nil
             activeCancellationController = nil
+            activeSteerMailbox = nil
         }
         return result
     }
@@ -2329,11 +2489,16 @@ actor AgentRuntime {
     @discardableResult
     func stop() async -> AgentSession? {
         guard let task = activeTask else {
+            let pendingPreRun = preRunSteerMailbox
+            preRunSteerMailbox = nil
             activeRunID = nil
             activeCancellationController = nil
+            activeSteerMailbox = nil
+            await pendingPreRun?.close()
             return nil
         }
         let runID = activeRunID
+        await activeSteerMailbox?.close()
         activeCancellationController?.set(.stop)
         task.cancel()
         let result = await task.value
@@ -2341,6 +2506,7 @@ actor AgentRuntime {
             activeTask = nil
             activeRunID = nil
             activeCancellationController = nil
+            activeSteerMailbox = nil
         }
         return result
     }

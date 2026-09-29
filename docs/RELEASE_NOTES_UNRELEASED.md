@@ -1,16 +1,59 @@
 # Luma Chat — Unreleased development notes
 
-Checkpoint date: 2026-09-25
+Checkpoint date: 2026-09-29
 
-Status: the Phase A–H development implementation and combined development
-release gate are complete. This is not a production release: Developer ID,
+Status: the Phase A–H development implementation and its historical combined
+development gate are complete. The current 1.4.2 development candidate passed
+745 Swift tests on 2026-09-27; the follow-up changes below require their own
+validation. This is not a production release: Developer ID,
 notarization/stapling, production update credentials, live external acceptance,
 and the qualifying long-duration soak remain external gates.
 
-The current development-gate artifact is `LumaChat-1.4.1-arm64.zip`, SHA-256
+The previous combined Phase A–H development-gate artifact is `LumaChat-1.4.1-arm64.zip`, SHA-256
 `d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`.
 It is ad-hoc signed. Phase B's earlier evidence remains recorded in
 [`RELEASE_NOTES_1.4.0.md`](RELEASE_NOTES_1.4.0.md).
+
+## 2026-09-29 current-Codex gap follow-up
+
+- Added text Steer for an active Agent run. Accepted messages enter a bounded
+  process-memory mailbox and join at the next model-turn boundary without
+  interrupting a provider stream or tool call. The default composer action is
+  Steer; Settings can make Queue primary. `⌘↩` uses the primary action and
+  `⌘⇧↩` uses the alternate action while a run is active. Steer acceptance is
+  not crash-durable until the resulting session snapshot has been persisted;
+  a failed or cancelled preflight returns accepted text to the in-process Task
+  draft.
+- Added a per-Task durable text Queue for prompts submitted during an active
+  run. Entries can be edited/reordered/removed and dispatch in FIFO order after
+  a successful durable turn. Claimed entries stay visible for explicit
+  reconciliation after an uncertain crash rather than being replayed
+  automatically. New image attachments cannot currently be added to Steer or
+  Queue while a run is active.
+- Forks now inherit a bounded, redacted text history: at most the latest 80
+  user/assistant source messages and 64 KiB. Tool calls/results, reasoning,
+  images, approvals, and live Runtime state are stripped from the child.
+- Added a Side chat sheet for a separate, ephemeral text discussion of a Task.
+  It receives only a bounded, redacted snapshot of the parent transcript and
+  has no Agent tools, workspace lease, approval, file inspection, image input,
+  or persistent transcript. Native UI acceptance remains pending.
+- Added managed-worktree maintenance in the desktop UI: inspection, safe
+  clean/unleased cleanup, repair, and failure reporting using the existing
+  registry/lease service.
+- Added MCP connection status and diagnostics, Reconnect, and Refresh Discovery.
+  Refresh atomically replaces registered tools and retains the previous
+  successful catalog on transient discovery failure.
+- Added a durable App Server mutation journal with pending/completed outcomes
+  and a worst-case byte ceiling for live SSE buffering. Uncertain mutations
+  require inspecting the Task before resubmission.
+
+The current source passed 778 Swift tests (one environment skip, zero failures),
+17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. Package and
+native UI evidence for these changes remain pending. Opt-in local memory,
+hosted Cloud/secure relay, persistent interactive remote PTY, voice, Claude
+Code/Cursor import, and external integration acceptance remain open. The 1.4.1
+ZIP hash above is historical and does not identify a package containing these
+changes.
 
 ## Phase C — Subagents
 

@@ -31,6 +31,7 @@ final class AgentTaskForkBuilderTests: XCTestCase {
             AgentMessage(
                 role: .assistant,
                 content: "I inspected the repository.",
+                reasoningSummary: "private reasoning summary",
                 toolCalls: [AgentToolCall(name: "read_file", arguments: .object([:]))]
             ),
             AgentMessage(role: .tool, content: "private execution result", toolCallID: "call-1")
@@ -77,11 +78,19 @@ final class AgentTaskForkBuilderTests: XCTestCase {
         XCTAssertTrue(fork.steps.isEmpty)
         XCTAssertTrue(fork.changes.isEmpty)
         XCTAssertEqual(fork.permissionAllowances, [])
-        XCTAssertEqual(fork.messages.count, 1)
+        XCTAssertEqual(fork.messages.count, 3)
         XCTAssertEqual(fork.messages[0].role, .system)
-        XCTAssertTrue(fork.messages[0].content.contains("Preserve this requirement"))
-        XCTAssertFalse(fork.messages[0].content.contains("private execution result"))
-        XCTAssertTrue(fork.messages[0].toolCalls.isEmpty)
+        XCTAssertEqual(fork.messages[1].role, .user)
+        XCTAssertEqual(fork.messages[1].content, "Preserve this requirement")
+        XCTAssertEqual(fork.messages[2].role, .assistant)
+        XCTAssertEqual(fork.messages[2].content, "I inspected the repository.")
+        XCTAssertTrue(fork.messages.allSatisfy(\.toolCalls.isEmpty))
+        XCTAssertTrue(fork.messages.allSatisfy { $0.toolCallID == nil })
+        XCTAssertTrue(fork.messages.allSatisfy { $0.reasoningSummary == nil })
+        XCTAssertTrue(fork.messages.allSatisfy { $0.imageAttachments.isEmpty })
+        XCTAssertFalse(fork.messages.map(\.content).joined().contains("private execution result"))
+        XCTAssertNotEqual(fork.messages[1].id, source.messages[0].id)
+        XCTAssertNotEqual(fork.messages[2].id, source.messages[1].id)
         XCTAssertEqual(fork.todos.map(\.title), ["Keep me"])
         XCTAssertNotEqual(fork.todos[0].id, source.todos[0].id)
         XCTAssertEqual(fork.goal?.objective, source.goal?.objective)
@@ -90,7 +99,7 @@ final class AgentTaskForkBuilderTests: XCTestCase {
         XCTAssertEqual(fork.createdAt, now)
     }
 
-    func testForkSummaryIsBoundedOnAUnicodeBoundary() throws {
+    func testForkHistoryIsBoundedOnAUnicodeBoundary() throws {
         let workspace = AgentWorkspace(
             name: "repo",
             rootPath: "/repo",
@@ -104,7 +113,7 @@ final class AgentTaskForkBuilderTests: XCTestCase {
         source.messages = [
             AgentMessage(
                 role: .user,
-                content: String(repeating: "界", count: AgentTaskForkBuilder.maximumSummaryBytes)
+                content: String(repeating: "界", count: AgentTaskForkBuilder.maximumHistoryBytes)
             )
         ]
 
@@ -116,12 +125,132 @@ final class AgentTaskForkBuilderTests: XCTestCase {
             localProjectFolderID: nil
         )
 
-        let content = try XCTUnwrap(fork.messages.first?.content)
+        XCTAssertEqual(fork.messages.count, 2)
         XCTAssertLessThanOrEqual(
-            content.utf8.count,
-            AgentTaskForkBuilder.maximumSummaryBytes + 64
+            fork.messages.reduce(0) { $0 + $1.content.utf8.count },
+            AgentTaskForkBuilder.maximumHistoryBytes
         )
-        XCTAssertTrue(content.hasSuffix("[fork context truncated]"))
+        XCTAssertTrue(fork.messages[1].content.hasSuffix("[fork message truncated]"))
+        XCTAssertTrue(fork.messages[1].content.contains("界"))
+    }
+
+    func testForkKeepsRecentTurnsInOrderAndDropsUnsafePayloads() throws {
+        let workspace = AgentWorkspace(
+            name: "repo", rootPath: "/repo", allowedPaths: [], bookmarkData: nil,
+            gitRepository: true, branch: "main"
+        )
+        var source = AgentSession(mode: .agent)
+        source.workspace = workspace
+        let attachment = try AgentImageAttachmentReference(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            name: "screen.png",
+            relativePath: "Attachments/00000000-0000-0000-0000-000000000001.png",
+            mimeType: "image/png",
+            byteCount: 4,
+            pixelWidth: 1,
+            pixelHeight: 1,
+            sha256: String(repeating: "a", count: 64)
+        )
+        var first = AgentMessage(role: .user, content: "Inspect this screenshot")
+        first.imageAttachments = [attachment]
+        var imageOnly = AgentMessage(role: .user)
+        imageOnly.imageAttachments = [attachment]
+        let second = AgentMessage(
+            role: .assistant,
+            content: "I can inspect the code next.",
+            toolCalls: [AgentToolCall(name: "run_command", arguments: .object([
+                "token": .string("secret-value")
+            ]))]
+        )
+        source.messages = [
+            first,
+            second,
+            AgentMessage(role: .tool, content: "tool result secret-value", toolCallID: second.toolCalls[0].id),
+            AgentMessage(role: .user, content: "Next, test the change."),
+            imageOnly
+        ]
+
+        let fork = try AgentTaskForkBuilder().makeFork(
+            from: source,
+            workspace: workspace,
+            executionLocation: .local,
+            localWorkspace: nil,
+            localProjectFolderID: nil
+        )
+
+        XCTAssertEqual(fork.messages.map(\.role), [.system, .user, .assistant, .user, .user])
+        XCTAssertEqual(fork.messages.dropFirst().map(\.content), [
+            "Inspect this screenshot\n[Parent image attachment omitted; reattach it if needed.]",
+            "I can inspect the code next.",
+            "Next, test the change.",
+            "[Parent image attachment omitted; reattach it if needed.]"
+        ])
+        XCTAssertTrue(fork.messages[0].content.contains("image attachments were not carried"))
+        XCTAssertTrue(fork.messages.allSatisfy { $0.imageAttachments.isEmpty && $0.toolCalls.isEmpty })
+        XCTAssertFalse(fork.messages.map(\.content).joined().contains("secret-value"))
+        XCTAssertFalse(fork.messages.map(\.content).joined().contains(attachment.relativePath))
+        XCTAssertEqual(source.messages[0].imageAttachments, [attachment])
+    }
+
+    func testForkRedactsSensitiveTextAndRetainsNewestBoundedConversation() throws {
+        let workspace = AgentWorkspace(
+            name: "repo", rootPath: "/repo", allowedPaths: [], bookmarkData: nil,
+            gitRepository: true, branch: "main"
+        )
+        var source = AgentSession(mode: .agent)
+        source.workspace = workspace
+        source.title = "Fix password=super-secret-value"
+        source.goal = try AgentGoal(objective: "Use token=super-secret-value safely")
+        source.todos = [AgentTodo(title: "Check api_key=super-secret-value")]
+        source.messages = (0..<AgentTaskForkBuilder.maximumSourceMessages + 5).map { index in
+            AgentMessage(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "Turn \(index): password=super-secret-value"
+            )
+        }
+
+        let fork = try AgentTaskForkBuilder().makeFork(
+            from: source,
+            workspace: workspace,
+            executionLocation: .local,
+            localWorkspace: nil,
+            localProjectFolderID: nil
+        )
+
+        XCTAssertEqual(fork.messages.count, AgentTaskForkBuilder.maximumSourceMessages + 1)
+        XCTAssertTrue(fork.messages[1].content.contains("Turn 5"))
+        XCTAssertTrue(fork.messages.last?.content.contains("Turn 84") == true)
+        XCTAssertFalse(fork.messages.map(\.content).joined().contains("super-secret-value"))
+        XCTAssertFalse(fork.title.contains("super-secret-value"))
+        XCTAssertFalse(fork.goal?.objective.contains("super-secret-value") == true)
+        XCTAssertFalse(fork.todos[0].title.contains("super-secret-value"))
+    }
+
+    func testToolOnlyAssistantEnvelopesDoNotCrowdOutConversation() throws {
+        let workspace = AgentWorkspace(
+            name: "repo", rootPath: "/repo", allowedPaths: [], bookmarkData: nil,
+            gitRepository: true, branch: "main"
+        )
+        var source = AgentSession(mode: .agent)
+        source.workspace = workspace
+        source.messages = [AgentMessage(role: .user, content: "Original request")]
+            + (0..<AgentTaskForkBuilder.maximumSourceMessages + 5).map { _ in
+                AgentMessage(role: .assistant, toolCalls: [AgentToolCall(name: "read_file")])
+            }
+            + [AgentMessage(role: .user, content: "Latest request")]
+
+        let fork = try AgentTaskForkBuilder().makeFork(
+            from: source,
+            workspace: workspace,
+            executionLocation: .local,
+            localWorkspace: nil,
+            localProjectFolderID: nil
+        )
+
+        XCTAssertEqual(fork.messages.dropFirst().map(\.content), [
+            "Original request", "Latest request"
+        ])
+        XCTAssertTrue(fork.messages.allSatisfy(\.toolCalls.isEmpty))
     }
 
     func testPrePhaseASessionDecodesAsLocalExecution() throws {

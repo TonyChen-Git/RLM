@@ -33,6 +33,8 @@ actor LumaChatHeadlessEventBroker {
     private let maximumRetainedEvents: Int
     private let maximumRetainedBytes: Int
     private let maximumEventBytes: Int
+    private let maximumLiveBufferedBytes: Int
+    private let maximumLiveBufferedEvents: Int
     private let maximumSubscribersPerTask: Int
     private var channels: [UUID: TaskChannel] = [:]
 
@@ -40,11 +42,22 @@ actor LumaChatHeadlessEventBroker {
         maximumRetainedEvents: Int = 512,
         maximumRetainedBytes: Int = 16_777_216,
         maximumEventBytes: Int = LumaChatHeadlessServerConfiguration.defaultMaximumEventBytes,
+        maximumLiveBufferedBytes: Int = 16_777_216,
         maximumSubscribersPerTask: Int = 32
     ) {
         self.maximumRetainedEvents = max(1, min(maximumRetainedEvents, 4_096))
         self.maximumRetainedBytes = max(1_024, min(maximumRetainedBytes, 67_108_864))
-        self.maximumEventBytes = max(1_024, min(maximumEventBytes, 1_048_576))
+        let eventLimit = max(1_024, min(maximumEventBytes, 1_048_576))
+        let liveLimit = max(eventLimit, min(maximumLiveBufferedBytes, 67_108_864))
+        self.maximumEventBytes = eventLimit
+        self.maximumLiveBufferedBytes = liveLimit
+        // AsyncThrowingStream exposes a count-based buffer but no dequeue byte
+        // accounting. Each event is bounded above, so this count guarantees a
+        // hard aggregate byte ceiling even for a stalled subscriber.
+        self.maximumLiveBufferedEvents = max(
+            1,
+            min(256, liveLimit / eventLimit)
+        )
         self.maximumSubscribersPerTask = max(1, min(maximumSubscribersPerTask, 256))
     }
 
@@ -123,7 +136,7 @@ actor LumaChatHeadlessEventBroker {
             .map(\.event)
             .filter { $0.sequence > cursor }
         let pair = AsyncThrowingStream<LumaChatTaskEvent, Error>.makeStream(
-            bufferingPolicy: .bufferingOldest(256)
+            bufferingPolicy: .bufferingOldest(maximumLiveBufferedEvents)
         )
         for event in replay {
             guard case .enqueued = pair.continuation.yield(event) else {

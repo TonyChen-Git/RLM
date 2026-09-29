@@ -200,13 +200,14 @@ struct MCPSettingsPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            connectionHealth
             discovery
 
             Spacer(minLength: 0)
             HStack {
                 if selectedServerID != nil {
                     Button("刪除", role: .destructive) { pendingDeleteID = selectedServerID }
-                    connectionButton
+                    connectionControls
                 }
                 Spacer()
                 Button("儲存 Server") {
@@ -232,10 +233,11 @@ struct MCPSettingsPane: View {
                 "Permission",
                 value: server.permissionLevel?.rawValue.uppercased() ?? "AUTO"
             )
+            connectionHealth
             discovery
             Spacer(minLength: 0)
             HStack {
-                connectionButton
+                connectionControls
                 Spacer()
                 Label("請在 Extensions 頁面管理", systemImage: "lock")
                     .font(.caption)
@@ -243,6 +245,39 @@ struct MCPSettingsPane: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var connectionHealth: some View {
+        if let id = selectedServerID {
+            let snapshot = agentViewModel.mcpSnapshot(serverID: id)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(stateColor(id))
+                        .frame(width: 8, height: 8)
+                    Text("連線狀態：\(healthLabel(for: snapshot))")
+                        .font(.caption.weight(.semibold))
+                    if agentViewModel.mcpBusyServerIDs.contains(id) {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                if let info = snapshot?.serverInfo {
+                    Text("Server：\(info.name) \(info.version) · Protocol：\(snapshot?.negotiatedProtocolVersion ?? "未知")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let error = snapshot?.lastError, !error.isEmpty {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(9)
+            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 
     @ViewBuilder
@@ -258,9 +293,6 @@ struct MCPSettingsPane: View {
                     }
                     ForEach(snapshot.prompts, id: \.name) { prompt in
                         Label(prompt.title ?? prompt.name, systemImage: "text.bubble")
-                    }
-                    if let error = snapshot.lastError {
-                        Text(error).foregroundStyle(.orange)
                     }
                 }
                 .font(.caption)
@@ -288,16 +320,28 @@ struct MCPSettingsPane: View {
     }
 
     @ViewBuilder
-    private var connectionButton: some View {
+    private var connectionControls: some View {
         if let id = selectedServerID {
             let connected = agentViewModel.mcpSnapshot(serverID: id)?.state == .connected
+            let busy = agentViewModel.mcpBusyServerIDs.contains(id)
+            let enabled = agentViewModel.mcpServers.first(where: { $0.id == id })?.enabled == true
             Button(connected ? "Disconnect" : "Connect") {
                 Task {
                     if connected { await agentViewModel.disconnectMCP(serverID: id) }
                     else { await agentViewModel.connectMCP(serverID: id) }
                 }
             }
-            .disabled(agentViewModel.mcpBusyServerIDs.contains(id))
+            .disabled(busy || (!connected && !enabled))
+            if connected {
+                Button("Reconnect") {
+                    Task { await agentViewModel.reconnectMCP(serverID: id) }
+                }
+                .disabled(busy)
+                Button("Refresh Discovery") {
+                    Task { await agentViewModel.refreshMCPDiscovery(serverID: id) }
+                }
+                .disabled(busy)
+            }
         }
     }
 
@@ -347,18 +391,26 @@ struct MCPSettingsPane: View {
     }
 
     private func stateColor(_ id: UUID) -> Color {
-        switch agentViewModel.mcpSnapshot(serverID: id)?.state {
-        case .connected: .green
-        case .connecting: LumaTheme.accent
-        case .failed: .orange
-        case .disconnected, .none: .secondary.opacity(0.55)
+        let snapshot = agentViewModel.mcpSnapshot(serverID: id)
+        switch snapshot?.state {
+        case .connected: return snapshot?.lastError == nil ? Color.green : Color.orange
+        case .connecting: return LumaTheme.accent
+        case .failed: return Color.orange
+        case .disconnected, .none: return Color.secondary.opacity(0.55)
         }
     }
 
     private func serverSubtitle(_ server: MCPServerConfiguration) -> String {
-        let state = agentViewModel.mcpSnapshot(serverID: server.id)?.state.rawValue.capitalized ?? "Disconnected"
-        let tools = agentViewModel.mcpSnapshot(serverID: server.id)?.tools.count ?? 0
+        let snapshot = agentViewModel.mcpSnapshot(serverID: server.id)
+        let state = healthLabel(for: snapshot)
+        let tools = snapshot?.tools.count ?? 0
         return tools > 0 ? "\(state) · \(tools) tools" : state
+    }
+
+    private func healthLabel(for snapshot: MCPServerSnapshot?) -> String {
+        guard let snapshot else { return "Disconnected" }
+        if snapshot.state == .connected, snapshot.lastError != nil { return "Connected · Warning" }
+        return snapshot.state.rawValue.capitalized
     }
 }
 

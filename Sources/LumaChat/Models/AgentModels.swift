@@ -270,8 +270,22 @@ enum AgentBrowserSettingsLimits {
     }
 }
 
+enum AgentFollowUpBehavior: String, Codable, CaseIterable, Identifiable, Sendable {
+    case steer
+    case queue
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .steer: "Steer 目前執行"
+        case .queue: "排隊到下一次執行"
+        }
+    }
+}
+
 struct AgentSettings: Codable, Equatable, Sendable {
     var defaultMode: AppMode = .chat
+    var followUpBehavior: AgentFollowUpBehavior = .steer
     var permissionMode: AgentPermissionMode = .autoApproveSafe
     var maxSteps = 100
     var commandTimeout = 120.0
@@ -292,7 +306,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     var pullRequestProvider: PullRequestProviderConfiguration = .github
 
     private enum CodingKeys: String, CodingKey {
-        case defaultMode, permissionMode, maxSteps, commandTimeout, autoRunTests
+        case defaultMode, followUpBehavior, permissionMode, maxSteps, commandTimeout, autoRunTests
         case autoContextCompression, gitCheckpoint, networkAccess, visionMode
         case browserEnabled, browserProfileMode, browserPersistentProfileName
         case browserExistingDebugEndpoint
@@ -307,6 +321,9 @@ struct AgentSettings: Codable, Equatable, Sendable {
         let defaults = AgentSettings()
         let container = try decoder.container(keyedBy: CodingKeys.self)
         defaultMode = try container.decodeIfPresent(AppMode.self, forKey: .defaultMode) ?? defaults.defaultMode
+        followUpBehavior = (try? container.decodeIfPresent(
+            AgentFollowUpBehavior.self, forKey: .followUpBehavior
+        )) ?? defaults.followUpBehavior
         permissionMode = try container.decodeIfPresent(AgentPermissionMode.self, forKey: .permissionMode) ?? defaults.permissionMode
         maxSteps = max(1, try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? defaults.maxSteps)
         commandTimeout = max(1, try container.decodeIfPresent(Double.self, forKey: .commandTimeout) ?? defaults.commandTimeout)

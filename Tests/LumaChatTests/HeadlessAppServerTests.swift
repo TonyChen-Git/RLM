@@ -281,6 +281,160 @@ final class HeadlessAppServerTests: XCTestCase {
         XCTAssertFalse(String(decoding: response.body, as: UTF8.self).contains("secret"))
     }
 
+    func testMutationJournalReplaysCompletedResponseAfterRestart() throws {
+        let directory = mutationJournalTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mutations.json")
+        let requestID = UUID()
+        let taskID = UUID()
+        let signature = Data(repeating: 0xA5, count: 32)
+        let accepted = LumaChatAcceptedOperation(
+            requestID: requestID,
+            taskID: taskID,
+            status: .running
+        )
+        let createID = UUID()
+        let createSignature = Data(repeating: 0xB6, count: 32)
+        let created = LumaChatTaskSnapshot(
+            id: taskID,
+            title: "Created task",
+            mode: .agent,
+            status: .idle,
+            backendID: "ollama/local",
+            modelID: "model",
+            workspacePath: "/Volumes/Work/Repository",
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        var beforeRestart = LumaChatHeadlessMutationJournal(fileURL: file)
+        try beforeRestart.load()
+        XCTAssertNil(try beforeRestart.reserve(id: requestID, signature: signature))
+        try beforeRestart.complete(
+            id: requestID,
+            signature: signature,
+            response: .operation(accepted)
+        )
+        XCTAssertNil(try beforeRestart.reserve(id: createID, signature: createSignature))
+        try beforeRestart.complete(
+            id: createID,
+            signature: createSignature,
+            response: .task(created)
+        )
+
+        var afterRestart = LumaChatHeadlessMutationJournal(fileURL: file)
+        try afterRestart.load()
+        XCTAssertEqual(
+            try afterRestart.replay(id: requestID, signature: signature),
+            .operation(accepted)
+        )
+        XCTAssertEqual(
+            try afterRestart.reserve(id: requestID, signature: signature),
+            .operation(accepted)
+        )
+        XCTAssertEqual(
+            try afterRestart.replay(id: createID, signature: createSignature),
+            .task(created)
+        )
+        XCTAssertThrowsError(try afterRestart.replay(
+            id: requestID,
+            signature: Data(repeating: 0x5A, count: 32)
+        )) { error in
+            XCTAssertEqual((error as? LumaChatHeadlessRuntimeFailure)?.code, .conflict)
+        }
+    }
+
+    func testMutationJournalRefusesAmbiguousReplayAfterRestart() throws {
+        let directory = mutationJournalTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mutations.json")
+        let requestID = UUID()
+        let signature = Data(repeating: 0x17, count: 32)
+
+        var beforeRestart = LumaChatHeadlessMutationJournal(fileURL: file)
+        try beforeRestart.load()
+        XCTAssertNil(try beforeRestart.reserve(id: requestID, signature: signature))
+
+        var afterRestart = LumaChatHeadlessMutationJournal(fileURL: file)
+        try afterRestart.load()
+        XCTAssertThrowsError(try afterRestart.reserve(id: requestID, signature: signature)) { error in
+            let failure = error as? LumaChatHeadlessRuntimeFailure
+            XCTAssertEqual(failure?.code, .conflict)
+            XCTAssertTrue(failure?.message.contains("uncertain") == true)
+        }
+        XCTAssertThrowsError(try afterRestart.reserve(
+            id: requestID,
+            signature: Data(repeating: 0x18, count: 32)
+        )) { error in
+            XCTAssertEqual((error as? LumaChatHeadlessRuntimeFailure)?.code, .conflict)
+        }
+    }
+
+    func testMutationJournalCorruptionFailsClosed() throws {
+        let directory = mutationJournalTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("mutations.json")
+        try Data("invalid journal".utf8).write(to: file)
+
+        var journal = LumaChatHeadlessMutationJournal(fileURL: file)
+        XCTAssertThrowsError(try journal.load())
+    }
+
+    func testMutationJournalReconcilesPostRenameReservationFailure() throws {
+        let directory = mutationJournalTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mutations.json")
+        let requestID = UUID()
+        let signature = Data(repeating: 0x31, count: 32)
+        var writes = 0
+        var journal = LumaChatHeadlessMutationJournal(fileURL: file) { data, destination in
+            try AtomicFileWriter.write(data, to: destination)
+            writes += 1
+            if writes == 2 { throw CocoaError(.fileWriteUnknown) }
+        }
+        try journal.load() // Durable empty predecessor.
+        XCTAssertThrowsError(try journal.reserve(id: requestID, signature: signature))
+        XCTAssertThrowsError(try journal.replay(id: requestID, signature: signature)) { error in
+            XCTAssertEqual((error as? LumaChatHeadlessRuntimeFailure)?.code, .conflict)
+        }
+        var restarted = LumaChatHeadlessMutationJournal(fileURL: file)
+        try restarted.load()
+        XCTAssertThrowsError(try restarted.reserve(id: requestID, signature: signature))
+    }
+
+    func testMutationJournalReconcilesPostRenameCompletionFailure() throws {
+        let directory = mutationJournalTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mutations.json")
+        let requestID = UUID()
+        let signature = Data(repeating: 0x42, count: 32)
+        let accepted = LumaChatAcceptedOperation(
+            requestID: requestID,
+            taskID: UUID(),
+            status: .running
+        )
+        var before = LumaChatHeadlessMutationJournal(fileURL: file)
+        try before.load()
+        XCTAssertNil(try before.reserve(id: requestID, signature: signature))
+
+        var journal = LumaChatHeadlessMutationJournal(fileURL: file) { data, destination in
+            try AtomicFileWriter.write(data, to: destination)
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try journal.load()
+        XCTAssertThrowsError(try journal.complete(
+            id: requestID,
+            signature: signature,
+            response: .operation(accepted)
+        ))
+        XCTAssertEqual(try journal.replay(id: requestID, signature: signature), .operation(accepted))
+
+        var restarted = LumaChatHeadlessMutationJournal(fileURL: file)
+        try restarted.load()
+        XCTAssertEqual(try restarted.replay(id: requestID, signature: signature), .operation(accepted))
+    }
+
     func testSSEBrokerReplaysExclusiveCursorAndRejectsExpiredCursor() async throws {
         let runtime = FakeHeadlessRuntime()
         let taskID = runtime.snapshot.id
@@ -328,6 +482,44 @@ final class HeadlessAppServerTests: XCTestCase {
         XCTAssertEqual(next.sequence, 2)
     }
 
+    func testSSELiveBufferUsesAggregateByteCeiling() async throws {
+        let broker = LumaChatHeadlessEventBroker(
+            maximumRetainedEvents: 10,
+            maximumRetainedBytes: 16_384,
+            maximumEventBytes: 1_024,
+            maximumLiveBufferedBytes: 2_048
+        )
+        let taskID = UUID()
+        let stream = try await broker.stream(taskID: taskID, afterSequence: nil)
+        for _ in 0..<3 {
+            _ = try await broker.publish(taskID: taskID, kind: .step, payload: .null)
+        }
+        var iterator = stream.makeAsyncIterator()
+        let first = try await iterator.next()
+        let second = try await iterator.next()
+        XCTAssertEqual(first?.sequence, 1)
+        XCTAssertEqual(second?.sequence, 2)
+        do {
+            _ = try await iterator.next()
+            XCTFail("Expected bounded live buffer failure")
+        } catch let error as LumaChatHeadlessRuntimeFailure {
+            XCTAssertEqual(error.code, .eventCursorExpired)
+        }
+
+        let replay = try await broker.stream(taskID: taskID, afterSequence: 0)
+        var replayIterator = replay.makeAsyncIterator()
+        let replayFirst = try await replayIterator.next()
+        let replaySecond = try await replayIterator.next()
+        XCTAssertEqual(replayFirst?.sequence, 1)
+        XCTAssertEqual(replaySecond?.sequence, 2)
+        do {
+            _ = try await replayIterator.next()
+            XCTFail("Expected bounded replay buffer failure")
+        } catch let error as LumaChatHeadlessRuntimeFailure {
+            XCTAssertEqual(error.code, .eventCursorExpired)
+        }
+    }
+
     func testLateSSEEventDoesNotReopenTerminalStream() async throws {
         let broker = LumaChatHeadlessEventBroker()
         let taskID = UUID()
@@ -352,6 +544,12 @@ final class HeadlessAppServerTests: XCTestCase {
             runtime: runtime,
             configuration: try LumaChatHeadlessServerConfiguration(bearerToken: token)
         )
+    }
+
+    private func mutationJournalTestDirectory() -> URL {
+        AppPaths.projectTemporaryRoot
+            .appendingPathComponent("headless-mutation-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 
     private func authorizedRequest(

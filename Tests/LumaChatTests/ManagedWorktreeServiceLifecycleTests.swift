@@ -228,6 +228,38 @@ final class ManagedWorktreeServiceLifecycleTests: XCTestCase {
         }
     }
 
+    func testRepairPreservesLeasedPendingRemovalForTaskRecovery() async throws {
+        let fixture = try makeFixture("leased-pending-removal")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let service = makeService(fixture)
+        let created = try await service.create(
+            repositoryRoot: fixture.repository,
+            taskID: UUID(),
+            options: ManagedWorktreeCreateOptions(detached: true)
+        )
+        let registry = WorktreeRegistry(
+            registryFile: fixture.registryFile,
+            managedRoot: fixture.managedRoot
+        )
+        var pending = created
+        pending.state = .removalPending
+        try await registry.save(pending)
+
+        let report = try await service.repair()
+
+        XCTAssertEqual(report.skippedIDs, [created.id])
+        XCTAssertTrue(report.removedIDs.isEmpty)
+        XCTAssertTrue(report.failures.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created.worktreePath))
+        let records = try await service.list()
+        let retained = try XCTUnwrap(records.first)
+        XCTAssertEqual(retained.state, .removalPending)
+        XCTAssertEqual(retained.lease, created.lease)
+
+        // An exact transaction owner can still explicitly complete removal.
+        try await service.remove(id: created.id, lease: created.lease, force: true)
+    }
+
     private struct Fixture {
         var root: URL
         var repository: URL

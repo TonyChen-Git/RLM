@@ -9,10 +9,14 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-27）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
-> `1.4.2` build `9` 包含 Chat/模型參數 UI 修正與封裝版 UI smoke 的資料隔離。
-> 已完成 745 項 Swift 測試（1 項環境性 skip、0 failures）、optimized arm64
+> **目前狀態（2026-09-29）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
+> 2026-09-27 的 `1.4.2` build `9` 包含 Chat/模型參數 UI 修正與封裝版 UI smoke
+> 的資料隔離，當時完成 745 項 Swift 測試（1 項環境性 skip、0 failures）、optimized arm64
 > 封裝、ad-hoc signing、ZIP/archive、SBOM/provenance 驗證及修正後的直接安全稽核。
+> 9 月 29 日的新原始碼包含 Steer/Queue、Side chat、Fork context、worktree/MCP
+> 維護與 App Server 安全界線補強；本次原始碼另通過 778 項 Swift 測試
+> （1 項環境性 skip、0 failures）、VS Code 17/17 與 GitHub Action 14/14。
+> 這些變更尚未完成重新封裝與封裝版驗收。
 > 原生 UI 驗證尚未完成，這一版仍是 development candidate；沒有 Developer ID/
 > notarization/stapling、正式 update feed、live backend/SSH/real-browser
 > acceptance 或正式長時間 soak 證據。
@@ -21,8 +25,11 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 
 - **Chat 與 Agent**：獨立的 Classic Chat / Agent runtime、Plan mode、持久化
   Session、Resume、Context 管理、工具呼叫、Approval、Undo 與 Checkpoint。
+  執行中可送入下一模型回合的文字 Steer，或將後續文字訊息放入可編輯的持久 Queue；
+  Settings 決定預設動作，`⌘↩` 與 `⌘⇧↩` 分別使用預設及替代動作。
 - **Projects、Tasks、Goals**：專案目錄、工作資料夾綁定、背景任務、Goal 進度、
-  Task Fork、並行寫入隔離與 managed Git worktree lease。
+  Task Fork、並行寫入隔離與 managed Git worktree lease。Fork 只帶入最多 80 則、
+  64 KiB、經敏感資訊遮蔽的文字脈絡；Side chat 是無工具、暫時性的 Task 摘要問答。
 - **Terminal、Git、Review**：Task-owned Darwin `forkpty`、多 terminal pane、
   bounded scrollback、訊號/resize/reconnect、封閉式 Advanced Git API、五種
   Review source、hunk/file Stage/Unstage/Revert、inline comments、Review Task
@@ -37,7 +44,8 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
   writable isolation。
 - **Skills、Plugins、Hooks、OAuth**：bounded `SKILL.md` discovery、獨立 plugin
   manifest/lifecycle、permission-derived sandbox、host-only lifecycle hooks、
-  PKCE OAuth 與 Keychain-only token；plugin-owned MCP 與手動 MCP 分離。
+  PKCE OAuth 與 Keychain-only token；plugin-owned MCP 與手動 MCP 分離。MCP 設定可
+  查看連線診斷、Reconnect 與 Refresh Discovery。
 - **Browser 與 Computer Use 2.0**：Task-owned Chromium/CDP profile、tabs/
   navigation、DOM/Accessibility、screenshot、network/download metadata、
   Browser annotations，以及需 Screen Recording/Accessibility、capture-bound
@@ -46,7 +54,8 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
   automation、Task history、macOS notifications、受 known_hosts 與 Keychain
   約束的 SSH runner、16 個 bounded remote tools、Local/Worktree ↔ SSH handoff。
 - **CLI、App Server、SDK、整合**：共享同一個 headless runtime 的 `lumachat` CLI、
-  loopback-only authenticated App Server v1、Swift SDK、VS Code adapter、GitHub
+  loopback-only authenticated App Server v1、磁碟 mutation journal、有限的 SSE
+  live buffer、Swift SDK、VS Code adapter、GitHub
   Action 與內建 artifact workflow Skills（PDF、document、spreadsheet、
   presentation、image、visualization、site）。
 - **Release hardening**：project-local staging、archive/manifest/SBOM/provenance
@@ -157,9 +166,10 @@ team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確�
 ~/Library/Application Support/LumaChat/
 ├── settings.json                 # Chat/backend 與每模型 Custom profiles
 ├── Conversations/                # Classic Chat
-├── AgentSessions/                # Agent sessions/attachments
+├── AgentSessions/                # Agent sessions/attachments/queued follow-ups
 ├── AgentProjects/                # project catalog/settings
 ├── AgentWorktrees/               # registry 與 managed checkouts
+├── AppServer/mutations.json       # App Server mutation request journal
 ├── Extensions/                   # Skills/plugins/OAuth public metadata
 ├── Updates/                      # update preferences/state/journal
 └── Runtime/tmp/                  # packaged app runtime scratch
@@ -209,6 +219,10 @@ profile 與 browser authority 由 host 設定決定。Structured tools 優先於
 files 與不明確的第三方狀態 fail closed。
 
 App Server 僅允許 loopback bind、Bearer token、bounded JSON/SSE 與 monotonic replay。
+目前開發原始碼以磁碟 journal 保留 mutation request ID 與完成回應，支援重啟後在
+保留範圍內重播；未確定是否完成的操作會拒絕重試。Approval 決策接受後沒有
+durable 完成 receipt，同一 request ID 重送會得到 409 uncertain。SSE live queue
+以單筆事件上限推導保守的累計位元組上限，過慢的 subscriber 會收到明確失效結果。
 VS Code/GitHub adapters 不包含 provider client，也沒有 cloud fallback。Remote PTY
 目前是 one-shot；persistent remote terminal、secure relay、SSH→SSH 與 hosted
 runner 仍是明確的未實作 seam。
@@ -242,10 +256,18 @@ docs/                           Architecture, roadmap, audit and release notes
   ad-hoc build；不能把 development artifact 當成可自動更新的正式版本。
 - Remote runner 需要使用者管理的 SSH host、strict `known_hosts` 與 Keychain
   credential；沒有安全 relay 或雲端 fallback。
+- 執行中 Queue 只接受文字；Steer 也只接受文字，且送入後到下一次 session snapshot
+  持久化之前仍在記憶體，程序在這段時間崩潰可能遺失該訊息。Side chat 只有開啟時
+  的有界文字摘要，沒有檔案檢查、工具、影像或持久對話。
+- 仍缺 opt-in local memory、託管 Cloud/安全 relay、可重連的互動式 remote PTY、
+  語音互動，以及 Claude Code/Cursor 設定與對話匯入。
 - macOS native Computer Use 需要使用者主動授予 Screen Recording/Accessibility，
   並維持 capture-bound approval；它不是通用 GUI automation。
-- App Server mutation idempotency cache 是 process-bounded；durable Task 會保留，
-  但重啟後不承諾恢復舊的 response cache。
+- App Server 的 durable mutation journal 與 SSE live-buffer 位元組上限已在
+  開發原始碼補上；journal 只重播保留中的已完成回應，
+  舊的完成項目可能被逐出，未確定結果會 fail closed；這不是全面的 exactly-once
+  保證。SSE event replay 仍限目前 server process。
+  正式環境、長時間與外部 client 的驗收尚未完成。
 
 ## Further reading
 
