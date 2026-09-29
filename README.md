@@ -9,16 +9,17 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-29）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
-> `1.4.3` build `10` development prerelease 已完成封裝，納入 9 月 29 日的
-> Steer/Queue、Side chat、Fork context、worktree/MCP 維護與 App Server 安全界線
-> 補強，以及遠端 OpenAI-compatible 服務的 HTTP 連線支援（含本地網路 vLLM）。
-> 本版發行腳本通過 780 項 Swift 測試（1 項環境性 skip、0 failures）、
+> **目前狀態（2026-09-30）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
+> `1.4.4` build `11` development prerelease 已完成封裝，整併 1.4.3 的遠端
+> OpenAI-compatible HTTP 連線支援（含本地網路 vLLM）與本機記憶、
+> `CLAUDE.md`／`.cursorrules` 專案指令預覽匯入；同時包含先前的 Steer/Queue、
+> Side chat、Fork context、worktree/MCP 維護與 App Server 安全界線補強。
+> 本版發行腳本通過 792 項 Swift 測試（1 項環境性 skip、0 failures）、
 > archive/soak/security 契約測試、最佳化 arm64 建置、ad-hoc 簽章、ZIP 與安全稽核。
-> VS Code 17/17 與 GitHub Action 14/14 是 HTTP 修正前基礎原始碼的測試結果。
+> VS Code 17/17 與 GitHub Action 14/14 也在整併後的原始碼通過。
 > 原生 UI 與使用者 vLLM 的實際連線驗證仍待完成。此版本沒有 Developer ID/
 > notarization/stapling、正式 update feed、live SSH/real-browser acceptance 或
-> 正式長時間 soak 證據。詳見[1.4.3 版本說明](docs/RELEASE_NOTES_1.4.3.md)。
+> 正式長時間 soak 證據。詳見[1.4.4 版本說明](docs/RELEASE_NOTES_1.4.4.md)。
 
 ## 能力總覽
 
@@ -137,6 +138,13 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
+2026-09-29 的 `1.4.4` development package 通過 archive contract 7/7、
+soak contract 4/4、security-audit contract 3/3、Swift 792 tests（1 skip、
+0 failures）、VS Code 17/17 與 GitHub Action 14/14；完成 arm64 最佳化建置、
+ad-hoc 簽章、ZIP/解壓驗證、SBOM/provenance 與安全稽核。ZIP SHA-256 為
+`90a5658270adb9b032c8a0e87991a4499756460e643ca72e4bd562d8f7c0e859`。
+封裝版原生 UI smoke 與使用者 vLLM 主機連線仍待驗收。
+
 2026-09-27 的 `1.4.2` development package 驗證結果：archive contract 7/7、
 soak contract 4/4、security-audit contract 3/3、Swift 745 tests（1 skip、
 0 failures）；optimized arm64 build、ad-hoc signed app、ZIP/archive 驗證及
@@ -167,6 +175,7 @@ team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確�
 ├── Conversations/                # Classic Chat
 ├── AgentSessions/                # Agent sessions/attachments/queued follow-ups
 ├── AgentProjects/                # project catalog/settings
+├── AgentMemories/                # opt-in、Project-scoped reviewed memories
 ├── AgentWorktrees/               # registry 與 managed checkouts
 ├── AppServer/mutations.json       # App Server mutation request journal
 ├── Extensions/                   # Skills/plugins/OAuth public metadata
@@ -283,7 +292,8 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
-- [1.4.3 development prerelease notes](docs/RELEASE_NOTES_1.4.3.md)
+- [1.4.4 development prerelease notes](docs/RELEASE_NOTES_1.4.4.md)
+- [1.4.3 historical development prerelease notes](docs/RELEASE_NOTES_1.4.3.md)
 - [1.4.2 historical development candidate notes](docs/RELEASE_NOTES_1.4.2.md)
 - [1.4.1 historical development release notes](docs/RELEASE_NOTES_1.4.1.md)
 - [Full parity audit](docs/CODEX_FULL_PARITY_AUDIT.md)

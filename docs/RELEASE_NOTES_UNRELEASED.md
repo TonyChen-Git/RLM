@@ -3,9 +3,9 @@
 Checkpoint date: 2026-09-29
 
 Status: the Phase A–H development implementation and its historical combined
-development gate are complete. The 1.4.3 development prerelease packages the
+development gate are complete. The 1.4.4 development prerelease packages the
 follow-up changes below; its validation is recorded in
-[`RELEASE_NOTES_1.4.3.md`](RELEASE_NOTES_1.4.3.md). This is not a production release: Developer ID,
+[`RELEASE_NOTES_1.4.4.md`](RELEASE_NOTES_1.4.4.md). This is not a production release: Developer ID,
 notarization/stapling, production update credentials, live external acceptance,
 and the qualifying long-duration soak remain external gates.
 
@@ -66,9 +66,11 @@ persistent interactive remote PTY, voice, complete Claude Code/Cursor import,
 automatic memory suggestions and live external integration acceptance remain
 open. The 1.4.1 ZIP hash above is historical.
 
-The subsequent combined working tree passed 792 Swift tests with one environment
-skip and zero failures, including 12 focused local-memory/import tests. Its new
-desktop controls have not yet been validated in a packaged app.
+The 1.4.4 release script subsequently passed 792 Swift tests with one
+environment skip and zero failures, including 12 focused local-memory/import
+tests, then completed the optimized build, ad-hoc signing, archive checks,
+metadata generation and security audit. VS Code passed 17/17 and GitHub Action
+passed 14/14 after integration. Native packaged UI acceptance remains pending.
 
 ## Phase C — Subagents
 
