@@ -129,6 +129,7 @@ final class AgentViewModel: ObservableObject {
             }
             scheduleAgentLifecycleTransition()
             Task { [weak self] in await self?.refreshAvailableSkills() }
+            Task { [weak self] in await self?.refreshSelectedLocalMemories() }
         }
     }
     @Published var draft = "" {
@@ -144,6 +145,8 @@ final class AgentViewModel: ObservableObject {
     @Published var showArchivedProjects = false
     @Published private(set) var isMutatingProject = false
     @Published private(set) var projectSettings = AgentProjectSettings()
+    @Published private(set) var selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+    @Published private(set) var memoryPolicyMutationSessionIDs: Set<UUID> = []
     @Published private var projectDisplayNamesByCanonicalRoot: [String: String] = [:]
     @Published private(set) var isLoadingProjectSettings = false
     @Published private(set) var runningSessionIDs: Set<UUID> = []
@@ -212,6 +215,7 @@ final class AgentViewModel: ObservableObject {
     private let oauthConnectorStore: OAuthConnectorStore
     private let lifecycleHookLogStore: LifecycleHookLogStore
     private let classicSettingsStore: SettingsStore
+    private let localMemoryStore: AgentLocalMemoryStore
     private var notificationService: (any AgentNotificationServicing)?
     private var automationService: (any AutomationServicing)?
     private var remoteRunnerService: (any RemoteRunnerServicing)?
@@ -259,6 +263,7 @@ final class AgentViewModel: ObservableObject {
         taskForkBuilder: AgentTaskForkBuilder = AgentTaskForkBuilder(),
         subagentScheduler: SubagentScheduler = SubagentScheduler(),
         classicSettingsStore: SettingsStore = SettingsStore(),
+        localMemoryStore: AgentLocalMemoryStore = AgentLocalMemoryStore(),
         skillService: SkillService = SkillService(),
         pluginManager: PluginManager = PluginManager(),
         oauthConnectorStore: OAuthConnectorStore = OAuthConnectorStore(),
@@ -296,6 +301,7 @@ final class AgentViewModel: ObservableObject {
         self.oauthConnectorStore = oauthConnectorStore
         self.lifecycleHookLogStore = lifecycleHookLogStore
         self.classicSettingsStore = classicSettingsStore
+        self.localMemoryStore = localMemoryStore
         self.notificationService = notificationService
         self.automationService = automationService
         self.remoteRunnerService = remoteRunnerService ?? RemoteRunnerService()
@@ -325,6 +331,144 @@ final class AgentViewModel: ObservableObject {
     var selectedSession: AgentSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
+    }
+
+    func refreshSelectedLocalMemories() async {
+        guard let projectID = selectedSession?.projectID else {
+            selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+            return
+        }
+        do {
+            let snapshot = try await localMemoryStore.load(projectID: projectID)
+            guard selectedSession?.projectID == projectID else { return }
+            selectedLocalMemorySnapshot = snapshot
+        } catch {
+            guard selectedSession?.projectID == projectID else { return }
+            selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+            errorMessage = "本機記憶無法讀取：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func setSelectedProjectMemoryEnabled(_ enabled: Bool) async {
+        guard settings.memoriesEnabled,
+              let projectID = selectedSession?.projectID else {
+            errorMessage = "請先在 Agent 設定中啟用本機記憶，並選擇 Project。"
+            return
+        }
+        do {
+            let snapshot = try await localMemoryStore.setEnabled(enabled, projectID: projectID)
+            if selectedSession?.projectID == projectID {
+                selectedLocalMemorySnapshot = snapshot
+            }
+            if !enabled {
+                for session in sessions where session.projectID == projectID
+                    && session.memoryUseEnabled == true && isRunning(sessionID: session.id) {
+                    pause(sessionID: session.id)
+                }
+            }
+        } catch {
+            errorMessage = "無法更新 Project 記憶設定：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func setSelectedTaskMemoryPolicy(useEnabled: Bool? = nil, contributionEnabled: Bool? = nil) async {
+        guard let sessionID = selectedSessionID,
+              let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              let projectID = sessions[index].projectID,
+              !isRunning(sessionID: sessionID),
+              !memoryPolicyMutationSessionIDs.contains(sessionID) else {
+            errorMessage = "請選擇已停止的 Project Task 再調整記憶設定。"
+            return
+        }
+        memoryPolicyMutationSessionIDs.insert(sessionID)
+        defer { memoryPolicyMutationSessionIDs.remove(sessionID) }
+        if useEnabled == true || contributionEnabled == true {
+            guard settings.memoriesEnabled else {
+                errorMessage = "請先在 Agent 設定中啟用本機記憶。"
+                return
+            }
+            do {
+                guard try await localMemoryStore.load(projectID: projectID).enabled else {
+                    errorMessage = "請先啟用此 Project 的本機記憶。"
+                    return
+                }
+            } catch {
+                errorMessage = "本機記憶無法讀取：\(redactor.redact(error.localizedDescription))"
+                return
+            }
+        }
+        var updated = sessions[index]
+        if let useEnabled { updated.memoryUseEnabled = useEnabled }
+        if let contributionEnabled { updated.memoryContributionEnabled = contributionEnabled }
+        updated.updatedAt = Date()
+        do {
+            try await sessionStore.save(updated)
+            guard let currentIndex = sessions.firstIndex(where: { $0.id == sessionID }),
+                  !isRunning(sessionID: sessionID) else { return }
+            sessions[currentIndex] = updated
+        } catch {
+            exposeSessionPersistenceFailure(error)
+        }
+    }
+
+    func proposeSelectedLocalMemory(_ text: String) async -> Bool {
+        guard settings.memoriesEnabled,
+              let session = selectedSession,
+              session.memoryContributionEnabled == true,
+              let projectID = session.projectID else {
+            errorMessage = "請先啟用 Project 與此 Task 的記憶提案權限。"
+            return false
+        }
+        do {
+            _ = try await localMemoryStore.propose(text, projectID: projectID)
+            await refreshSelectedLocalMemories()
+            return true
+        } catch {
+            errorMessage = "無法儲存記憶提案：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    func approveSelectedLocalMemory(id: UUID) async {
+        guard let projectID = selectedSession?.projectID else { return }
+        do {
+            _ = try await localMemoryStore.approve(id: id, projectID: projectID)
+            await refreshSelectedLocalMemories()
+        } catch {
+            errorMessage = "無法核准記憶：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func updateSelectedLocalMemory(id: UUID, text: String) async -> Bool {
+        guard let projectID = selectedSession?.projectID else { return false }
+        do {
+            _ = try await localMemoryStore.update(id: id, text: text, projectID: projectID)
+            await refreshSelectedLocalMemories()
+            return true
+        } catch {
+            errorMessage = "無法修改記憶：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    func removeSelectedLocalMemory(id: UUID) async {
+        guard let projectID = selectedSession?.projectID else { return }
+        do {
+            _ = try await localMemoryStore.remove(id: id, projectID: projectID)
+            await refreshSelectedLocalMemories()
+        } catch {
+            errorMessage = "無法刪除記憶：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func clearSelectedLocalMemories() async {
+        guard let projectID = selectedSession?.projectID else { return }
+        do {
+            _ = try await localMemoryStore.clear(projectID: projectID)
+            await refreshSelectedLocalMemories()
+        } catch {
+            errorMessage = "無法清除記憶：\(redactor.redact(error.localizedDescription))"
+        }
     }
 
     /// Local host directory used only for Project Settings, Skills, and
@@ -4189,6 +4333,14 @@ final class AgentViewModel: ObservableObject {
             try await projectCatalogStore.saveProjects(updated)
             projects = updated
             if selectedProjectID == id { selectedProjectID = nil }
+            do {
+                try await localMemoryStore.delete(projectID: id)
+                if selectedSession?.projectID == id {
+                    selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+                }
+            } catch {
+                errorMessage = "Project 已刪除，但本機記憶清理失敗：\(redactor.redact(error.localizedDescription))"
+            }
         } catch {
             errorMessage = "無法刪除 Project：\(redactor.redact(error.localizedDescription))"
         }
@@ -6311,6 +6463,7 @@ final class AgentViewModel: ObservableObject {
                 || settings.browserExistingDebugEndpoint
                     != normalized.browserExistingDebugEndpoint
         )
+        let revokesMemoryAuthority = settings.memoriesEnabled && !normalized.memoriesEnabled
         do {
             try await settingsStore.save(normalized)
             settings = normalized
@@ -6318,11 +6471,12 @@ final class AgentViewModel: ObservableObject {
             // exception: narrowing its live authority must revoke suspended
             // approvals and old allow-list snapshots immediately. Pause keeps
             // completed work resumable under the newly saved policy.
-            if revokesComputerUseAuthority || revokesBrowserAuthority {
+            if revokesComputerUseAuthority || revokesBrowserAuthority
+                || revokesMemoryAuthority {
                 let activeSessionIDs = Array(activeRunsBySession.keys)
                 for sessionID in activeSessionIDs { pause(sessionID: sessionID) }
                 if !activeSessionIDs.isEmpty {
-                    statusMessage = "Browser／Computer Use 權限已變更；執行中的 Task 已安全暫停，請在新設定下繼續。"
+                    statusMessage = "Browser／Computer Use／記憶權限已變更；執行中的 Task 已安全暫停，請在新設定下繼續。"
                 }
             }
             toolExecutor = ToolExecutor(
@@ -7598,6 +7752,7 @@ final class AgentViewModel: ObservableObject {
             guard let self else { return }
             var runtimeSnapshot = snapshot
             var resolvedSkills: [ResolvedSkill] = []
+            var approvedMemoryContext: String?
             let isReviewTask: Bool
             if case .review = runtimeSnapshot.resolvedTaskType {
                 isReviewTask = true
@@ -7640,6 +7795,30 @@ final class AgentViewModel: ObservableObject {
                     runID: runID
                 )
                 return
+            }
+            if settingsSnapshot.memoriesEnabled,
+               runtimeSnapshot.memoryUseEnabled == true {
+                guard let projectID = runtimeSnapshot.projectID else {
+                    await self.failLocalMemoryLoading(
+                        AgentLocalMemoryError.disabled,
+                        session: runtimeSnapshot,
+                        runID: runID
+                    )
+                    return
+                }
+                do {
+                    let approved = try await self.localMemoryStore.approvedForContext(
+                        projectID: projectID
+                    )
+                    approvedMemoryContext = AgentLocalMemoryPrompt.render(approved)
+                } catch {
+                    await self.failLocalMemoryLoading(
+                        error,
+                        session: runtimeSnapshot,
+                        runID: runID
+                    )
+                    return
+                }
             }
             do {
                 let skillWorkspace = runtimeSnapshot.resolvedExecutionLocation.kind == .ssh
@@ -7766,6 +7945,7 @@ final class AgentViewModel: ObservableObject {
                 modelParameters: modelParameters,
                 remoteExecutionIdentity: remoteExecutionIdentity,
                 loadedSkills: resolvedSkills,
+                approvedMemoryContext: approvedMemoryContext,
                 hookBindings: hookBindings,
                 settings: settingsSnapshot,
                 subagentController: subagentScheduler,
@@ -7902,6 +8082,41 @@ final class AgentViewModel: ObservableObject {
         failed.steps.append(AgentStep(
             kind: .failed,
             title: "執行位置驗證失敗",
+            detail: detail,
+            status: .failed,
+            completedAt: failed.updatedAt
+        ))
+        apply(failed, synchronizeMode: false)
+        do {
+            try await sessionStore.save(failed)
+            await reconcileClaimedFollowUp(
+                in: failed,
+                control: control,
+                baselineUserMessageCount: control.submittedDraft?.baselineUserMessageCount,
+                releaseUndelivered: true
+            )
+        } catch {
+            exposeSessionPersistenceFailure(error)
+        }
+        errorMessage = "Agent 未啟動：\(detail)"
+        await restoreSteersIfRuntimeNeverStarted(control)
+        completeRun(control)
+    }
+
+    private func failLocalMemoryLoading(
+        _ error: Error,
+        session: AgentSession,
+        runID: UUID
+    ) async {
+        guard let control = runControl(runID: runID), control.acceptsRuntimeEvents else { return }
+        let detail = redactor.redact(error.localizedDescription)
+        var failed = session
+        failed.state = .failed
+        failed.lastError = detail
+        failed.updatedAt = Date()
+        failed.steps.append(AgentStep(
+            kind: .failed,
+            title: "本機記憶讀取失敗",
             detail: detail,
             status: .failed,
             completedAt: failed.updatedAt

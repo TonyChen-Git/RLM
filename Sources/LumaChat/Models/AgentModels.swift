@@ -286,6 +286,8 @@ enum AgentFollowUpBehavior: String, Codable, CaseIterable, Identifiable, Sendabl
 struct AgentSettings: Codable, Equatable, Sendable {
     var defaultMode: AppMode = .chat
     var followUpBehavior: AgentFollowUpBehavior = .steer
+    /// Local project memories are opt-in; old settings remain disabled.
+    var memoriesEnabled = false
     var permissionMode: AgentPermissionMode = .autoApproveSafe
     var maxSteps = 100
     var commandTimeout = 120.0
@@ -306,7 +308,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     var pullRequestProvider: PullRequestProviderConfiguration = .github
 
     private enum CodingKeys: String, CodingKey {
-        case defaultMode, followUpBehavior, permissionMode, maxSteps, commandTimeout, autoRunTests
+        case defaultMode, followUpBehavior, memoriesEnabled, permissionMode, maxSteps, commandTimeout, autoRunTests
         case autoContextCompression, gitCheckpoint, networkAccess, visionMode
         case browserEnabled, browserProfileMode, browserPersistentProfileName
         case browserExistingDebugEndpoint
@@ -324,6 +326,8 @@ struct AgentSettings: Codable, Equatable, Sendable {
         followUpBehavior = (try? container.decodeIfPresent(
             AgentFollowUpBehavior.self, forKey: .followUpBehavior
         )) ?? defaults.followUpBehavior
+        memoriesEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoriesEnabled)
+            ?? defaults.memoriesEnabled
         permissionMode = try container.decodeIfPresent(AgentPermissionMode.self, forKey: .permissionMode) ?? defaults.permissionMode
         maxSteps = max(1, try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? defaults.maxSteps)
         commandTimeout = max(1, try container.decodeIfPresent(Double.self, forKey: .commandTimeout) ?? defaults.commandTimeout)
@@ -1835,6 +1839,10 @@ struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     /// JSON decodable; launch migration groups legacy workspaces into projects.
     var projectID: UUID?
     var projectFolderID: UUID?
+    /// Nil preserves legacy sessions and resolves to "do not use". Changing
+    /// either control affects only future runs, never an in-flight model turn.
+    var memoryUseEnabled: Bool?
+    var memoryContributionEnabled: Bool?
     var messages: [AgentMessage] = []
     var steps: [AgentStep] = []
     var todos: [AgentTodo] = []

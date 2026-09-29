@@ -644,6 +644,7 @@ private struct AgentHeader: View {
     @State private var isRenamingProject = false
     @State private var projectNameDraft = ""
     @State private var isShowingModelParameters = false
+    @State private var isShowingLocalMemories = false
 
     private var modelParameterRoute: ModelParameterRoute {
         if let session = agentViewModel.selectedSession,
@@ -763,6 +764,18 @@ private struct AgentHeader: View {
                 isDisabled: false
             ) { mode in
                 agentViewModel.switchMode(mode, route: chatViewModel.settings)
+            }
+
+            if agentViewModel.selectedSession?.projectID != nil {
+                Button {
+                    isShowingLocalMemories = true
+                } label: {
+                    Image(systemName: "brain.head.profile")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("本機記憶")
+                .accessibilityLabel("本機記憶")
             }
 
             if let session = agentViewModel.selectedSession {
@@ -973,6 +986,10 @@ private struct AgentHeader: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 11)
         .background(LumaTheme.surface)
+        .sheet(isPresented: $isShowingLocalMemories) {
+            AgentLocalMemoryPane()
+                .environmentObject(agentViewModel)
+        }
         .alert("自訂專案名稱", isPresented: $isRenamingProject) {
             TextField("留空使用資料夾名稱", text: $projectNameDraft)
             Button("取消", role: .cancel) {}
