@@ -1,11 +1,16 @@
 # Luma Chat — Unreleased development notes
 
-Checkpoint date: 2026-09-29
+Checkpoint date: 2026-09-30
+
+The 1.4.5 development prerelease fixes the OpenAI-compatible Agent system
+message order and the Plan/Agent bottom Composer layout. Its validation and
+remaining live acceptance are recorded in
+[`RELEASE_NOTES_1.4.5.md`](RELEASE_NOTES_1.4.5.md).
 
 Status: the Phase A–H development implementation and its historical combined
-development gate are complete. The current 1.4.2 development candidate passed
-745 Swift tests on 2026-09-27; the follow-up changes below require their own
-validation. This is not a production release: Developer ID,
+development gate are complete. The 1.4.4 development prerelease packages the
+follow-up changes below; its validation is recorded in
+[`RELEASE_NOTES_1.4.4.md`](RELEASE_NOTES_1.4.4.md). This is not a production release: Developer ID,
 notarization/stapling, production update credentials, live external acceptance,
 and the qualifying long-duration soak remain external gates.
 
@@ -57,17 +62,20 @@ It is ad-hoc signed. Phase B's earlier evidence remains recorded in
   to the Project System Prompt draft before saving Settings. Nested includes,
   scoped Cursor rules and chat history remain out of scope.
 
-The prior pushed source passed 778 Swift tests (one environment skip, zero failures),
-17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. Package and
-native UI evidence for these changes remain pending. Hosted Cloud/secure relay,
+The base source passed 778 Swift tests (one environment skip, zero failures),
+17/17 VS Code tests, and 14/14 GitHub Action tests on 2026-09-29. The 1.4.3
+development package passed 780 Swift tests (one environment skip, zero failures)
+and archive, signature, and security validation. Its hash is recorded in
+[`RELEASE_NOTES_1.4.3.md`](RELEASE_NOTES_1.4.3.md). Hosted Cloud/secure relay,
 persistent interactive remote PTY, voice, complete Claude Code/Cursor import,
-automatic memory suggestions and external integration acceptance remain open. The 1.4.1
-ZIP hash above is historical and does not identify a package containing these
-changes.
+automatic memory suggestions and live external integration acceptance remain
+open. The 1.4.1 ZIP hash above is historical.
 
-The subsequent combined working tree passed 792 Swift tests with one environment
-skip and zero failures, including 12 focused local-memory/import tests. Its new
-desktop controls have not yet been validated in a packaged app.
+The 1.4.4 release script subsequently passed 792 Swift tests with one
+environment skip and zero failures, including 12 focused local-memory/import
+tests, then completed the optimized build, ad-hoc signing, archive checks,
+metadata generation and security audit. VS Code passed 17/17 and GitHub Action
+passed 14/14 after integration. Native packaged UI acceptance remains pending.
 
 ## Phase C — Subagents
 

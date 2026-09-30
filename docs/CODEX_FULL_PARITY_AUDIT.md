@@ -111,10 +111,12 @@ development evidence; native packaged UI, live external and production release
 gates remain. The formal **68.5/100** score below is not increased by source
 changes alone.
 
-The subsequent combined working tree passed 792 Swift tests with one environment
-skip and zero failures, including the 12 focused local-memory/import tests.
-This is source-level verification; native UI and package acceptance for those
-new controls remain pending.
+The subsequent 1.4.4 development release script passed 792 Swift tests with one
+environment skip and zero failures, including the 12 focused local-memory/import
+tests, and completed an optimized arm64 package with ad-hoc signing, ZIP,
+manifest/SBOM/provenance and security-audit verification. Native UI and live
+external acceptance for those new controls remain pending. The formal
+production-credit score is unchanged.
 
 The largest still-open functional differences are a persistent interactive SSH
 PTY with reconnect and scrollback; automatic memory suggestions and richer

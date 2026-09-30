@@ -9,17 +9,16 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-09-29）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
-> 2026-09-27 的 `1.4.2` build `9` 包含 Chat/模型參數 UI 修正與封裝版 UI smoke
-> 的資料隔離，當時完成 745 項 Swift 測試（1 項環境性 skip、0 failures）、optimized arm64
-> 封裝、ad-hoc signing、ZIP/archive、SBOM/provenance 驗證及修正後的直接安全稽核。
-> 9 月 29 日的新原始碼包含 Steer/Queue、Side chat、Fork context、worktree/MCP
-> 維護與 App Server 安全界線補強；本次原始碼另通過 778 項 Swift 測試
-> （1 項環境性 skip、0 failures）、VS Code 17/17 與 GitHub Action 14/14。
-> 這些變更尚未完成重新封裝與封裝版驗收。
-> 原生 UI 驗證尚未完成，這一版仍是 development candidate；沒有 Developer ID/
-> notarization/stapling、正式 update feed、live backend/SSH/real-browser
-> acceptance 或正式長時間 soak 證據。
+> **目前狀態（2026-09-30）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
+> `1.4.5` build `12` development prerelease 加入 Qwen/OpenAI-compatible Agent
+> 的 system message 合併與 Plan/Agent 底部 Composer 修正；延續 1.4.4 的遠端
+> OpenAI-compatible HTTP 連線支援（含本地網路 vLLM）與本機記憶、
+> `CLAUDE.md`／`.cursorrules` 專案指令預覽匯入；同時包含先前的 Steer/Queue、
+> Side chat、Fork context、worktree/MCP 維護與 App Server 安全界線補強。
+> 發行驗證結果見[1.4.5 版本說明](docs/RELEASE_NOTES_1.4.5.md)。
+> 使用者 vLLM 的實際連線驗證仍待完成。此版本沒有 Developer ID/
+> notarization/stapling、正式 update feed、live SSH/real-browser acceptance 或
+> 正式長時間 soak 證據。
 
 ## 能力總覽
 
@@ -138,6 +137,21 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
+2026-09-30 的 `1.4.5` development package 通過 archive contract 7/7、
+soak contract 4/4、security-audit contract 3/3、Swift 794 tests（1 skip、
+0 failures）、VS Code 17/17 與 GitHub Action 14/14；完成 arm64 最佳化建置、
+ad-hoc 簽章、ZIP/解壓驗證、SBOM/provenance 與安全稽核。Chat、Plan、Agent
+空白畫面的封裝版 UI smoke 已通過；真實 Qwen/vLLM 連線與長對話、Approval、Queue
+狀態仍待驗收。ZIP SHA-256 為
+`e0db363db1ab4ef17b49430562739eb306a4f164b34991998309d6bee19c4541`。
+
+2026-09-29 的 `1.4.4` development package 通過 archive contract 7/7、
+soak contract 4/4、security-audit contract 3/3、Swift 792 tests（1 skip、
+0 failures）、VS Code 17/17 與 GitHub Action 14/14；完成 arm64 最佳化建置、
+ad-hoc 簽章、ZIP/解壓驗證、SBOM/provenance 與安全稽核。ZIP SHA-256 為
+`90a5658270adb9b032c8a0e87991a4499756460e643ca72e4bd562d8f7c0e859`。
+封裝版原生 UI smoke 與使用者 vLLM 主機連線仍待驗收。
+
 2026-09-27 的 `1.4.2` development package 驗證結果：archive contract 7/7、
 soak contract 4/4、security-audit contract 3/3、Swift 745 tests（1 skip、
 0 failures）；optimized arm64 build、ad-hoc signed app、ZIP/archive 驗證及
@@ -168,6 +182,7 @@ team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確�
 ├── Conversations/                # Classic Chat
 ├── AgentSessions/                # Agent sessions/attachments/queued follow-ups
 ├── AgentProjects/                # project catalog/settings
+├── AgentMemories/                # opt-in、Project-scoped reviewed memories
 ├── AgentWorktrees/               # registry 與 managed checkouts
 ├── AppServer/mutations.json       # App Server mutation request journal
 ├── Extensions/                   # Skills/plugins/OAuth public metadata
@@ -185,13 +200,12 @@ Downloads、`/tmp` 或 `/var/tmp`。
 暫時 profile，以 `LUMACHAT_UI_SMOKE_PROFILE` 啟動封裝版，並在 App 結束後只
 清理該次建立的 profile。封裝版不採用 debug/test 的
 `LUMACHAT_APP_SUPPORT_PATH`；直接開啟封裝版測試會使用正式的 Project catalog。
-目前 `1.4.2` 封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
-腳本會在啟動前拒絕它。1.4.2 封裝版的原生 UI smoke 尚待完成。
+目前封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
+腳本會在啟動前拒絕它。
 
-啟動後依腳本列出的 composer checklist 檢查 Chat、Plan、Agent 空白 session：
-輸入框應貼齊 detail 底部；Plan 的唯讀說明緊接在輸入框下方。縮放視窗、
-切換側邊欄後位置仍應正確；有長對話時只滾動 transcript，composer、
-approval 與 queue 留在底部。這是手動視覺驗收，腳本僅提供隔離 profile。
+依腳本列出的 checklist 手動檢查 Chat、Plan、Agent 的底部 Composer，
+包含空白 Task、視窗縮放、側邊欄，以及可用時的長對話、Approval 與 Queue。
+Plan 的唯讀 footer 應緊接 Composer 下方；腳本只提供隔離 profile。
 
 Model Profile 的規則如下：
 
@@ -289,7 +303,10 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
-- [1.4.2 development release candidate notes](docs/RELEASE_NOTES_1.4.2.md)
+- [1.4.5 development prerelease notes](docs/RELEASE_NOTES_1.4.5.md)
+- [1.4.4 development prerelease notes](docs/RELEASE_NOTES_1.4.4.md)
+- [1.4.3 historical development prerelease notes](docs/RELEASE_NOTES_1.4.3.md)
+- [1.4.2 historical development candidate notes](docs/RELEASE_NOTES_1.4.2.md)
 - [1.4.1 historical development release notes](docs/RELEASE_NOTES_1.4.1.md)
 - [Full parity audit](docs/CODEX_FULL_PARITY_AUDIT.md)
 - [Replacement roadmap](docs/CODEX_REPLACEMENT_ROADMAP.md)

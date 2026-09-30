@@ -779,7 +779,7 @@ actor PluginManager {
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String
         let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? "1.4.2" : normalized
+        return normalized.isEmpty ? "1.4.4" : normalized
     }
 
     private static func validatePackage(at root: URL, fileManager: FileManager) throws {
