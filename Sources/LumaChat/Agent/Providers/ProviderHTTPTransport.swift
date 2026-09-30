@@ -77,7 +77,7 @@ struct ProviderHTTPTransport: Sendable {
             throw ProviderWireError.network(provider: provider, detail: error.localizedDescription)
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = Self.errorMessage(from: data)
+            let message = Self.errorMessage(from: data).map(Self.redactedErrorDiagnostic)
             if requestedTools,
                Self.looksLikeUnsupportedTools(statusCode: httpResponse.statusCode, message: message) {
                 throw ProviderWireError.unsupportedTools(
@@ -131,7 +131,7 @@ struct ProviderHTTPTransport: Sendable {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let data = try await readErrorBody(bytes, provider: provider)
-            let message = Self.errorMessage(from: data)
+            let message = Self.errorMessage(from: data).map(Self.redactedErrorDiagnostic)
             if requestedTools,
                Self.looksLikeUnsupportedTools(
                    statusCode: httpResponse.statusCode,
@@ -241,6 +241,22 @@ struct ProviderHTTPTransport: Sendable {
             .nilIfEmpty
     }
 
+    private static func redactedErrorDiagnostic(_ message: String) -> String {
+        let redacted = SecretRedactor().redact(message)
+        let firstLine = String(redacted.prefix(2_000).split(whereSeparator: \.isNewline).first ?? "")
+        let contentMarkers = [
+            "prompt:", "prompt=", "\"prompt\":", "messages:", "messages=", "\"messages\":",
+            "content:", "content=", "\"content\":", "system:", "user:", "assistant:"
+        ]
+        let firstContentOffset = contentMarkers.compactMap {
+            firstLine.range(of: $0, options: .caseInsensitive)?.lowerBound
+        }
+            .min()
+        let diagnostic = firstContentOffset.map { String(firstLine[..<$0]) + "[request content omitted]" }
+            ?? firstLine
+        return String(diagnostic.prefix(500))
+    }
+
     private static func looksLikeUnsupportedTools(statusCode: Int, message: String?) -> Bool {
         guard [400, 404, 405, 422, 501].contains(statusCode) else { return false }
         guard let message = message?.lowercased() else { return false }
@@ -269,11 +285,10 @@ enum ProviderRequestBuilder {
         guard components.query == nil, components.fragment == nil else {
             throw ProviderWireError.invalidEndpoint
         }
-        // Remote Ollama is commonly hosted on a user-selected LAN machine and
-        // its native API is frequently HTTP-only. Other provider kinds carry
-        // cloud credentials and therefore still require TLS off-loopback.
+        // User-selected Ollama and OpenAI-compatible servers may be hosted on
+        // LAN machines that expose HTTP only. Anthropic requires TLS remotely.
         if scheme == "http",
-           provider != .ollama,
+           provider == .anthropic,
            !AgentHTTPOrigin.isLoopback(components.host) {
             throw ProviderWireError.invalidEndpoint
         }
@@ -320,7 +335,8 @@ enum ProviderRequestBuilder {
         request.httpBody = body
 
         let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if url.scheme?.lowercased() == "http",
+        if provider != .openAICompatible,
+           url.scheme?.lowercased() == "http",
            !AgentHTTPOrigin.isLoopback(url.host),
            key?.isEmpty == false {
             throw ProviderWireError.invalidEndpoint

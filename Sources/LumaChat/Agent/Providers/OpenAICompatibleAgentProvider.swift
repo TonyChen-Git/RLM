@@ -19,7 +19,7 @@ enum OpenAICompatibleAgentWireAdapter {
         )
         let payload = try OpenAIWireChatRequest(
             model: input.model,
-            messages: input.messages.map(OpenAIWireChatRequest.Message.init),
+            messages: leadingSystemMessages(input.messages).map(OpenAIWireChatRequest.Message.init),
             tools: input.tools.isEmpty ? nil : input.tools.map(OpenAIWireChatRequest.Tool.init),
             toolChoice: input.tools.isEmpty ? nil : "auto",
             stream: stream,
@@ -51,6 +51,19 @@ enum OpenAICompatibleAgentWireAdapter {
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         }
         return request
+    }
+
+    /// Chat templates such as Qwen require one system turn before all ordinary
+    /// turns. ContextManager keeps runtime context in separate system messages;
+    /// combine them only at this provider's wire boundary, without reordering
+    /// user, assistant, or tool turns.
+    private static func leadingSystemMessages(
+        _ messages: [ProviderWireMessage]
+    ) -> [ProviderWireMessage] {
+        let systemContents = messages.filter { $0.role == .system }.map(\.text)
+        guard !systemContents.isEmpty else { return messages }
+        return [ProviderWireMessage(role: .system, text: systemContents.joined(separator: "\n\n"))]
+            + messages.filter { $0.role != .system }
     }
 
     static func parseChatResponse(_ data: Data) throws -> ProviderWireResponse {

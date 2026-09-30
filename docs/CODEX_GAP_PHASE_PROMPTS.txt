@@ -1,0 +1,60 @@
+LumaChat Codex 差距補齊計畫：Phase Prompts
+版本基準：1.4.4
+
+使用方式
+========
+依序執行 Phase I 至 Phase Q。每次將「共用前置 prompt」與該 Phase 的 prompt 一起交給 Codex。
+
+
+共用前置 prompt
+================
+先閱讀 AGENTS.md、README、docs/CODEX_FULL_PARITY_AUDIT.md，以及本階段相關的架構文件。檢查現有程式碼、測試與未提交變更，沿用既有架構，不要重複實作。
+
+完成端到端功能：包含 UI、持久化、錯誤與復原、安全邊界、測試、封裝及文件。保持 LumaChat local-first 與使用者自選模型／遠端主機的設計，不宣稱提供 OpenAI 託管服務或 Codex 專有能力。
+
+跑本階段必要測試與完整相關驗證；更新差異稽核，記錄完成項目、測試證據和未完成的外部驗收。外部帳號、憑證或服務不可用時，先完成可在本機完成的實作與測試，明確標示 live acceptance 尚待執行；不要用 mock 測試冒充外部驗收。除非我明確要求，先不要 commit 或 push。
+
+
+Phase I — SSH 持續互動終端機
+============================
+把 SSH 遠端 PTY 從 one-shot command 擴充為 Task 綁定的持續互動終端機。支援雙向輸入輸出、resize/SIGWINCH、signals、有界 scrollback、斷線重連、Task 導航與 App 重啟後的明確復原狀態。沿用既有 SSH host receipt、known_hosts、Keychain 與 permission authority；不得在 host 身分或權限改變時沿用舊 session。補上程序清理、網路中斷、主機重啟、憑證失效及重複連線測試，並更新 Task Terminal UI 和架構文件。若有可用 SSH 測試主機，執行真實端到端驗收並保存結果。
+
+
+Phase J — 自動記憶與檢索
+========================
+將本機記憶從手動提案擴充為可選的背景建議與檢索。只處理符合條件且已結束、閒置的 Tasks；全域、Project、Task 控制預設關閉，使用者必須審核後才能保存。加入跨 Task/Project 搜尋、排序、分類與 context budget；記憶應附來源證據，支援檢視、編輯、刪除及清空。嚴格遮蔽 secrets，未核准內容不得進入模型 context；尊重每個 Task 的記憶讀取與寫入設定。測試排程、崩潰復原、重複建議、刪除與權限邊界。
+
+
+Phase K — Claude Code／Cursor 完整匯入
+======================================
+擴充 Claude Code 與 Cursor 匯入流程：預覽並匯入巢狀 CLAUDE.md 參照、Cursor .mdc front matter 與 glob scope、Project 設定及使用者選取的聊天紀錄。匯入前顯示來源、解析結果、衝突與差異；支援取消、重複匯入偵測及安全回復。限制檔案路徑、深度、大小與參照循環，不執行匯入的 hooks、scripts 或 commands；憑證與 secrets 不得匯入。以 Claude Code 和 Cursor 的代表性 fixture 驗證解析、範圍套用、錯誤處理與 idempotency。
+
+
+Phase L — Steer、Queue 與 Side chat 完整度
+==========================================
+補齊執行中互動的持久化與附件支援。Steer 接受後須原子持久化；Queue 支援文字和圖片附件，並能編輯、排序、移除、重啟復原，對送出結果不確定的情況採 fail-closed。Side chat 可使用使用者明確挑選的檔案或圖片快照作唯讀上下文，但不得取得父 Task 的寫入權、Approval 權或工具執行權。測試附件大小限制、敏感資訊遮蔽、來源變動、App 崩潰及重送邊界，並完成封裝 UI 驗收。
+
+
+Phase M — 外部整合與事件觸發 Automation
+=======================================
+擴充 provider-neutral integrations 與 event-triggered Automation。先補齊 GitLab PR 工作流程，再加入可驗證的 GitHub event trigger；評估 Slack、Gmail 作為後續 providers。事件需驗證簽章或 OAuth 權限、阻擋重播、支援去重與 idempotency、條件篩選、暫停／停用、重試與可追蹤的 Task provenance。會修改檔案的事件任務必須使用隔離 worktree，並沿用現有 approval、通知與 Task Review 流程。補上 provider contract tests；有測試帳號與憑證時才執行並記錄 live acceptance。
+
+
+Phase N — 語音互動
+==================
+為 macOS 桌面 App 加入可中斷、可追問的語音 Task 互動：開始／結束語音、語音轉文字、將辨識內容送到目前 Task、播放 Agent 回覆、支援使用者打斷與停止播放。抽象化語音 provider；優先使用系統能力或使用者明確設定且支援的 provider，不得假設模型 backend 支援 Realtime。清楚處理 microphone 權限、語音資料流向、錯誤與文字 fallback；不得在未啟用時錄音或儲存音訊。加入 UI、權限與中斷測試。
+
+
+Phase O — 使用者自管的遠端執行環境
+==================================
+設計並實作使用者自管的遠端 worker，讓長時間任務可在遠端隔離環境執行，並在本機檢視 diff、Review、取消或接手。先定義 worker protocol、能力協商、身分驗證、權限與網路政策，再實作可安裝的最小 worker；遠端工作必須使用獨立 checkout/worktree，並提供心跳、重連、取消、日誌、結果回傳與失敗復原。連線採安全的雙向驗證，不要求暴露未受控的 inbound port。明確標示這是使用者自管執行，不宣稱等同 OpenAI Codex Cloud。
+
+
+Phase P — Plugin、OAuth 與整合互通
+==================================
+補齊擴充生態的信任與互通能力：plugin registry 的來源驗證、簽章或可稽核的更新資訊、更新前權限差異預覽；OAuth connector 的 refresh、撤銷、過期與錯誤復原；MCP provider 相容性測試及清楚的診斷 UI。保留現有權限預覽與沙箱邊界，不得因 plugin 安裝而自動執行任意 scripts。測試不可信來源、簽章錯誤、token 過期／撤銷、伺服器中斷與更新回復。
+
+
+Phase Q — 正式發行、跨平台與外部驗收
+====================================
+完成 production readiness：封裝版原生 UI smoke、SSH／MCP／PR／Browser／Computer Use live acceptance、Subagent 與 Automation 長時間測試、崩潰及網路故障復原；建立 2h、8h、24h 與多日 soak 證據。補齊 macOS 正式簽章、公證、stapling、正式更新 feed 與更新回復驗證；評估並實作非 macOS backend 與 CI。所有外部憑證只從安全環境讀取，不提交到 repository。任何未取得憑證或未跑過的驗收都明確列為 pending，禁止標記為完成。

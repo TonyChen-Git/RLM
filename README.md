@@ -188,6 +188,11 @@ Downloads、`/tmp` 或 `/var/tmp`。
 目前 `1.4.2` 封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
 腳本會在啟動前拒絕它。1.4.2 封裝版的原生 UI smoke 尚待完成。
 
+啟動後依腳本列出的 composer checklist 檢查 Chat、Plan、Agent 空白 session：
+輸入框應貼齊 detail 底部；Plan 的唯讀說明緊接在輸入框下方。縮放視窗、
+切換側邊欄後位置仍應正確；有長對話時只滾動 transcript，composer、
+approval 與 queue 留在底部。這是手動視覺驗收，腳本僅提供隔離 profile。
+
 Model Profile 的規則如下：
 
 1. Profile key 至少包含 API provider、concrete backend、normalized endpoint 與

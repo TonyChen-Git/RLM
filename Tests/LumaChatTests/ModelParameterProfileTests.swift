@@ -4,6 +4,7 @@ import XCTest
 
 private final class ModelParameterURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var lastRequestBody = Data()
+    nonisolated(unsafe) static var lastRequest: URLRequest?
     nonisolated(unsafe) static var requestedPaths: [String] = []
     nonisolated(unsafe) static var responder: ((URLRequest) -> (String, Data))?
     nonisolated(unsafe) static var statusCode = 200
@@ -14,6 +15,7 @@ private final class ModelParameterURLProtocol: URLProtocol, @unchecked Sendable 
 
     override func startLoading() {
         Self.lastRequestBody = Self.bodyData(from: request)
+        Self.lastRequest = request
         Self.requestedPaths.append(request.url?.path ?? "")
         let result = Self.responder?(request)
             ?? ("text/event-stream", Data("data: [DONE]\n\n".utf8))
@@ -53,6 +55,7 @@ final class ModelParameterProfileTests: XCTestCase {
         ModelParameterURLProtocol.responseURL = nil
         ModelParameterURLProtocol.requestedPaths = []
         ModelParameterURLProtocol.lastRequestBody = Data()
+        ModelParameterURLProtocol.lastRequest = nil
         super.tearDown()
     }
 
@@ -647,27 +650,50 @@ final class ModelParameterProfileTests: XCTestCase {
         XCTAssertEqual(json["reasoning_effort"] as? String, "medium")
     }
 
-    func testClassicChatRejectsCleartextRemoteCredentialRoutesBeforeTransport() async throws {
+    func testClassicChatAllowsRemoteOpenAIHTTPAndHTTPSButProtectsAnthropicAndOllama() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ModelParameterURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         let client = LLMClient(session: session)
 
-        for provider in [ProviderKind.openAICompatible, .anthropic] {
-            let settings = AppSettings(
-                provider: provider,
+        ModelParameterURLProtocol.responder = { _ in
+            ("application/json", Data(#"{"data":[{"id":"qwen3.8-27b"}]}"#.utf8))
+        }
+        for scheme in ["http", "https"] {
+            let remoteOpenAI = AppSettings(
+                provider: .openAICompatible,
                 backend: .openAICompatible,
-                endpoint: "http://remote.example.test/v1",
-                selectedModel: "model"
+                endpoint: "\(scheme)://10.5.88.100:8003/v1",
+                selectedModel: "qwen3.8-27b"
             )
-            do {
-                _ = try await client.fetchModels(settings: settings, apiKey: "sk-unit-test-secret")
-                XCTFail("Remote cleartext provider endpoint must be rejected.")
-            } catch let error as ChatError {
-                guard case .invalidEndpoint = error else {
-                    return XCTFail("Expected invalidEndpoint, got \(error)")
-                }
+            let models = try await client.fetchModels(
+                settings: remoteOpenAI,
+                apiKey: "sk-local-vllm"
+            )
+            XCTAssertEqual(models, ["qwen3.8-27b"])
+            let sent = try XCTUnwrap(ModelParameterURLProtocol.lastRequest)
+            XCTAssertEqual(sent.httpMethod, "GET")
+            XCTAssertEqual(sent.url?.absoluteString, "\(scheme)://10.5.88.100:8003/v1/models")
+            XCTAssertEqual(sent.value(forHTTPHeaderField: "Authorization"), "Bearer sk-local-vllm")
+        }
+        XCTAssertEqual(ModelParameterURLProtocol.requestedPaths, ["/v1/models", "/v1/models"])
+
+        let remoteAnthropic = AppSettings(
+            provider: .anthropic,
+            backend: .anthropic,
+            endpoint: "http://remote.example.test/v1",
+            selectedModel: "model"
+        )
+        do {
+            _ = try await client.fetchModels(
+                settings: remoteAnthropic,
+                apiKey: "sk-unit-test-secret"
+            )
+            XCTFail("Remote cleartext Anthropic endpoint must be rejected.")
+        } catch let error as ChatError {
+            guard case .invalidEndpoint = error else {
+                return XCTFail("Expected invalidEndpoint, got \(error)")
             }
         }
 
@@ -688,7 +714,7 @@ final class ModelParameterProfileTests: XCTestCase {
                 return XCTFail("Expected invalidEndpoint, got \(error)")
             }
         }
-        XCTAssertTrue(ModelParameterURLProtocol.requestedPaths.isEmpty)
+        XCTAssertEqual(ModelParameterURLProtocol.requestedPaths, ["/v1/models", "/v1/models"])
     }
 
     func testClassicChatRejectsCredentialedOrAmbiguousEndpointURLs() async throws {

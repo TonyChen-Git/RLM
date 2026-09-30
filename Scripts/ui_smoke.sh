@@ -62,4 +62,10 @@ if [[ "${verification}" != "LumaChat UI smoke profile v1 ready" ]]; then
     print -u2 -r -- "App binary returned an unexpected UI smoke profile response."
     exit 1
 fi
+print -r -- "Packaged UI composer checks (use this isolated profile):"
+print -r -- "  Chat: empty conversation input stays at the detail bottom."
+print -r -- "  Plan: empty Task input stays at the bottom, with its read-only footer directly below."
+print -r -- "  Agent: empty Task input stays at the bottom."
+print -r -- "  In each mode, resize the window and toggle the sidebar; the input stays at the bottom."
+print -r -- "  For existing long Tasks, scroll the transcript; the input, approval and queue remain visible below it."
 LUMACHAT_UI_SMOKE_PROFILE="${profile_root}" "${app_executable}"
