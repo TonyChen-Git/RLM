@@ -282,6 +282,98 @@ final class AgentProviderToolCallingTests: XCTestCase {
         XCTAssertEqual(response.finishReason, "tool_calls")
     }
 
+    func testOpenAICompatibleMergesEverySystemMessageAtRequestStart() throws {
+        let settings = AppSettings(
+            provider: .openAICompatible,
+            backend: .openAICompatible,
+            endpoint: "http://127.0.0.1:8003/v1",
+            selectedModel: "fixture-model"
+        )
+        let systemContents = [
+            "Main system prompt",
+            "Project Settings: exact instructions",
+            "Git status: modified file",
+            "Skills: loaded skill",
+            "Memory: approved note",
+            "Todo: outstanding item"
+        ]
+        let request = ProviderWireRequest(
+            model: "fixture-model",
+            messages: [
+                .init(role: .system, text: systemContents[0]),
+                .init(role: .user, text: "first user turn"),
+                .init(role: .system, text: systemContents[1]),
+                .init(role: .assistant, text: "calling tool", toolCalls: [
+                    .init(id: "call-a", name: "read_file", arguments: .object(["path": .string("A.swift")]))
+                ]),
+                .init(role: .tool, toolResult: .init(
+                    callID: "call-a", toolName: "read_file", content: "tool result", isError: false
+                )),
+                .init(role: .system, text: systemContents[2]),
+                .init(role: .system, text: systemContents[3]),
+                .init(role: .system, text: systemContents[4]),
+                .init(role: .system, text: systemContents[5]),
+                .init(role: .user, text: "second user turn")
+            ],
+            tools: [.init(name: "read_file", description: "Read", inputSchema: schema)],
+            contextLength: 8_192,
+            maxOutputTokens: 1_024,
+            temperature: 0.2
+        )
+        let urlRequest = try OpenAICompatibleAgentWireAdapter.makeChatRequest(
+            request,
+            settings: settings,
+            apiKey: nil
+        )
+        XCTAssertEqual(urlRequest.url?.path, "/v1/chat/completions")
+        let json = try jsonObject(urlRequest)
+        XCTAssertEqual(json["model"] as? String, "fixture-model")
+        XCTAssertEqual(json["tool_choice"] as? String, "auto")
+        XCTAssertNil(json["reasoning_effort"])
+        XCTAssertNil(json["chat_template_kwargs"])
+        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.map { $0["role"] as? String }, [
+            "system", "user", "assistant", "tool", "user"
+        ])
+        XCTAssertEqual(messages[0]["content"] as? String, systemContents.joined(separator: "\n\n"))
+        XCTAssertFalse(messages.dropFirst().contains { $0["role"] as? String == "system" })
+        XCTAssertEqual(messages[1]["content"] as? String, "first user turn")
+        XCTAssertEqual(messages[3]["tool_call_id"] as? String, "call-a")
+        XCTAssertEqual(messages[4]["content"] as? String, "second user turn")
+    }
+
+    func testHTTP400KeepsRedactedDiagnosticWithoutEchoingPrompt() async throws {
+        let session = stubSession()
+        defer { session.invalidateAndCancel() }
+        let request = URLRequest(url: URL(string: "http://127.0.0.1/v1/chat/completions")!)
+        for serverMessage in [
+            "Qwen template requires leading system; api_key=sk-secret-example-12345; prompt: private project instructions",
+            "Qwen template requires leading system; api_key=sk-secret-example-12345; \"messages\": [{\"content\":\"private project instructions\"}]"
+        ] {
+            AgentProviderStubURLProtocol.handler = { _ in
+                let error = ["error": ["message": serverMessage]]
+                return (400, (try? JSONSerialization.data(withJSONObject: error)) ?? Data())
+            }
+            do {
+                _ = try await ProviderHTTPTransport(session: session).data(
+                    for: request,
+                    provider: "OpenAI 相容",
+                    model: "fixture-model",
+                    requestedTools: false
+                )
+                XCTFail("Expected the HTTP 400 diagnostic")
+            } catch let error as ProviderWireError {
+                guard case .http(_, let statusCode, let message) = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+                XCTAssertEqual(statusCode, 400)
+                XCTAssertTrue(message?.contains("requires leading system") == true)
+                XCTAssertFalse(message?.contains("sk-secret-example-12345") == true)
+                XCTAssertFalse(message?.contains("private project instructions") == true)
+            }
+        }
+    }
+
     func testAnthropicToolRoundTripPayloadAndResponse() throws {
         let settings = AppSettings(
             provider: .anthropic,

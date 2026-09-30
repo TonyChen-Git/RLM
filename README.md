@@ -10,16 +10,15 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 或 proprietary Codex 服務。
 
 > **目前狀態（2026-09-30）**：原始 master prompt 的 Phase A–H 開發範圍已完成。
-> `1.4.4` build `11` development prerelease 已完成封裝，整併 1.4.3 的遠端
+> `1.4.5` build `12` development prerelease 加入 Qwen/OpenAI-compatible Agent
+> 的 system message 合併與 Plan/Agent 底部 Composer 修正；延續 1.4.4 的遠端
 > OpenAI-compatible HTTP 連線支援（含本地網路 vLLM）與本機記憶、
 > `CLAUDE.md`／`.cursorrules` 專案指令預覽匯入；同時包含先前的 Steer/Queue、
 > Side chat、Fork context、worktree/MCP 維護與 App Server 安全界線補強。
-> 本版發行腳本通過 792 項 Swift 測試（1 項環境性 skip、0 failures）、
-> archive/soak/security 契約測試、最佳化 arm64 建置、ad-hoc 簽章、ZIP 與安全稽核。
-> VS Code 17/17 與 GitHub Action 14/14 也在整併後的原始碼通過。
-> 原生 UI 與使用者 vLLM 的實際連線驗證仍待完成。此版本沒有 Developer ID/
+> 發行驗證結果見[1.4.5 版本說明](docs/RELEASE_NOTES_1.4.5.md)。
+> 使用者 vLLM 的實際連線驗證仍待完成。此版本沒有 Developer ID/
 > notarization/stapling、正式 update feed、live SSH/real-browser acceptance 或
-> 正式長時間 soak 證據。詳見[1.4.4 版本說明](docs/RELEASE_NOTES_1.4.4.md)。
+> 正式長時間 soak 證據。
 
 ## 能力總覽
 
@@ -138,6 +137,14 @@ python3 Scripts/soak.py 2h --project-root "$PWD" --dry-run
 python3 Scripts/security_audit.py --help
 ```
 
+2026-09-30 的 `1.4.5` development package 通過 archive contract 7/7、
+soak contract 4/4、security-audit contract 3/3、Swift 794 tests（1 skip、
+0 failures）、VS Code 17/17 與 GitHub Action 14/14；完成 arm64 最佳化建置、
+ad-hoc 簽章、ZIP/解壓驗證、SBOM/provenance 與安全稽核。Chat、Plan、Agent
+空白畫面的封裝版 UI smoke 已通過；真實 Qwen/vLLM 連線與長對話、Approval、Queue
+狀態仍待驗收。ZIP SHA-256 為
+`e0db363db1ab4ef17b49430562739eb306a4f164b34991998309d6bee19c4541`。
+
 2026-09-29 的 `1.4.4` development package 通過 archive contract 7/7、
 soak contract 4/4、security-audit contract 3/3、Swift 792 tests（1 skip、
 0 failures）、VS Code 17/17 與 GitHub Action 14/14；完成 arm64 最佳化建置、
@@ -193,8 +200,12 @@ Downloads、`/tmp` 或 `/var/tmp`。
 暫時 profile，以 `LUMACHAT_UI_SMOKE_PROFILE` 啟動封裝版，並在 App 結束後只
 清理該次建立的 profile。封裝版不採用 debug/test 的
 `LUMACHAT_APP_SUPPORT_PATH`；直接開啟封裝版測試會使用正式的 Project catalog。
-目前 `1.4.2` 封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
-腳本會在啟動前拒絕它。1.4.2 封裝版的原生 UI smoke 尚待完成。
+目前封裝版已包含隔離能力標記；舊的 `1.4.1` 封裝版缺少該標記，
+腳本會在啟動前拒絕它。
+
+依腳本列出的 checklist 手動檢查 Chat、Plan、Agent 的底部 Composer，
+包含空白 Task、視窗縮放、側邊欄，以及可用時的長對話、Approval 與 Queue。
+Plan 的唯讀 footer 應緊接 Composer 下方；腳本只提供隔離 profile。
 
 Model Profile 的規則如下：
 
@@ -292,6 +303,7 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
+- [1.4.5 development prerelease notes](docs/RELEASE_NOTES_1.4.5.md)
 - [1.4.4 development prerelease notes](docs/RELEASE_NOTES_1.4.4.md)
 - [1.4.3 historical development prerelease notes](docs/RELEASE_NOTES_1.4.3.md)
 - [1.4.2 historical development candidate notes](docs/RELEASE_NOTES_1.4.2.md)

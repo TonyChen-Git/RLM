@@ -1,6 +1,11 @@
 # Luma Chat — Unreleased development notes
 
-Checkpoint date: 2026-09-29
+Checkpoint date: 2026-09-30
+
+The 1.4.5 development prerelease fixes the OpenAI-compatible Agent system
+message order and the Plan/Agent bottom Composer layout. Its validation and
+remaining live acceptance are recorded in
+[`RELEASE_NOTES_1.4.5.md`](RELEASE_NOTES_1.4.5.md).
 
 Status: the Phase A–H development implementation and its historical combined
 development gate are complete. The 1.4.4 development prerelease packages the

@@ -77,7 +77,7 @@ struct ProviderHTTPTransport: Sendable {
             throw ProviderWireError.network(provider: provider, detail: error.localizedDescription)
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = Self.errorMessage(from: data)
+            let message = Self.errorMessage(from: data).map(Self.redactedErrorDiagnostic)
             if requestedTools,
                Self.looksLikeUnsupportedTools(statusCode: httpResponse.statusCode, message: message) {
                 throw ProviderWireError.unsupportedTools(
@@ -131,7 +131,7 @@ struct ProviderHTTPTransport: Sendable {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let data = try await readErrorBody(bytes, provider: provider)
-            let message = Self.errorMessage(from: data)
+            let message = Self.errorMessage(from: data).map(Self.redactedErrorDiagnostic)
             if requestedTools,
                Self.looksLikeUnsupportedTools(
                    statusCode: httpResponse.statusCode,
@@ -239,6 +239,22 @@ struct ProviderHTTPTransport: Sendable {
         return String(data: data.prefix(64 * 1_024), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+    }
+
+    private static func redactedErrorDiagnostic(_ message: String) -> String {
+        let redacted = SecretRedactor().redact(message)
+        let firstLine = String(redacted.prefix(2_000).split(whereSeparator: \.isNewline).first ?? "")
+        let contentMarkers = [
+            "prompt:", "prompt=", "\"prompt\":", "messages:", "messages=", "\"messages\":",
+            "content:", "content=", "\"content\":", "system:", "user:", "assistant:"
+        ]
+        let firstContentOffset = contentMarkers.compactMap {
+            firstLine.range(of: $0, options: .caseInsensitive)?.lowerBound
+        }
+            .min()
+        let diagnostic = firstContentOffset.map { String(firstLine[..<$0]) + "[request content omitted]" }
+            ?? firstLine
+        return String(diagnostic.prefix(500))
     }
 
     private static func looksLikeUnsupportedTools(statusCode: Int, message: String?) -> Bool {

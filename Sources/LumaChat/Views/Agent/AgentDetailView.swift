@@ -48,6 +48,37 @@ enum AgentDetailSurfacePolicy {
     }
 }
 
+private struct AgentTranscriptComposerLayout: Layout {
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 2 else { return }
+        let bottomHeight = subviews[1].sizeThatFits(
+            ProposedViewSize(width: bounds.width, height: nil)
+        ).height
+        let transcriptHeight = max(0, bounds.height - bottomHeight)
+        subviews[0].place(
+            at: bounds.origin,
+            proposal: ProposedViewSize(width: bounds.width, height: transcriptHeight)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - bottomHeight),
+            proposal: ProposedViewSize(width: bounds.width, height: bottomHeight)
+        )
+    }
+}
+
 struct AgentDetailView: View {
     @EnvironmentObject private var agentViewModel: AgentViewModel
     @EnvironmentObject private var chatViewModel: ChatViewModel
@@ -141,7 +172,31 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var agentPrimaryContent: some View {
-        VStack(spacing: 0) {
+        GeometryReader { available in
+            AgentTranscriptComposerLayout {
+                agentTranscript
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                VStack(spacing: 0) {
+                    if agentViewModel.selectedSession != nil {
+                        if let approval = agentViewModel.pendingApproval,
+                           approval.sessionID == agentViewModel.selectedSessionID {
+                            AgentApprovalCard(request: approval)
+                                .padding(.horizontal, 22)
+                                .padding(.bottom, 9)
+                        }
+                        AgentComposer()
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(width: available.size.width, height: available.size.height)
+        }
+    }
+
+    @ViewBuilder
+    private var agentTranscript: some View {
+        Group {
             if let session = agentViewModel.selectedSession {
                 if session.workspace != nil {
                     if case .review = session.resolvedTaskType,
@@ -163,18 +218,7 @@ struct AgentDetailView: View {
             } else {
                 NoAgentSessionView()
             }
-
-            if let approval = agentViewModel.pendingApproval,
-               approval.sessionID == agentViewModel.selectedSessionID {
-                AgentApprovalCard(request: approval)
-                    .padding(.horizontal, 22)
-                    .padding(.bottom, 9)
-            }
-            if agentViewModel.selectedSession != nil {
-                AgentComposer()
-            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -2110,13 +2154,22 @@ private struct AgentComposer: View {
                         .background(.primary.opacity(0.07), in: Circle())
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
 
-                TextField("描述要在這個專案完成的工作", text: $agentViewModel.draft, axis: .vertical)
-                    .font(.body)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .frame(minHeight: 42)
-                    .padding(.vertical, 4)
+                TextField(
+                    "",
+                    text: $agentViewModel.draft,
+                    prompt: Text("描述要在這個專案完成的工作"),
+                    axis: .vertical
+                )
+                .font(.body)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.leading)
+                .lineLimit(1...6)
+                .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
+                .padding(.vertical, 4)
+                .accessibilityLabel("Agent 訊息輸入框")
 
                 if agentViewModel.selectedSessionIsRunning {
                     Button {
