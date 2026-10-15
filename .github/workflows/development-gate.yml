@@ -26,10 +26,20 @@ jobs:
   swift:
     runs-on: macos-15
     timeout-minutes: 120
+    env:
+      # The runner default (Xcode 16.4 / Swift 6.1.2) crashes during
+      # AgentViewModel's StateObject initialization SIL lowering.
+      # Pin an installed toolchain instead of following the image default.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Verify selected Xcode and Swift toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
       - name: Swift tests and desktop build
         run: |
           swift test
