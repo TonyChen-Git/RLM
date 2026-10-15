@@ -391,16 +391,16 @@ struct ContextManager: Sendable {
         let imageAttachmentCharacters = message.imageAttachments.reduce(0) {
             $0 + $1.name.count + $1.relativePath.count + $1.mimeType.count + $1.sha256.count
         }
-        let characters = message.content.count
-            + (message.reasoningSummary?.count ?? 0)
-            + (message.name?.count ?? 0)
-            + (message.toolCallID?.count ?? 0)
-            + toolCallCharacters
-            + imageAttachmentCharacters
-        let bytes = message.content.utf8.count
-            + (message.reasoningSummary?.utf8.count ?? 0)
-            + (message.name?.utf8.count ?? 0)
-            + (message.toolCallID?.utf8.count ?? 0)
+        var characters = message.content.count
+        characters += message.reasoningSummary?.count ?? 0
+        characters += message.name?.count ?? 0
+        characters += message.toolCallID?.count ?? 0
+        characters += toolCallCharacters
+        characters += imageAttachmentCharacters
+        var bytes = message.content.utf8.count
+        bytes += message.reasoningSummary?.utf8.count ?? 0
+        bytes += message.name?.utf8.count ?? 0
+        bytes += message.toolCallID?.utf8.count ?? 0
         return max(1, max((characters + 3) / 4, (bytes + 2) / 3)) + 12
     }
 
