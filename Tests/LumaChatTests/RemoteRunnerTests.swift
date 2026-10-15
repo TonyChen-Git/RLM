@@ -903,6 +903,106 @@ final class RemoteRunnerTests: XCTestCase {
         }
     }
 
+    func testWorkerCallUsesDocumentedAbsoluteInstallPath() async throws {
+        let transport = RecordingSSHTransport(responses: [
+            "verify_connection": makeCommandResult(stdout: probeJSON()),
+            "self_managed_worker": makeCommandResult(stdout: #"{"ok":true,"result":{}}"#)
+        ])
+        let backend = try SSHRemoteExecutionBackend(
+            configuration: makeRunner(),
+            credentialProvider: StaticRemoteCredentialProvider(credential: makeCredential()),
+            transport: transport
+        )
+        let reply = try await backend.callWorker(Data(#"{"protocol":1,"operation":"hello"}"#.utf8))
+        XCTAssertFalse(reply.isEmpty)
+        let invocations = await transport.snapshot()
+        XCTAssertEqual(invocations.count, 2)
+        XCTAssertEqual(invocations[1].request.arguments.last, "/usr/local/bin/lumachat-worker")
+    }
+
+    func testWorkerRejectsMalformedJobAuthorityAndCommitReplies() async throws {
+        let jobID = UUID()
+        let baseline: [String: Any] = [
+            "protocol": 1, "job_id": jobID.uuidString,
+            "checkout": "/srv/worker/jobs/checkout", "commit": String(repeating: "a", count: 40),
+            "network": "deny", "status": "completed", "created_at": 100,
+            "heartbeat_at": 101, "exit_code": 0
+        ]
+        for (field, value) in [
+            ("network", "unknown"), ("commit", String(repeating: "z", count: 40)),
+            ("commit", String(repeating: "a", count: 41)),
+            ("checkout", "/srv/../outside"), ("checkout", "/srv//checkout"),
+            ("checkout", "/srv/checkout\n")
+        ] {
+            var invalid = baseline
+            invalid[field] = value
+            let (worker, identity) = try await workerService(result: invalid)
+            do {
+                _ = try await worker.status(identity: identity, jobID: jobID)
+                XCTFail("Worker accepted invalid \(field): \(value)")
+            } catch SelfManagedWorkerError.protocolViolation {} // Expected fail-closed reply.
+        }
+        let (worker, identity) = try await workerService(result: baseline)
+        let accepted = try await worker.status(identity: identity, jobID: jobID)
+        XCTAssertEqual(accepted.jobID, jobID)
+    }
+
+    func testWorkerRejectsSkippedLogBytesAndUnboundDiffCommit() async throws {
+        for nextOffset in [65_537, 8 * 1_024 * 1_024 + 1] {
+            let (worker, identity) = try await workerService(result: [
+                "offset": 0, "next_offset": nextOffset, "text": "log"
+            ])
+            do {
+                _ = try await worker.logs(identity: identity, jobID: UUID())
+                XCTFail("Worker accepted skipped or oversized log offset")
+            } catch SelfManagedWorkerError.protocolViolation {}
+        }
+        let jobID = UUID()
+        let (worker, identity) = try await workerService(result: [
+            "job_id": jobID.uuidString, "commit": "HEAD", "diff": ""
+        ])
+        do {
+            _ = try await worker.diff(identity: identity, jobID: jobID)
+            XCTFail("Worker accepted a moving ref in place of the immutable base commit")
+        } catch SelfManagedWorkerError.protocolViolation {}
+    }
+
+    func testWorkerRevalidatesTaskAuthorityAfterSSHResponse() async throws {
+        var (worker, identity) = try await workerService(result: [
+            "offset": 0, "next_offset": 0, "text": ""
+        ])
+        let authority = WorkerAuthorityRevocationProbe()
+        worker.validateTaskAuthority = { try await authority.validate() }
+        do {
+            _ = try await worker.logs(identity: identity, jobID: UUID())
+            XCTFail("Reply completed after Task authority was revoked")
+        } catch SelfManagedWorkerError.authorityChanged {}
+        let checks = await authority.count
+        XCTAssertEqual(checks, 3)
+    }
+
+    private func workerService(result: [String: Any]) async throws
+        -> (SelfManagedRemoteWorkerService, AgentRemoteExecutionIdentity) {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent("worker-reply-\(UUID())")
+        let fileURL = root.appendingPathComponent("runners.json")
+        let knownHostsURL = root.appendingPathComponent("known_hosts")
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let store = RemoteRunnerStore(fileURL: fileURL, secretStore: InMemoryRemoteRunnerSecretStore())
+        let runner = makeRunner(knownHostsFile: knownHostsURL.path)
+        _ = try await store.upsert(runner, credential: .replace(makeCredential()))
+        try Data("builder.example.test ssh-ed25519 AAAAtest\n".utf8).write(to: knownHostsURL)
+        let json = try JSONSerialization.data(withJSONObject: ["ok": true, "result": result])
+        let service = RemoteRunnerService(
+            store: store, credentialProvider: StaticRemoteCredentialProvider(credential: makeCredential()),
+            transport: RecordingSSHTransport(responses: [
+                "verify_connection": makeCommandResult(stdout: probeJSON()),
+                "self_managed_worker": makeCommandResult(stdout: String(decoding: json, as: UTF8.self))
+            ])
+        )
+        return (SelfManagedRemoteWorkerService(runnerService: service),
+                try await service.executionIdentity(for: runner.id))
+    }
+
     func testBackendRejectsMalformedProbeAsProtocolViolation() async throws {
         let transport = RecordingSSHTransport(responses: [
             "verify_connection": makeCommandResult(stdout: "{\"hostname\":true}")
@@ -1225,6 +1325,14 @@ private struct RecordedSSHInvocation: Sendable {
     var credential: RemoteRunnerCredential?
     var knownHostsData: Data?
     var request: SSHCommandRequest
+}
+
+private actor WorkerAuthorityRevocationProbe {
+    private(set) var count = 0
+    func validate() throws {
+        count += 1
+        if count == 3 { throw SelfManagedWorkerError.authorityChanged }
+    }
 }
 
 private struct DecodedRemoteWorkspaceTransaction: Decodable {

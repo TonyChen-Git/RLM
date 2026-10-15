@@ -287,7 +287,13 @@ struct AgentDetailView: View {
     }
 
     private var taskTerminalSurfaceAvailable: Bool {
-        localReviewSurfaceAvailable
+        guard let session = agentViewModel.selectedSession,
+              session.resolvedTaskType == .coding,
+              session.archivedAt == nil else {
+            return false
+        }
+        let kind = session.resolvedExecutionLocation.kind
+        return kind == .local || kind == .worktree || kind == .ssh
     }
 
     private var localReviewSurfaceAvailable: Bool {
@@ -689,6 +695,7 @@ private struct AgentHeader: View {
     @State private var projectNameDraft = ""
     @State private var isShowingModelParameters = false
     @State private var isShowingLocalMemories = false
+    @State private var isShowingRemoteWorker = false
 
     private var modelParameterRoute: ModelParameterRoute {
         if let session = agentViewModel.selectedSession,
@@ -820,6 +827,16 @@ private struct AgentHeader: View {
                 .buttonStyle(.plain)
                 .help("本機記憶")
                 .accessibilityLabel("本機記憶")
+            }
+
+            if agentViewModel.selectedSession?.resolvedExecutionLocation.kind == .ssh {
+                Button {
+                    isShowingRemoteWorker = true
+                } label: {
+                    Image(systemName: "server.rack").frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("自管遠端 Worker")
             }
 
             if let session = agentViewModel.selectedSession {
@@ -1033,6 +1050,12 @@ private struct AgentHeader: View {
         .sheet(isPresented: $isShowingLocalMemories) {
             AgentLocalMemoryPane()
                 .environmentObject(agentViewModel)
+        }
+        .sheet(isPresented: $isShowingRemoteWorker) {
+            if let sessionID = agentViewModel.selectedSessionID {
+                RemoteWorkerPane(sessionID: sessionID)
+                    .environmentObject(agentViewModel)
+            }
         }
         .alert("自訂專案名稱", isPresented: $isRenamingProject) {
             TextField("留空使用資料夾名稱", text: $projectNameDraft)
@@ -1974,9 +1997,12 @@ private struct AgentComposer: View {
     @EnvironmentObject private var agentViewModel: AgentViewModel
     @EnvironmentObject private var chatViewModel: ChatViewModel
     @State private var presentedSheet: AgentComposerSheet?
-    @State private var editingQueuedFollowUp: AgentQueuedFollowUp?
-    @State private var editingQueuedSessionID: UUID?
-    @State private var queuedEditText = ""
+    @State private var editingQueuedFollowUp: AgentQueuedFollowUpEditRequest?
+    @State private var inspectingSteers: AgentSteerRecoveryRequest?
+    @StateObject private var voice = SystemTaskVoiceProvider()
+    @State private var voiceTaskID: UUID?
+    @State private var voiceReplyAnchor: TaskVoiceReplyAnchor?
+    @State private var voiceError: String?
 
     private var prefersSteerFollowUp: Bool {
         agentViewModel.preferredFollowUpBehavior == .steer
@@ -2054,6 +2080,20 @@ private struct AgentComposer: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if voice.isStarting || voice.isListening || !voice.transcript.isEmpty
+                || voiceError != nil || voice.errorMessage != nil {
+                HStack(spacing: 7) {
+                    Image(systemName: voice.isListening ? "waveform" : "exclamationmark.circle")
+                    Text(voiceError ?? voice.errorMessage ?? (voice.transcript.isEmpty
+                        ? (voice.isStarting ? "正在請求語音權限…" : "正在以系統裝置端語音辨識聆聽…")
+                        : voice.transcript))
+                        .lineLimit(2)
+                }
+                .font(.caption)
+                .foregroundStyle(voiceError == nil && voice.errorMessage == nil ? Color.secondary : Color.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if !agentViewModel.pendingImageAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
@@ -2073,6 +2113,7 @@ private struct AgentComposer: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(!agentViewModel.canRemovePendingImageAttachment(id: attachment.id))
                                 .help("移除影像附件")
                             }
                             .font(.caption)
@@ -2115,7 +2156,6 @@ private struct AgentComposer: View {
                     .disabled(
                         !allowsLocalWorkspacePicker
                             || agentViewModel.selectedSession?.workspace == nil
-                            || agentViewModel.selectedSessionIsRunning
                             || agentViewModel.selectedGoalIsMutating
                             || agentViewModel.isAttachingImage
                             || agentViewModel.pendingImageAttachments.count
@@ -2170,6 +2210,55 @@ private struct AgentComposer: View {
                 .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
                 .padding(.vertical, 4)
                 .accessibilityLabel("Agent 訊息輸入框")
+
+                Button {
+                    if voice.isStarting || voice.isListening || !voice.transcript.isEmpty {
+                        submitVoiceTranscript()
+                    } else {
+                        voiceTaskID = agentViewModel.selectedSessionID
+                        let originatingTaskID = voiceTaskID
+                        voiceError = nil
+                        Task {
+                            guard voiceTaskID == originatingTaskID,
+                                  agentViewModel.selectedSessionID == originatingTaskID else { return }
+                            do { try await voice.startListening() }
+                            catch {
+                                guard voiceTaskID == originatingTaskID,
+                                      agentViewModel.selectedSessionID == originatingTaskID else { return }
+                                voiceError = error.localizedDescription
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: voice.isStarting || voice.isListening ? "stop.circle.fill"
+                        : (voice.transcript.isEmpty ? "mic" : "paperplane"))
+                        .foregroundStyle(voice.isListening ? .red : .primary)
+                }
+                .buttonStyle(.plain)
+                .disabled(agentViewModel.selectedSessionID == nil)
+                .help(voice.isStarting ? "取消語音輸入"
+                    : (voice.isListening ? "停止辨識並送到目前 Task"
+                        : (voice.transcript.isEmpty ? "開始裝置端語音輸入" : "送出語音辨識內容")))
+
+                if voice.isSpeaking {
+                    Button {
+                        voice.stopSpeaking()
+                    } label: {
+                        Image(systemName: "speaker.slash")
+                    }
+                    .buttonStyle(.plain)
+                    .help("停止播放")
+                } else if let reply = agentViewModel.selectedSession?.messages.last(where: {
+                    $0.role == .assistant && !$0.content.isEmpty
+                }) {
+                    Button {
+                        voice.speak(reply.content)
+                    } label: {
+                        Image(systemName: "speaker.wave.2")
+                    }
+                    .buttonStyle(.plain)
+                    .help("播放上一則 Agent 回覆")
+                }
 
                 if agentViewModel.selectedSessionIsRunning {
                     Button {
@@ -2284,6 +2373,7 @@ private struct AgentComposer: View {
                         }
                     }
                     ForEach(agentViewModel.selectedQueuedFollowUps) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text(entry.text.replacingOccurrences(of: "\n", with: " "))
                                 .lineLimit(1)
@@ -2302,9 +2392,9 @@ private struct AgentComposer: View {
                                 .disabled(agentViewModel.selectedSessionIsRunning)
                             } else {
                                 Button {
-                                    queuedEditText = entry.text
-                                    editingQueuedSessionID = sessionID
-                                    editingQueuedFollowUp = entry
+                                    editingQueuedFollowUp = AgentQueuedFollowUpEditRequest(
+                                        sessionID: sessionID, entry: entry
+                                    )
                                 } label: {
                                     Image(systemName: "pencil")
                                 }
@@ -2346,10 +2436,50 @@ private struct AgentComposer: View {
                             }
                         }
                         .font(.caption2)
+                        if !entry.imageAttachments.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(entry.imageAttachments) { attachment in
+                                    Label(attachment.name, systemImage: "photo")
+                                        .lineLimit(1)
+                                    if entry.claimID == nil {
+                                        Button {
+                                            Task {
+                                                await agentViewModel.removeQueuedImageAttachment(
+                                                    id: attachment.id,
+                                                    entryID: entry.id,
+                                                    sessionID: sessionID
+                                                )
+                                            }
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                        }
+                                        .help("移除排隊影像")
+                                    }
+                                }
+                            }
+                            .font(.caption2)
+                        }
+                        }
                     }
                 }
                 .padding(9)
                 .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+            }
+
+            if agentViewModel.selectedUncertainSteerCount > 0,
+               let sessionID = agentViewModel.selectedSessionID {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("\(agentViewModel.selectedUncertainSteerCount) 則 Steer 已接受，但尚未能從 Task 訊息證明送達。請檢查對話後再決定是否重送。")
+                        .font(.caption)
+                    Spacer()
+                    Button("檢視與復原") {
+                        inspectingSteers = AgentSteerRecoveryRequest(id: sessionID)
+                    }
+                }
+                .padding(9)
+                .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
             }
 
             Text(footerText)
@@ -2376,32 +2506,61 @@ private struct AgentComposer: View {
                     .environmentObject(chatViewModel)
             }
         }
-        .sheet(item: $editingQueuedFollowUp) { entry in
-            VStack(alignment: .leading, spacing: 12) {
-                Text("編輯排隊訊息").font(.headline)
-                TextEditor(text: $queuedEditText)
-                    .frame(minHeight: 120)
-                HStack {
-                    Spacer()
-                    Button("取消") { editingQueuedFollowUp = nil }
-                    Button("儲存") {
-                        guard let sessionID = editingQueuedSessionID else { return }
-                        Task {
-                            await agentViewModel.updateQueuedFollowUp(
-                                id: entry.id,
-                                sessionID: sessionID,
-                                text: queuedEditText
-                            )
-                        }
-                        editingQueuedFollowUp = nil
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(queuedEditText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || queuedEditText.utf8.count > AgentQueuedFollowUpStore.maximumPromptBytes)
+        .sheet(item: $editingQueuedFollowUp) { request in
+            AgentQueuedFollowUpEditor(request: request)
+                .environmentObject(agentViewModel)
+        }
+        .sheet(item: $inspectingSteers) { request in
+            AgentSteerRecoverySheet(request: request)
+                .environmentObject(agentViewModel)
+        }
+        .onChange(of: agentViewModel.selectedSessionID) { _, _ in
+            inspectingSteers = nil
+            _ = voice.stopListening()
+            voice.stopSpeaking()
+            voiceTaskID = nil
+            voiceReplyAnchor = nil
+            voiceError = nil
+        }
+        .onChange(of: agentViewModel.selectedSession?.state) { _, state in
+            guard let state,
+                  voiceReplyAnchor?.taskID == agentViewModel.selectedSessionID,
+                  [.completed, .paused, .stepLimit, .failed].contains(state),
+                  let session = agentViewModel.selectedSession else { return }
+            let reply = voiceReplyAnchor?.reply(in: session)
+            voiceReplyAnchor = nil
+            if let reply { voice.speak(reply) }
+        }
+        .onDisappear {
+            _ = voice.stopListening()
+            voice.stopSpeaking()
+            voiceTaskID = nil
+            voiceReplyAnchor = nil
+        }
+    }
+
+    private func submitVoiceTranscript() {
+        let transcript = voice.stopListening()
+        guard voiceTaskID == agentViewModel.selectedSessionID,
+              !transcript.isEmpty else { return }
+        agentViewModel.draft = transcript
+        let originatingTaskID = voiceTaskID
+        if agentViewModel.selectedSessionIsRunning {
+            Task {
+                guard agentViewModel.selectedSessionID == originatingTaskID,
+                      agentViewModel.draft == transcript else { return }
+                if prefersSteerFollowUp {
+                    _ = await agentViewModel.steerCurrentRun()
+                } else {
+                    _ = await agentViewModel.queueFollowUp(
+                        route: chatViewModel.settings,
+                        apiKey: chatViewModel.apiKey
+                    )
                 }
             }
-            .padding(20)
-            .frame(width: 460)
+        } else {
+            voiceReplyAnchor = agentViewModel.selectedSession.map(TaskVoiceReplyAnchor.init)
+            agentViewModel.send(route: chatViewModel.settings, apiKey: chatViewModel.apiKey)
         }
     }
 
@@ -2412,7 +2571,7 @@ private struct AgentComposer: View {
         )
         switch executionLocationKind {
         case .ssh:
-            return "Task 模型路由：\(route)；Filesystem、Shell、Git 與 Build/Test 由 Task-bound SSH Runner 執行；Mac Terminal、Browser、Computer Use 與 executable Plugin 已停用"
+            return "Task 模型路由：\(route)；Filesystem、Shell、Git、Build/Test 與互動式 Terminal 由 Task-bound SSH Runner 執行；Browser、Computer Use 與 executable Plugin 已停用"
         case .futureCloud:
             return "Task 模型路由：\(route)；Cloud execution backend 尚未提供，執行會 fail closed，不會回退到這台 Mac"
         case .local, .worktree, .none:
@@ -2422,6 +2581,122 @@ private struct AgentComposer: View {
             return "Plan 可讀取 Workspace，但不能修改檔案或執行具變更性的命令"
         }
         return "Task 模型路由：\(route)；Filesystem、Terminal、Git 與 MCP 永遠在這台 Mac 執行"
+    }
+}
+
+private struct AgentSteerRecoveryRequest: Identifiable {
+    /// Capture the originating Task rather than reading the current selection
+    /// when a delayed sheet action runs.
+    let id: UUID
+}
+
+private struct AgentSteerRecoverySheet: View {
+    let request: AgentSteerRecoveryRequest
+    @EnvironmentObject private var agentViewModel: AgentViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var dismissingReceipt: AgentSteerReceipt?
+    @State private var isConfirmingDismissal = false
+    @State private var operationError: String?
+    @State private var copiedReceiptIDs: Set<UUID> = []
+
+    private var receipts: [AgentSteerReceipt] {
+        agentViewModel.uncertainSteersBySession[request.id] ?? []
+    }
+
+    private var canResolve: Bool {
+        agentViewModel.selectedSessionID == request.id
+            && !agentViewModel.isRunning(sessionID: request.id)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Steer 復原").font(.title2.bold())
+            Text("這些訊息已接受，但尚未能從已儲存的 Task 對話確認送達。請先核對對話；複製只會加入草稿，必須自行送出。")
+                .foregroundStyle(.secondary)
+            if !canResolve {
+                Text("Task 執行結束後才能複製或移除復原記錄。")
+                    .foregroundStyle(.orange)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if receipts.isEmpty {
+                        Text("沒有尚待核對的 Steer。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(receipts) { receipt in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(receipt.acceptedAt, format: .dateTime)
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let text = receipt.redactedText {
+                                Text(text).textSelection(.enabled)
+                            } else {
+                                Text("舊版只保存摘要指紋，無法復原文字，也無法確認送達。")
+                                    .foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Button(copiedReceiptIDs.contains(receipt.id) ? "已複製到草稿" : "複製到草稿") {
+                                    if agentViewModel.copyUncertainSteerToDraft(
+                                        id: receipt.id, sessionID: request.id
+                                    ) {
+                                        copiedReceiptIDs.insert(receipt.id)
+                                        operationError = nil
+                                    } else {
+                                        operationError = agentViewModel.errorMessage
+                                    }
+                                }
+                                .disabled(!canResolve || receipt.redactedText == nil
+                                          || copiedReceiptIDs.contains(receipt.id))
+                                Spacer()
+                                Button("已核對，移除此記錄") {
+                                    dismissingReceipt = receipt
+                                    isConfirmingDismissal = true
+                                }
+                                .disabled(!canResolve)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LumaTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            }
+            if let operationError {
+                Text(operationError).font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("關閉") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 640, height: 460)
+        .onAppear {
+            guard agentViewModel.selectedSessionID == request.id else {
+                dismiss()
+                return
+            }
+            if !agentViewModel.refreshUncertainSteers(sessionID: request.id) {
+                operationError = agentViewModel.errorMessage
+            }
+        }
+        .onChange(of: agentViewModel.selectedSessionID) { _, selected in
+            if selected != request.id { dismiss() }
+        }
+        .confirmationDialog("移除此筆 Steer 復原記錄？", isPresented: $isConfirmingDismissal,
+                            titleVisibility: .visible) {
+            Button("移除此記錄", role: .destructive) {
+                guard let receipt = dismissingReceipt else { return }
+                if agentViewModel.dismissUncertainSteer(id: receipt.id, sessionID: request.id) {
+                    operationError = nil
+                } else {
+                    operationError = agentViewModel.errorMessage
+                }
+                dismissingReceipt = nil
+            }
+            Button("取消", role: .cancel) { dismissingReceipt = nil }
+        } message: {
+            Text("此操作只移除選取的復原記錄，不會送出訊息。請確認已核對對話，或已把需要的文字複製到草稿。")
+        }
     }
 }
 

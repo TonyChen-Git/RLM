@@ -288,6 +288,8 @@ struct AgentSettings: Codable, Equatable, Sendable {
     var followUpBehavior: AgentFollowUpBehavior = .steer
     /// Local project memories are opt-in; old settings remain disabled.
     var memoriesEnabled = false
+    /// Separate opt-in for local, background suggestions from finished Tasks.
+    var automaticMemorySuggestionsEnabled = false
     var permissionMode: AgentPermissionMode = .autoApproveSafe
     var maxSteps = 100
     var commandTimeout = 120.0
@@ -308,7 +310,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     var pullRequestProvider: PullRequestProviderConfiguration = .github
 
     private enum CodingKeys: String, CodingKey {
-        case defaultMode, followUpBehavior, memoriesEnabled, permissionMode, maxSteps, commandTimeout, autoRunTests
+        case defaultMode, followUpBehavior, memoriesEnabled, automaticMemorySuggestionsEnabled, permissionMode, maxSteps, commandTimeout, autoRunTests
         case autoContextCompression, gitCheckpoint, networkAccess, visionMode
         case browserEnabled, browserProfileMode, browserPersistentProfileName
         case browserExistingDebugEndpoint
@@ -328,6 +330,9 @@ struct AgentSettings: Codable, Equatable, Sendable {
         )) ?? defaults.followUpBehavior
         memoriesEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoriesEnabled)
             ?? defaults.memoriesEnabled
+        automaticMemorySuggestionsEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .automaticMemorySuggestionsEnabled
+        ) ?? defaults.automaticMemorySuggestionsEnabled
         permissionMode = try container.decodeIfPresent(AgentPermissionMode.self, forKey: .permissionMode) ?? defaults.permissionMode
         maxSteps = max(1, try container.decodeIfPresent(Int.self, forKey: .maxSteps) ?? defaults.maxSteps)
         commandTimeout = max(1, try container.decodeIfPresent(Double.self, forKey: .commandTimeout) ?? defaults.commandTimeout)
@@ -1839,6 +1844,10 @@ struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     /// JSON decodable; launch migration groups legacy workspaces into projects.
     var projectID: UUID?
     var projectFolderID: UUID?
+    /// Opaque digest of a user-selected external chat export. It is used only
+    /// to detect a repeated import within the same Project; no source path or
+    /// external credential is persisted.
+    var importSourceDigest: String?
     /// Nil preserves legacy sessions and resolves to "do not use". Changing
     /// either control affects only future runs, never an in-flight model turn.
     var memoryUseEnabled: Bool?

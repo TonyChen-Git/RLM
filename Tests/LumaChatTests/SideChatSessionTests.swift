@@ -5,6 +5,7 @@ private struct SideChatRequest: Sendable {
     let messages: [ChatMessage]
     let settings: AppSettings
     let apiKey: String?
+    var imageSnapshots: [UUID: Data] = [:]
 }
 
 private actor SideChatRequestRecorder {
@@ -23,10 +24,18 @@ private struct SideChatTestStreamer: SideChatStreaming {
         settings: AppSettings,
         apiKey: String?
     ) -> AsyncThrowingStream<LLMStreamDelta, Error> {
+        stream(messages: messages, settings: settings, apiKey: apiKey, imageSnapshots: [:])
+    }
+
+    func stream(
+        messages: [ChatMessage], settings: AppSettings, apiKey: String?,
+        imageSnapshots: [UUID: Data]
+    ) -> AsyncThrowingStream<LLMStreamDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 await recorder.record(
-                    SideChatRequest(messages: messages, settings: settings, apiKey: apiKey)
+                    SideChatRequest(messages: messages, settings: settings, apiKey: apiKey,
+                                    imageSnapshots: imageSnapshots)
                 )
                 for delta in response { continuation.yield(delta) }
                 continuation.finish()
@@ -36,6 +45,45 @@ private struct SideChatTestStreamer: SideChatStreaming {
 }
 
 final class SideChatSessionTests: XCTestCase {
+    @MainActor
+    func testSelectedImageRemainsFrozenForFollowUpAndExpiresWithContext() async throws {
+        let root = AppPaths.projectTemporaryRoot
+            .appendingPathComponent("side-chat-image-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("snapshot.png")
+        let png = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1kAAAAASUVORK5CYII="))
+        try png.write(to: file)
+        let workspace = AgentWorkspace(name: "Fixture", rootPath: root.path, allowedPaths: [],
+                                       bookmarkData: nil, gitRepository: false, branch: nil)
+        let recorder = SideChatRequestRecorder()
+        let sideChat = SideChatSession(
+            parent: AgentSession(mode: .agent), route: AppSettings(selectedModel: "test-model"),
+            apiKey: nil, streamer: SideChatTestStreamer(recorder: recorder)
+        )
+        sideChat.attachWorkspaceImage(path: "snapshot.png", workspace: workspace)
+        let id = try XCTUnwrap(sideChat.selectedSnapshots.first?.id)
+        sideChat.draft = "Describe this image"
+        sideChat.send()
+        await sideChat.waitForCompletion()
+        try Data("changed source".utf8).write(to: file)
+        sideChat.draft = "Describe another detail in the same image"
+        sideChat.send()
+        await sideChat.waitForCompletion()
+        var requests = await recorder.requests()
+        XCTAssertEqual(requests[0].imageSnapshots[id], png)
+        XCTAssertEqual(requests[1].imageSnapshots[id], png)
+        for index in 0..<8 {
+            sideChat.draft = "Follow up \(index)"
+            sideChat.send()
+            await sideChat.waitForCompletion()
+        }
+        requests = await recorder.requests()
+        XCTAssertTrue(try XCTUnwrap(requests.last).imageSnapshots.isEmpty)
+        sideChat.close()
+    }
+
     @MainActor
     func testTranscriptIsSeparateAndUsesFrozenParentRouteWithoutToolContent() async {
         var parent = AgentSession(mode: .agent)
@@ -163,5 +211,40 @@ final class SideChatSessionTests: XCTestCase {
         let requests = await recorder.requests()
         XCTAssertEqual(requests.count, 1)
         XCTAssertTrue(parent.messages.isEmpty)
+    }
+
+    @MainActor
+    func testSelectedFileSnapshotIsFrozenRedactedAndClearedOnClose() async throws {
+        let root = AppPaths.projectTemporaryRoot
+            .appendingPathComponent("side-chat-snapshot-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.txt")
+        try Data("Status: first\napi_key=side-secret-123456".utf8).write(to: file)
+        let workspace = AgentWorkspace(
+            name: "Fixture", rootPath: root.path, allowedPaths: [],
+            bookmarkData: nil, gitRepository: false, branch: nil
+        )
+        var parent = AgentSession(mode: .agent)
+        parent.workspace = workspace
+        let recorder = SideChatRequestRecorder()
+        let sideChat = SideChatSession(
+            parent: parent, route: AppSettings(selectedModel: "test-model"),
+            apiKey: nil, streamer: SideChatTestStreamer(recorder: recorder)
+        )
+        sideChat.attachWorkspaceFile(path: "note.txt", workspace: workspace)
+        XCTAssertEqual(sideChat.selectedSnapshots.count, 1)
+        try Data("Status: changed".utf8).write(to: file)
+        sideChat.draft = "Read my selected snapshot"
+        sideChat.send()
+        await sideChat.waitForCompletion()
+        let requests = await recorder.requests()
+        let attachment = try XCTUnwrap(requests.first?.messages.last?.attachments.first)
+        XCTAssertTrue(attachment.extractedText?.contains("Status: first") == true)
+        XCTAssertFalse(attachment.extractedText?.contains("side-secret-123456") == true)
+        XCTAssertFalse(attachment.extractedText?.contains("Status: changed") == true)
+        sideChat.close()
+        XCTAssertTrue(sideChat.messages.isEmpty)
+        XCTAssertTrue(sideChat.selectedSnapshots.isEmpty)
     }
 }

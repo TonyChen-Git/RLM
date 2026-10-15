@@ -44,7 +44,7 @@ actor OAuthConnectorStore {
         }
     }
 
-    private struct StoredCredential: Codable {
+    private struct StoredCredential: Codable, Equatable {
         var accessToken: String
         var refreshToken: String?
         var expiresAt: Date?
@@ -60,6 +60,7 @@ actor OAuthConnectorStore {
     private var configurations: [OAuthConnectorConfiguration] = []
     private var pendingAuthorizations: [UUID: PendingAuthorization] = [:]
     private var activeExchanges: [UUID: UUID] = [:]
+    private var activeRefreshes: Set<UUID> = []
 
     init(
         fileURL: URL = AppPaths.oauthConnectorsFile,
@@ -74,13 +75,18 @@ actor OAuthConnectorStore {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.urlCache = nil
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-            self.session = URLSession(configuration: configuration)
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: RejectingRedirectURLSessionDelegate(),
+                delegateQueue: nil
+            )
         }
     }
 
     func load() throws -> [OAuthConnectorConfiguration] {
         pendingAuthorizations = [:]
         activeExchanges = [:]
+        activeRefreshes = []
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             configurations = []
             return []
@@ -252,13 +258,14 @@ actor OAuthConnectorStore {
         let (data, response) = try await session.data(for: request)
         guard data.count <= 1 * 1_024 * 1_024,
               let http = response as? HTTPURLResponse,
-              http.url?.scheme?.lowercased() == "https",
+              AgentHTTPOrigin.isSameOrigin(configuration.tokenEndpoint, http.url),
               (200..<300).contains(http.statusCode) else {
             throw ExtensionSubsystemError.invalidConnector("Token endpoint 回應失敗")
         }
         let token = try JSONDecoder().decode(TokenResponse.self, from: data)
         let tokenType = token.tokenType ?? "Bearer"
         guard Self.isBoundedOpaqueValue(token.accessToken, maximumBytes: 64 * 1_024),
+              token.expiresIn.map({ $0.isFinite && $0 > 0 }) ?? true,
               token.refreshToken.map({
                 Self.isBoundedOpaqueValue($0, maximumBytes: 64 * 1_024)
               }) ?? true,
@@ -312,11 +319,123 @@ actor OAuthConnectorStore {
 
     /// Returns a credential only to a bounded connector tool after its normal
     /// ToolExecutor network authorization. Callers must never log this value.
-    func credential(for connectorID: UUID) throws -> OAuthCredential? {
+    func credential(for connectorID: UUID) async throws -> OAuthCredential? {
         guard configurations.contains(where: { $0.id == connectorID && $0.enabled }),
-              let raw = try secretStore.load(
-                account: Self.credentialAccount(connectorID)
-              ), let data = raw.data(using: .utf8) else { return nil }
+              let stored = try loadCredential(connectorID) else { return nil }
+        if let expiresAt = stored.expiresAt,
+           expiresAt <= Date().addingTimeInterval(60) {
+            return try await refresh(connectorID)
+        }
+        return Self.publicCredential(stored)
+    }
+
+    @discardableResult
+    func refresh(_ connectorID: UUID) async throws -> OAuthCredential {
+        guard let configuration = configurations.first(where: {
+            $0.id == connectorID && $0.enabled
+        }), let stored = try loadCredential(connectorID),
+              let refreshToken = stored.refreshToken else {
+            throw ExtensionSubsystemError.invalidConnector("沒有可用的 refresh token；請重新連線")
+        }
+        guard activeRefreshes.insert(connectorID).inserted else {
+            throw ExtensionSubsystemError.invalidConnector("Token 更新正在進行")
+        }
+        defer { activeRefreshes.remove(connectorID) }
+        var request = URLRequest(url: configuration.tokenEndpoint, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = Self.formEncoded([
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken,
+            "client_id": configuration.clientID
+        ])
+        let (data, response) = try await session.data(for: request)
+        guard data.count <= 1 * 1_024 * 1_024,
+              let http = response as? HTTPURLResponse,
+              AgentHTTPOrigin.isSameOrigin(configuration.tokenEndpoint, http.url) else {
+            throw ExtensionSubsystemError.invalidConnector("Token endpoint 回應不可信")
+        }
+        if http.statusCode == 400 || http.statusCode == 401 {
+            let code = (try? JSONSerialization.jsonObject(with: data) as? [String: String])?["error"]
+            if code == "invalid_grant" || code == "invalid_token" {
+                try assertUnchangedCredential(stored, configuration: configuration)
+                _ = try disconnect(connectorID)
+                throw ExtensionSubsystemError.invalidConnector("Token 已撤銷或失效；請重新連線")
+            }
+        }
+        guard (200..<300).contains(http.statusCode),
+              let token = try? JSONDecoder().decode(TokenResponse.self, from: data),
+              Self.isBoundedOpaqueValue(token.accessToken, maximumBytes: 64 * 1_024),
+              token.refreshToken.map({ Self.isBoundedOpaqueValue($0, maximumBytes: 64 * 1_024) }) ?? true,
+              let seconds = token.expiresIn, seconds.isFinite, seconds > 0 else {
+            throw ExtensionSubsystemError.invalidConnector("Token 更新失敗；舊 token 不會在過期後使用")
+        }
+        try assertUnchangedCredential(stored, configuration: configuration)
+        let renewed = StoredCredential(
+            accessToken: token.accessToken,
+            refreshToken: token.refreshToken ?? refreshToken,
+            expiresAt: Date().addingTimeInterval(min(seconds, 10 * 365 * 24 * 60 * 60)),
+            tokenType: token.tokenType ?? stored.tokenType
+        )
+        guard renewed.tokenType.range(
+            of: #"^[A-Za-z][A-Za-z0-9._-]{0,31}$"#,
+            options: .regularExpression
+        ) != nil else {
+            throw ExtensionSubsystemError.invalidConnector("Token type 無效")
+        }
+        let encoded = try JSONEncoder().encode(renewed)
+        try secretStore.save(String(decoding: encoded, as: UTF8.self),
+                             account: Self.credentialAccount(connectorID))
+        return Self.publicCredential(renewed)
+    }
+
+    /// RFC 7009-style revocation is best effort only when the user explicitly
+    /// configures a trusted HTTPS endpoint. A failed remote revoke retains the
+    /// local credential so the user can retry or choose local disconnect.
+    func revoke(_ connectorID: UUID) async throws -> [OAuthConnectorConfiguration] {
+        guard let configuration = configurations.first(where: { $0.id == connectorID }),
+              let endpoint = configuration.revocationEndpoint,
+              let stored = try loadCredential(connectorID) else {
+            throw ExtensionSubsystemError.invalidConnector("沒有可撤銷的 token 或 endpoint")
+        }
+        var request = URLRequest(url: endpoint, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.formEncoded([
+            "token": stored.refreshToken ?? stored.accessToken,
+            "client_id": configuration.clientID
+        ])
+        let (data, response) = try await session.data(for: request)
+        guard data.count <= 1 * 1_024 * 1_024,
+              let http = response as? HTTPURLResponse,
+              AgentHTTPOrigin.isSameOrigin(endpoint, http.url),
+              (200..<300).contains(http.statusCode) else {
+            throw ExtensionSubsystemError.invalidConnector("遠端撤銷未確認；本機 token 保留供重試")
+        }
+        try assertUnchangedCredential(stored, configuration: configuration)
+        return try disconnect(connectorID)
+    }
+
+    private func assertUnchangedCredential(
+        _ stored: StoredCredential,
+        configuration: OAuthConnectorConfiguration
+    ) throws {
+        guard let current = configurations.first(where: { $0.id == configuration.id }),
+              current.enabled == configuration.enabled,
+              current.connectedAt == configuration.connectedAt,
+              Self.hasSameAuthorizationBinding(current, configuration),
+              try loadCredential(configuration.id) == stored else {
+            throw ExtensionSubsystemError.invalidConnector(
+                "OAuth 請求期間連線或 token 已變更；請重新檢查狀態"
+            )
+        }
+    }
+
+    private func loadCredential(_ connectorID: UUID) throws -> StoredCredential? {
+        guard let raw = try secretStore.load(
+            account: Self.credentialAccount(connectorID)
+        ), let data = raw.data(using: .utf8) else { return nil }
         guard data.count <= 256 * 1_024 else {
             throw ExtensionSubsystemError.sizeLimit("OAuth credential 超過安全上限")
         }
@@ -331,7 +450,11 @@ actor OAuthConnectorStore {
               ) != nil else {
             throw ExtensionSubsystemError.invalidConnector("Keychain credential 已損壞")
         }
-        return OAuthCredential(
+        return stored
+    }
+
+    private static func publicCredential(_ stored: StoredCredential) -> OAuthCredential {
+        OAuthCredential(
             accessToken: stored.accessToken,
             refreshToken: stored.refreshToken,
             expiresAt: stored.expiresAt,
@@ -430,6 +553,7 @@ actor OAuthConnectorStore {
               configuration.scopes.allSatisfy(Self.isValidScope),
               Self.isSecureEndpoint(configuration.authorizationEndpoint),
               Self.isSecureEndpoint(configuration.tokenEndpoint),
+              configuration.revocationEndpoint.map(Self.isSecureEndpoint) ?? true,
               Self.isValidRedirect(configuration.redirectURI)
         else {
             throw ExtensionSubsystemError.invalidConnector("名稱、client、scope 或 HTTPS endpoint 無效")
@@ -504,6 +628,7 @@ actor OAuthConnectorStore {
     ) -> Bool {
         lhs.authorizationEndpoint == rhs.authorizationEndpoint
             && lhs.tokenEndpoint == rhs.tokenEndpoint
+            && lhs.revocationEndpoint == rhs.revocationEndpoint
             && lhs.clientID == rhs.clientID
             && lhs.scopes == rhs.scopes
             && lhs.redirectURI == rhs.redirectURI

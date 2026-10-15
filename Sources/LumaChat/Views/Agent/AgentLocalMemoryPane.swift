@@ -6,9 +6,15 @@ struct AgentLocalMemoryPane: View {
     @EnvironmentObject private var agentViewModel: AgentViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var proposedText = ""
+    @State private var proposedCategory: AgentLocalMemoryCategory = .other
     @State private var editingID: UUID?
     @State private var editingText = ""
+    @State private var editingCategory: AgentLocalMemoryCategory = .other
     @State private var isConfirmingClear = false
+    @State private var searchText = ""
+    @State private var searchCategory: AgentLocalMemoryCategory?
+    @State private var searchSort: AgentLocalMemorySort = .relevance
+    @State private var hasSearched = false
 
     private var session: AgentSession? { agentViewModel.selectedSession }
     private var snapshot: AgentLocalMemorySnapshot {
@@ -94,17 +100,72 @@ struct AgentLocalMemoryPane: View {
                             .padding(7)
                             .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
                         HStack {
+                            Picker("分類", selection: $proposedCategory) {
+                                ForEach(AgentLocalMemoryCategory.allCases, id: \.self) { category in
+                                    Text(category.title).tag(category)
+                                }
+                            }
+                            .frame(width: 160)
                             Spacer()
                             Button("儲存提案") {
                                 let text = proposedText
                                 Task {
-                                    if await agentViewModel.proposeSelectedLocalMemory(text) {
+                                    if await agentViewModel.proposeSelectedLocalMemory(
+                                        text, category: proposedCategory
+                                    ) {
                                         proposedText = ""
                                     }
                                 }
                             }
                             .disabled(!canContribute
                                 || proposedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("跨 Project 搜尋").font(.headline)
+                        HStack {
+                            TextField("搜尋已儲存的記憶或來源 Task", text: $searchText)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { runSearch() }
+                            Picker("分類", selection: $searchCategory) {
+                                Text("全部").tag(AgentLocalMemoryCategory?.none)
+                                ForEach(AgentLocalMemoryCategory.allCases, id: \.self) { category in
+                                    Text(category.title).tag(Optional(category))
+                                }
+                            }
+                            .frame(width: 115)
+                            Picker("排序", selection: $searchSort) {
+                                ForEach(AgentLocalMemorySort.allCases, id: \.self) { sort in
+                                    Text(sort.title).tag(sort)
+                                }
+                            }
+                            .frame(width: 100)
+                            Button("搜尋") { runSearch() }
+                        }
+                        .disabled(!agentViewModel.settings.memoriesEnabled)
+                        if hasSearched {
+                            if agentViewModel.localMemorySearchResults.isEmpty {
+                                Text("沒有符合的記憶。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                ForEach(agentViewModel.localMemorySearchResults) { result in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("\(result.projectName) · \((result.entry.category ?? .other).title) · \(result.entry.status == .approved ? "已核准" : "待審核")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Text(result.entry.text).font(.callout).textSelection(.enabled)
+                                        if let source = result.entry.source {
+                                            Button("來源：\(source.taskTitle)") {
+                                                agentViewModel.openMemorySource(source)
+                                                dismiss()
+                                            }
+                                            .font(.caption)
+                                        }
+                                    }
+                                    .padding(8)
+                                }
+                            }
                         }
                     }
 
@@ -158,6 +219,7 @@ struct AgentLocalMemoryPane: View {
                 Button("編輯") {
                     editingID = entry.id
                     editingText = entry.text
+                    editingCategory = entry.category ?? .other
                 }
                 Button("刪除", role: .destructive) {
                     Task { await agentViewModel.removeSelectedLocalMemory(id: entry.id) }
@@ -167,12 +229,19 @@ struct AgentLocalMemoryPane: View {
                 TextEditor(text: $editingText)
                     .frame(minHeight: 65)
                 HStack {
+                    Picker("分類", selection: $editingCategory) {
+                        ForEach(AgentLocalMemoryCategory.allCases, id: \.self) { category in
+                            Text(category.title).tag(category)
+                        }
+                    }
+                    .frame(width: 150)
                     Button("取消") { editingID = nil }
                     Button("儲存修改") {
                         let text = editingText
                         Task {
                             if await agentViewModel.updateSelectedLocalMemory(
-                                id: entry.id, text: text
+                                id: entry.id, text: text,
+                                category: editingCategory
                             ) {
                                 editingID = nil
                             }
@@ -186,6 +255,18 @@ struct AgentLocalMemoryPane: View {
                 Text(entry.text)
                     .font(.callout)
                     .textSelection(.enabled)
+                Text((entry.category ?? .other).title)
+                    .font(.caption2).foregroundStyle(.secondary)
+                if let source = entry.source {
+                    Text("來源訊息：\(source.excerpt)")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button("開啟來源 Task：\(source.taskTitle)") {
+                        agentViewModel.openMemorySource(source)
+                        dismiss()
+                    }
+                    .font(.caption)
+                }
                 if entry.status == .proposed {
                     Button("核准供下次執行使用") {
                         Task { await agentViewModel.approveSelectedLocalMemory(id: entry.id) }
@@ -197,5 +278,15 @@ struct AgentLocalMemoryPane: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func runSearch() {
+        hasSearched = true
+        Task {
+            await agentViewModel.searchLocalMemories(
+                query: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
+                category: searchCategory, sort: searchSort
+            )
+        }
     }
 }

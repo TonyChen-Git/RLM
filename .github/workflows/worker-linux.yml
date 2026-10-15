@@ -1,0 +1,28 @@
+name: Self-managed worker Linux
+
+on:
+  push:
+    paths:
+      - Scripts/lumachat-worker
+      - Scripts/test_lumachat_worker.py
+      - .github/workflows/worker-linux.yml
+  pull_request:
+    paths:
+      - Scripts/lumachat-worker
+      - Scripts/test_lumachat_worker.py
+      - .github/workflows/worker-linux.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Validate Linux worker protocol and isolated worktree
+        run: python3 Scripts/test_lumachat_worker.py

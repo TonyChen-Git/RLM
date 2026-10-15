@@ -320,12 +320,16 @@ struct InstalledPlugin: Codable, Equatable, Identifiable, Sendable {
     var installedAt: Date
     var updatedAt: Date
     var lastError: String?
+    var packageSHA256: String? = nil
+    var registryIndexSHA256: String? = nil
 }
 
 struct PluginCandidate: Equatable, Sendable {
     var manifest: PluginManifest
     var source: PluginSource
     var stagedPath: String
+    var packageSHA256: String
+    var registryIndexSHA256: String? = nil
 }
 
 // MARK: - OAuth connectors
@@ -361,6 +365,7 @@ struct OAuthConnectorConfiguration: Codable, Equatable, Identifiable, Sendable {
     var kind: OAuthConnectorKind
     var authorizationEndpoint: URL
     var tokenEndpoint: URL
+    var revocationEndpoint: URL?
     var clientID: String
     var scopes: [String]
     var redirectURI: URL
@@ -374,6 +379,7 @@ struct OAuthConnectorConfiguration: Codable, Equatable, Identifiable, Sendable {
         kind: OAuthConnectorKind,
         authorizationEndpoint: URL,
         tokenEndpoint: URL,
+        revocationEndpoint: URL? = nil,
         clientID: String,
         scopes: [String],
         redirectURI: URL,
@@ -386,6 +392,7 @@ struct OAuthConnectorConfiguration: Codable, Equatable, Identifiable, Sendable {
         self.kind = kind
         self.authorizationEndpoint = authorizationEndpoint
         self.tokenEndpoint = tokenEndpoint
+        self.revocationEndpoint = revocationEndpoint
         self.clientID = clientID
         self.scopes = scopes
         self.redirectURI = redirectURI

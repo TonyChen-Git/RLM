@@ -8,6 +8,7 @@ private struct AgentStreamingStubResponse: Sendable {
   var headers: [String: String] = ["Content-Type": "application/json"]
   var chunks: [Data]
   var holdOpen = false
+  var onStopLoading: (@Sendable () -> Void)?
 }
 
 private final class AgentStreamingStubURLProtocol: URLProtocol, @unchecked Sendable {
@@ -16,6 +17,7 @@ private final class AgentStreamingStubURLProtocol: URLProtocol, @unchecked Senda
   nonisolated(unsafe) private static var capturedBodies: [Data] = []
   nonisolated(unsafe) private static var stops = 0
   private static let stateLock = NSLock()
+  private var stopHandler: (@Sendable () -> Void)?
 
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -31,6 +33,7 @@ private final class AgentStreamingStubURLProtocol: URLProtocol, @unchecked Senda
         statusCode: 500,
         chunks: []
       )
+    stopHandler = response.onStopLoading
     Self.stateLock.unlock()
 
     let http = HTTPURLResponse(
@@ -47,7 +50,10 @@ private final class AgentStreamingStubURLProtocol: URLProtocol, @unchecked Senda
   override func stopLoading() {
     Self.stateLock.lock()
     Self.stops += 1
+    let handler = stopHandler
+    stopHandler = nil
     Self.stateLock.unlock()
+    handler?()
   }
 
   static func reset(
@@ -333,37 +339,50 @@ final class AgentProviderStreamingTests: XCTestCase {
   }
 
   func testCancellingStreamingTransportCancelsURLSessionTask() async throws {
+    let receivedLine = expectation(description: "Transport consumed the first response line")
+    let stoppedLoading = expectation(description: "URLSession cancelled the held-open request")
+    let finished = expectation(description: "The cancelled transport task completed")
     AgentStreamingStubURLProtocol.reset { _ in
-      AgentStreamingStubResponse(chunks: [], holdOpen: true)
+      AgentStreamingStubResponse(
+        chunks: [Data("ready\n".utf8)],
+        holdOpen: true,
+        onStopLoading: { stoppedLoading.fulfill() }
+      )
     }
     let session = stubSession()
     defer { session.invalidateAndCancel() }
     let transport = ProviderHTTPTransport(session: session)
     let request = URLRequest(url: URL(string: "http://127.0.0.1/held-open")!)
     let task = Task {
+      defer { finished.fulfill() }
       try await transport.streamLines(
         for: request,
         provider: "test",
         model: "model",
         requestedTools: false,
-        handleLine: { _ in }
+        handleLine: { line in
+          XCTAssertEqual(line, Data("ready".utf8))
+          receivedLine.fulfill()
+        }
       )
     }
-    for _ in 0..<1_000 {
-      if !AgentStreamingStubURLProtocol.snapshot().requests.isEmpty { break }
-      await Task.yield()
-    }
-    XCTAssertFalse(AgentStreamingStubURLProtocol.snapshot().requests.isEmpty)
+    defer { task.cancel() }
+    // URLSession callbacks use their own executor. A number of Task.yield()
+    // calls is not a startup deadline or proof that body streaming has begun.
+    let startup = await XCTWaiter.fulfillment(of: [receivedLine], timeout: 5)
+    XCTAssertEqual(startup, .completed)
+    guard startup == .completed else { return }
     task.cancel()
+    let cancellation = await XCTWaiter.fulfillment(
+      of: [stoppedLoading, finished], timeout: 5
+    )
+    XCTAssertEqual(cancellation, .completed)
+    guard cancellation == .completed else { return }
     do {
       try await task.value
       XCTFail("Expected cancellation")
     } catch is CancellationError {
       // Expected.
-    }
-    for _ in 0..<1_000 {
-      if AgentStreamingStubURLProtocol.snapshot().stops > 0 { break }
-      await Task.yield()
     }
     XCTAssertGreaterThan(AgentStreamingStubURLProtocol.snapshot().stops, 0)
   }

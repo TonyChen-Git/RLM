@@ -196,9 +196,26 @@ protocol RemoteShellExecutionBackend: Sendable {
 }
 
 protocol RemotePTYExecutionBackend: Sendable {
-    /// Returns a TaskTerminal-compatible factory. Backend selection remains a
-    /// host decision; no model argument names a runner or SSH target.
+    /// Legacy synchronous seam: no authenticated host receipt can be minted
+    /// here, so implementations may fail closed.
     func makePTYBackend() -> any PTYBackend
+
+    /// Mints a TaskTerminal factory with a fresh authenticated host receipt.
+    /// Backend selection remains a host decision; no model argument names a
+    /// runner or SSH target.
+    func verifiedTaskTerminalBackend() async throws -> (
+        host: RemoteHostReceipt,
+        backend: any PTYBackend
+    )
+}
+
+extension RemotePTYExecutionBackend {
+    func verifiedTaskTerminalBackend() async throws -> (
+        host: RemoteHostReceipt,
+        backend: any PTYBackend
+    ) {
+        throw RemoteExecutionError.unsupported("This remote backend has no interactive PTY.")
+    }
 }
 
 protocol RemoteExecutionBackend:

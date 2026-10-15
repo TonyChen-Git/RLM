@@ -5,3 +5,7 @@
 *.xcresult
 .DS_Store
 ._*
+
+# Python tooling caches
+__pycache__/
+*.py[cod]

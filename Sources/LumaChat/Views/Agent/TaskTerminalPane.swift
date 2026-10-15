@@ -644,6 +644,19 @@ struct TaskTerminalPane: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(LumaTheme.accent)
 
+            if let host = model.selectedDescriptor?.metadata.remoteHostIdentity {
+                Text("SSH · \(host.configuredUser)@\(host.configuredHost)")
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .help("Remote shell at \(host.canonicalWorkspaceRoot); host permissions and network policy apply")
+            } else if agentViewModel.selectedSession?.id == sessionID,
+                      agentViewModel.selectedSession?.resolvedExecutionLocation.kind == .ssh {
+                Text("SSH")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             Button { model.create() } label: {
                 Label("New", systemImage: "plus")
             }

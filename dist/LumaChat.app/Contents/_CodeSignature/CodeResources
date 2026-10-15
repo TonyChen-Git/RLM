@@ -50,11 +50,15 @@
 		</data>
 		<key>Resources/bin/lumachat</key>
 		<data>
-		rWiw6lViYtWvDwPZhydIKFNSwos=
+		Su+pnyADqbZxWoDOSUehNpu2Khg=
 		</data>
 		<key>Resources/bin/lumachat-updater</key>
 		<data>
-		Q/QV3UYkXlkIwnT/H0JC6bmL40E=
+		CXslZwjiXiEVQfLdAlCwufrrloQ=
+		</data>
+		<key>Resources/bin/lumachat-worker</key>
+		<data>
+		fsbHDJCZHS2/2+pEWyRMkH1R/EY=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -140,14 +144,21 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			u6ZhCLYkDXSgePIVG/Cf7UGO3EWZ3TETQ7nssnhIP0A=
+			T8NwjdxFX1W1F/8WjM/k0ue/KYYTBKWp8jHXc9uRVP4=
 			</data>
 		</dict>
 		<key>Resources/bin/lumachat-updater</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			BXJ9BaG2IPzLYtvFmSbxCsJ+gxqug7zErMblFSWw4YM=
+			4iHUg1YFt8XcHqviMqLGBtUJU+4BTmxMFgzkFD6yKds=
+			</data>
+		</dict>
+		<key>Resources/bin/lumachat-worker</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			0f7bZr8mDGNJKwaiFNLU8TF8P82qwkLkGHmioQ9OBt0=
 			</data>
 		</dict>
 	</dict>

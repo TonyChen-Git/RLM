@@ -96,6 +96,30 @@ actor SSHRemoteExecutionBackend: RemoteExecutionBackend, RemoteWorkspaceStateBac
         return receipt
     }
 
+    func callWorker(_ request: Data) async throws -> Data {
+        guard request.count <= 64 * 1_024 else {
+            throw RemoteExecutionError.invalidRequest("Worker request exceeds 64 KiB.")
+        }
+        let host = try await verifiedHost()
+        let result = try await run(
+            executable: "/usr/local/bin/lumachat-worker",
+            arguments: [],
+            standardInput: request,
+            timeout: 90,
+            outputLimit: 1 * 1_024 * 1_024,
+            workspaceLeaseRoot: host.canonicalWorkspaceRoot,
+            operation: "self_managed_worker"
+        )
+        // Worker errors are JSON with a nonzero exit code. Preserve those
+        // structured errors instead of replacing them with raw stderr.
+        guard let data = result.stdout.data(using: .utf8), !data.isEmpty,
+              !result.outputTruncated else {
+            try requireSuccess(result)
+            throw RemoteExecutionError.protocolViolation("Worker returned no bounded JSON response.")
+        }
+        return data
+    }
+
     func executeFilesystem(
         _ request: RemoteFilesystemRequest
     ) async throws -> RemoteFilesystemResult {
@@ -593,6 +617,27 @@ actor SSHRemoteExecutionBackend: RemoteExecutionBackend, RemoteWorkspaceStateBac
     /// and streaming-input contract.
     nonisolated func makePTYBackend() -> any PTYBackend {
         UnsupportedSSHInteractivePTYBackend()
+    }
+
+    /// This factory is minted only after a fresh authenticated host probe.
+    /// The receipt's canonical root and reported identity are pinned to each
+    /// terminal generation; reconnect repeats the probe in the ViewModel.
+    func verifiedTaskTerminalBackend() async throws -> (
+        host: RemoteHostReceipt,
+        backend: any PTYBackend
+    ) {
+        let host = try await verifyConnection()
+        let trust = try knownHostsData
+            ?? SSHLaunchMaterialLease.captureKnownHostsData(configuration: configuration)
+        return (
+            host,
+            SSHInteractivePTYBackend(
+                configuration: configuration,
+                credential: credential,
+                knownHostsData: trust,
+                host: RemoteTaskTerminalHostIdentity(host)
+            )
+        )
     }
 
     private func executeValidation(

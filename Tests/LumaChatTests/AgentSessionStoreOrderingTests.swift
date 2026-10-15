@@ -1,8 +1,47 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import LumaChat
 
 final class AgentSessionStoreOrderingTests: XCTestCase {
+    func testSessionRecoveryRejectsFIFOAndSubstitutedTaskDirectory() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent("session-safe-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AgentSessionStore(sessionsRoot: root)
+        let session = AgentSession(mode: .agent)
+        try await store.save(session)
+        let directory = root.appendingPathComponent(session.id.uuidString)
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.moveItem(at: directory, to: outside)
+        try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: outside)
+        let linked = try await store.loadSessions()
+        XCTAssertTrue(linked.isEmpty)
+        do { try await store.save(session); XCTFail("Must reject Task directory symlink") }
+        catch AgentSessionStoreError.unsafeStorage {}
+        try FileManager.default.removeItem(at: directory)
+        try FileManager.default.moveItem(at: outside, to: directory)
+        let file = directory.appendingPathComponent("session.json")
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(Darwin.mkfifo(file.path, mode_t(0o600)), 0)
+        let fifo = try await store.loadSessions()
+        XCTAssertTrue(fifo.isEmpty)
+        do { try await store.save(session); XCTFail("Must reject FIFO without blocking") }
+        catch AgentSessionStoreError.unsafeStorage {}
+    }
+
+    func testSessionStorageParentLinkCannotCreateOutsideDirectories() async throws {
+        let root = AppPaths.projectTemporaryRoot.appendingPathComponent("session-parent-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        let store = AgentSessionStore(sessionsRoot: link.appendingPathComponent("sessions"))
+        do { try await store.save(AgentSession(mode: .agent)); XCTFail("Must reject ancestor link") }
+        catch AgentSessionStoreError.unsafeStorage {}
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+    }
+
     func testOlderSnapshotCannotOverwriteNewerDurableSession() async throws {
         let root = AppPaths.projectTemporaryRoot.appendingPathComponent(
             "session-store-ordering-\(UUID().uuidString)",

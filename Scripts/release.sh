@@ -200,6 +200,11 @@ env \
 
 env \
     TMPDIR="${system_temporary_path}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    /usr/bin/python3 "${project_root}/Scripts/test_lumachat_worker.py"
+
+env \
+    TMPDIR="${system_temporary_path}" \
     TMP="${system_temporary_path}" \
     TEMP="${system_temporary_path}" \
     XDG_CACHE_HOME="${xdg_cache_path}" \
@@ -257,6 +262,9 @@ fi
     "${application_path}/Contents/Resources/bin/lumachat"
 /bin/cp "${scratch_path}/release/lumachat-updater" \
     "${application_path}/Contents/Resources/bin/lumachat-updater"
+/bin/cp "${project_root}/Scripts/lumachat-worker" \
+    "${application_path}/Contents/Resources/bin/lumachat-worker"
+/bin/chmod 755 "${application_path}/Contents/Resources/bin/lumachat-worker"
 /bin/cp "${info_plist}" "${application_path}/Contents/Info.plist"
 /bin/cp "${project_root}/AppBundle/AppIcon.icns" \
     "${application_path}/Contents/Resources/AppIcon.icns"

@@ -328,6 +328,20 @@ struct ExtensionSettingsPane: View {
                             .controlSize(.small)
                             .disabled(!connector.enabled)
                     } else {
+                        Button("重新授權") { beginOAuth(connector) }
+                            .controlSize(.small)
+                            .disabled(!connector.enabled)
+                        Button("更新 Token") {
+                            Task { await agentViewModel.refreshOAuthConnector(id: connector.id) }
+                        }
+                        .controlSize(.small)
+                        .disabled(!connector.enabled)
+                        if connector.revocationEndpoint != nil {
+                            Button("遠端撤銷") {
+                                Task { await agentViewModel.revokeOAuthConnector(id: connector.id) }
+                            }
+                            .controlSize(.small)
+                        }
                         Button("中斷") {
                             Task { await agentViewModel.disconnectOAuthConnector(id: connector.id) }
                         }
@@ -389,6 +403,12 @@ struct ExtensionSettingsPane: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(2)
+                if let digest = plugin.packageSHA256 {
+                    Text("Package SHA-256: \(digest)")
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
+                }
                 if let error = plugin.lastError, !error.isEmpty {
                     Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(2)
                 }
@@ -450,6 +470,34 @@ struct ExtensionSettingsPane: View {
                 .buttonStyle(.plain)
             }
             Text(candidate.manifest.description).font(.caption)
+            Text("Source: \(candidate.source.label)")
+                .font(.caption2)
+                .textSelection(.enabled)
+            Text("Package SHA-256: \(candidate.packageSHA256)")
+                .font(.caption2.monospaced())
+                .textSelection(.enabled)
+            if let indexDigest = candidate.registryIndexSHA256 {
+                Text("Registry index SHA-256: \(indexDigest)")
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+            if let installed = agentViewModel.installedPlugins.first(where: {
+                $0.id == candidate.manifest.id
+            }) {
+                Text("Update: v\(installed.manifest.version) → v\(candidate.manifest.version)")
+                    .font(.caption.weight(.semibold))
+                let oldPermissions = Set(installed.grantedPermissions)
+                let newPermissions = Set(candidate.manifest.permissions)
+                let added = newPermissions.subtracting(oldPermissions).map(\.title).sorted()
+                let removed = oldPermissions.subtracting(newPermissions).map(\.title).sorted()
+                Text("新增權限：\(added.isEmpty ? "無" : added.joined(separator: "、"))；移除權限：\(removed.isEmpty ? "無" : removed.joined(separator: "、"))")
+                    .font(.caption)
+                if installed.packageSHA256 == candidate.packageSHA256 {
+                    Text("Package 內容與已安裝版本相同。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if let minimum = candidate.manifest.minimumLumaChatVersion {
                 Text("Requires LumaChat \(minimum)+")
                     .font(.caption2)
@@ -619,6 +667,7 @@ private struct OAuthConnectorEditor: View {
     @State private var kind: OAuthConnectorKind
     @State private var authorizationEndpoint: String
     @State private var tokenEndpoint: String
+    @State private var revocationEndpoint: String
     @State private var clientID: String
     @State private var scopes: String
     @State private var redirectURI: String
@@ -646,6 +695,7 @@ private struct OAuthConnectorEditor: View {
         _kind = State(initialValue: value.kind)
         _authorizationEndpoint = State(initialValue: value.authorizationEndpoint.absoluteString)
         _tokenEndpoint = State(initialValue: value.tokenEndpoint.absoluteString)
+        _revocationEndpoint = State(initialValue: value.revocationEndpoint?.absoluteString ?? "")
         _clientID = State(initialValue: value.clientID)
         _scopes = State(initialValue: value.scopes.joined(separator: " "))
         _redirectURI = State(initialValue: value.redirectURI.absoluteString)
@@ -664,6 +714,8 @@ private struct OAuthConnectorEditor: View {
             TextField("Authorization endpoint（HTTPS）", text: $authorizationEndpoint)
                 .textFieldStyle(.roundedBorder)
             TextField("Token endpoint（HTTPS）", text: $tokenEndpoint)
+                .textFieldStyle(.roundedBorder)
+            TextField("Revocation endpoint（選填，HTTPS）", text: $revocationEndpoint)
                 .textFieldStyle(.roundedBorder)
             TextField("Client ID", text: $clientID).textFieldStyle(.roundedBorder)
             TextField("Scopes（空白分隔）", text: $scopes).textFieldStyle(.roundedBorder)
@@ -688,6 +740,8 @@ private struct OAuthConnectorEditor: View {
         guard let authorizationEndpoint = URL(string: authorizationEndpoint.trimmed),
               let tokenEndpoint = URL(string: tokenEndpoint.trimmed),
               let redirectURI = URL(string: redirectURI.trimmed),
+              revocationEndpoint.trimmed.isEmpty
+                || URL(string: revocationEndpoint.trimmed) != nil,
               !name.trimmed.isEmpty,
               !clientID.trimmed.isEmpty,
               authorizationEndpoint.host?.hasSuffix(".invalid") != true,
@@ -698,6 +752,8 @@ private struct OAuthConnectorEditor: View {
             kind: kind,
             authorizationEndpoint: authorizationEndpoint,
             tokenEndpoint: tokenEndpoint,
+            revocationEndpoint: revocationEndpoint.trimmed.isEmpty
+                ? nil : URL(string: revocationEndpoint.trimmed),
             clientID: clientID.trimmed,
             scopes: scopes.split(whereSeparator: { $0.isWhitespace }).map(String.init),
             redirectURI: redirectURI,

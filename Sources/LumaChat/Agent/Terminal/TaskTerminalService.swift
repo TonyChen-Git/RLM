@@ -75,6 +75,42 @@ struct TaskTerminalCapabilities: Codable, Equatable, Sendable {
     var workspaceWrite: Bool
 }
 
+/// The identity fields of a verified SSH host, excluding the probe timestamp.
+/// Persisting this alongside the runner authority prevents a new host or
+/// credential from inheriting a previous terminal UUID on relaunch.
+struct RemoteTaskTerminalHostIdentity: Codable, Equatable, Sendable {
+    var runnerID: UUID
+    var configuredHost: String
+    var configuredPort: Int
+    var configuredUser: String
+    var serverReportedHostname: String
+    var effectiveUser: String
+    var effectiveUserID: UInt32
+    var configuredWorkspaceRoot: String
+    var canonicalWorkspaceRoot: String
+
+    init(_ receipt: RemoteHostReceipt) {
+        runnerID = receipt.runnerID
+        configuredHost = receipt.configuredHost
+        configuredPort = receipt.configuredPort
+        configuredUser = receipt.configuredUser
+        serverReportedHostname = receipt.serverReportedHostname
+        effectiveUser = receipt.effectiveUser
+        effectiveUserID = receipt.effectiveUserID
+        configuredWorkspaceRoot = receipt.configuredWorkspaceRoot
+        canonicalWorkspaceRoot = receipt.canonicalWorkspaceRoot
+    }
+}
+
+struct RemoteTaskTerminalBinding: Sendable {
+    var workspaceID: UUID
+    var host: RemoteTaskTerminalHostIdentity
+    var authorityFingerprint: String
+    var permissionFingerprint: String
+    var validateCurrentAuthority: @Sendable () async throws -> Void
+    var verifyFreshHost: @Sendable () async throws -> Void
+}
+
 struct TaskTerminalMetadata: Codable, Equatable, Identifiable, Sendable {
     static let maximumTitleBytes = 160
 
@@ -100,6 +136,9 @@ struct TaskTerminalMetadata: Codable, Equatable, Identifiable, Sendable {
     var capabilities: TaskTerminalCapabilities?
     var earliestAvailableOffset: Int64?
     var nextOffset: Int64?
+    var remoteHostIdentity: RemoteTaskTerminalHostIdentity? = nil
+    var remoteAuthorityFingerprint: String? = nil
+    var remotePermissionFingerprint: String? = nil
 
     static func normalizedTitle(_ proposed: String) -> String? {
         let value = proposed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -351,7 +390,8 @@ actor TaskTerminalService {
     }
 
     private let taskID: UUID
-    private let validator: WorkspaceSecurityValidator
+    private let validator: WorkspaceSecurityValidator?
+    private let remoteBinding: RemoteTaskTerminalBinding?
     private let backend: any PTYBackend
     private let store: TaskTerminalMetadataStore
     private var entries: [UUID: Entry] = [:]
@@ -373,6 +413,25 @@ actor TaskTerminalService {
     ) {
         self.taskID = taskID
         self.validator = validator
+        remoteBinding = nil
+        self.backend = backend
+        store = TaskTerminalMetadataStore(
+            taskID: taskID,
+            sessionsRoot: sessionsRoot,
+            writer: metadataWriter
+        )
+    }
+
+    init(
+        taskID: UUID,
+        remoteBinding: RemoteTaskTerminalBinding,
+        backend: any PTYBackend,
+        sessionsRoot: URL = AppPaths.agentSessions,
+        metadataWriter: @escaping @Sendable (Data, URL) throws -> Void = AtomicFileWriter.write
+    ) {
+        self.taskID = taskID
+        validator = nil
+        self.remoteBinding = remoteBinding
         self.backend = backend
         store = TaskTerminalMetadataStore(
             taskID: taskID,
@@ -439,13 +498,38 @@ actor TaskTerminalService {
         }
         pendingCreations += 1
         defer { pendingCreations -= 1 }
-        let validatedDirectory: URL
-        do {
-            validatedDirectory = try validator.validate(cwd: cwd)
-        } catch {
-            throw PseudoTerminalError.workspaceBoundary(cwd ?? ".")
+        let durableWorkingDirectory: String
+        let workspaceID: UUID
+        let workspaceRoot: String
+        let gitRepository: Bool
+        if let remoteBinding {
+            try await remoteBinding.verifyFreshHost()
+            try ensureActive()
+            // The remote shell starts at the verified root. A future remote
+            // cwd selector needs its own no-follow path verification.
+            guard cwd == nil || cwd == "." else {
+                throw PseudoTerminalError.workspaceBoundary(cwd ?? ".")
+            }
+            durableWorkingDirectory = "."
+            workspaceID = remoteBinding.workspaceID
+            workspaceRoot = remoteBinding.host.canonicalWorkspaceRoot
+            // The remote shell runs with the SSH account's authority; local
+            // sandbox Git restrictions do not apply to that host.
+            gitRepository = true
+        } else if let validator {
+            let validatedDirectory: URL
+            do {
+                validatedDirectory = try validator.validate(cwd: cwd)
+            } catch {
+                throw PseudoTerminalError.workspaceBoundary(cwd ?? ".")
+            }
+            durableWorkingDirectory = validator.relativePath(for: validatedDirectory)
+            workspaceID = validator.workspace.id
+            workspaceRoot = validator.secureRootPath
+            gitRepository = validator.workspace.gitRepository
+        } else {
+            throw TaskTerminalError.corruptMetadata("missing terminal workspace binding")
         }
-        let durableWorkingDirectory = validator.relativePath(for: validatedDirectory)
         let ordinal = entries.count + 1
         let title = try normalizedTitle(proposedTitle ?? "Terminal \(ordinal)")
         let id = UUID()
@@ -464,36 +548,54 @@ actor TaskTerminalService {
             terminationSignal: nil,
             clearGeneration: 0,
             reconnectCount: 0,
-            workspaceID: validator.workspace.id,
-            workspaceRootPath: validator.secureRootPath,
+            workspaceID: workspaceID,
+            workspaceRootPath: workspaceRoot,
             workingDirectory: durableWorkingDirectory,
-            shell: shell,
+            shell: remoteBinding == nil ? shell : (shell == "/bin/zsh" ? "/bin/sh" : shell),
             capabilities: TaskTerminalCapabilities(
-                network: allowsNetwork,
-                gitMetadataRead: validator.workspace.gitRepository,
-                gitMetadataWrite: validator.workspace.gitRepository,
+                network: remoteBinding != nil || allowsNetwork,
+                gitMetadataRead: gitRepository,
+                gitMetadataWrite: gitRepository,
                 workspaceWrite: true
             ),
             earliestAvailableOffset: 0,
-            nextOffset: 0
+            nextOffset: 0,
+            remoteHostIdentity: remoteBinding?.host,
+            remoteAuthorityFingerprint: remoteBinding?.authorityFingerprint,
+            remotePermissionFingerprint: remoteBinding?.permissionFingerprint
         )
-        let transport = try backend.makeSession(
-            validator: validator,
-            cwd: durableWorkingDirectory,
-            environment: environment
-        )
+        let selectedShell = remoteBinding == nil ? shell : (shell == "/bin/zsh" ? "/bin/sh" : shell)
+        let transport: any PTYSessionTransport
+        if let validator {
+            transport = try backend.makeSession(
+                validator: validator,
+                cwd: durableWorkingDirectory,
+                environment: environment
+            )
+        } else {
+            transport = try backend.makeRemoteSession(
+                shell: selectedShell,
+                cwd: durableWorkingDirectory,
+                environment: environment
+            )
+        }
         do {
             _ = try await transport.start(
                 command: nil,
                 cwd: durableWorkingDirectory,
                 environment: environment,
-                shell: shell,
+                shell: selectedShell,
                 rows: rows,
                 columns: columns,
                 allowsNetwork: allowsNetwork,
-                allowsGitMetadata: validator.workspace.gitRepository,
-                allowsGitMetadataWrite: validator.workspace.gitRepository
+                allowsGitMetadata: gitRepository,
+                allowsGitMetadataWrite: gitRepository
             )
+            try await remoteBinding?.validateCurrentAuthority()
+            // Shutdown can enter this actor while transport startup or the
+            // authority check is suspended. Never publish a new live child
+            // after disposeAll() has completed its sweep.
+            try ensureActive()
         } catch {
             await transport.dispose()
             throw error
@@ -531,6 +633,18 @@ actor TaskTerminalService {
         try loadIfNeeded()
         try ensureActive()
         let entry = try entry(id)
+        if let remoteBinding {
+            try requireRemoteBinding(entry.metadata, matches: remoteBinding)
+            try await remoteBinding.verifyFreshHost()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
+        } else if entry.metadata.remoteHostIdentity != nil
+                    || entry.metadata.remoteAuthorityFingerprint != nil
+                    || entry.metadata.remotePermissionFingerprint != nil {
+            throw RemoteExecutionError.invalidRequest(
+                "A former SSH terminal cannot reconnect as a local terminal."
+            )
+        }
         try beginTransition(entry, id: id)
         defer { entry.isTransitioning = false }
         if let transport = entry.transport,
@@ -550,11 +664,20 @@ actor TaskTerminalService {
         let allowsNetwork = requestedNetwork
             ?? entry.metadata.capabilities?.network
             ?? false
-        let transport = try backend.makeSession(
-            validator: validator,
-            cwd: entry.metadata.workingDirectory,
-            environment: environment
-        )
+        let transport: any PTYSessionTransport
+        if let validator {
+            transport = try backend.makeSession(
+                validator: validator,
+                cwd: entry.metadata.workingDirectory,
+                environment: environment
+            )
+        } else {
+            transport = try backend.makeRemoteSession(
+                shell: shell,
+                cwd: entry.metadata.workingDirectory,
+                environment: environment
+            )
+        }
         do {
             _ = try await transport.start(
                 command: nil,
@@ -565,10 +688,13 @@ actor TaskTerminalService {
                 columns: Int(entry.metadata.columns),
                 allowsNetwork: allowsNetwork,
                 allowsGitMetadata: entry.metadata.capabilities?.gitMetadataRead
-                    ?? validator.workspace.gitRepository,
+                    ?? validator?.workspace.gitRepository ?? false,
                 allowsGitMetadataWrite: entry.metadata.capabilities?.gitMetadataWrite
-                    ?? validator.workspace.gitRepository
+                    ?? validator?.workspace.gitRepository ?? false
             )
+            try await remoteBinding?.validateCurrentAuthority()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
         } catch {
             await transport.dispose()
             throw error
@@ -587,9 +713,9 @@ actor TaskTerminalService {
         entry.metadata.capabilities = TaskTerminalCapabilities(
             network: allowsNetwork,
             gitMetadataRead: entry.metadata.capabilities?.gitMetadataRead
-                ?? validator.workspace.gitRepository,
+                ?? validator?.workspace.gitRepository ?? false,
             gitMetadataWrite: entry.metadata.capabilities?.gitMetadataWrite
-                ?? validator.workspace.gitRepository,
+                ?? validator?.workspace.gitRepository ?? false,
             workspaceWrite: true
         )
         do {
@@ -649,6 +775,12 @@ actor TaskTerminalService {
     ) async throws -> TaskTerminalOutput {
         try loadIfNeeded()
         let entry = try entry(id)
+        if let remoteBinding {
+            try requireRemoteBinding(entry.metadata, matches: remoteBinding)
+            try await remoteBinding.validateCurrentAuthority()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
+        }
         try requireStable(entry, id: id)
         guard let transport = entry.transport else {
             let unavailableOffset = max(
@@ -689,13 +821,21 @@ actor TaskTerminalService {
         try loadIfNeeded()
         try ensureActive()
         let entry = try entry(id)
+        if let remoteBinding {
+            try requireRemoteBinding(entry.metadata, matches: remoteBinding)
+            try await remoteBinding.validateCurrentAuthority()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
+        }
         try requireStable(entry, id: id)
         guard let transport = entry.transport else {
             throw PseudoTerminalError.notRunning
         }
         let predecessor = entry.writeTail
+        let currentRemoteBinding = remoteBinding
         let operation = Task<PseudoTerminalWriteResult, Error> {
             if let predecessor { await predecessor.value }
+            try await currentRemoteBinding?.validateCurrentAuthority()
             return try await transport.write(data)
         }
         entry.writeTail = Task { _ = try? await operation.value }
@@ -714,6 +854,12 @@ actor TaskTerminalService {
         try loadIfNeeded()
         try ensureActive()
         let entry = try entry(id)
+        if let remoteBinding {
+            try requireRemoteBinding(entry.metadata, matches: remoteBinding)
+            try await remoteBinding.validateCurrentAuthority()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
+        }
         try requireStable(entry, id: id)
         guard let transport = entry.transport else {
             throw PseudoTerminalError.notRunning
@@ -737,6 +883,12 @@ actor TaskTerminalService {
         try loadIfNeeded()
         try ensureActive()
         let entry = try entry(id)
+        if let remoteBinding {
+            try requireRemoteBinding(entry.metadata, matches: remoteBinding)
+            try await remoteBinding.validateCurrentAuthority()
+            try ensureActive()
+            guard entries[id] === entry else { throw TaskTerminalError.terminalNotFound(id) }
+        }
         try requireStable(entry, id: id)
         guard let transport = entry.transport else {
             throw PseudoTerminalError.notRunning
@@ -975,6 +1127,21 @@ actor TaskTerminalService {
         entry.isTransitioning = true
     }
 
+    private func requireRemoteBinding(
+        _ metadata: TaskTerminalMetadata,
+        matches binding: RemoteTaskTerminalBinding
+    ) throws {
+        guard metadata.workspaceID == binding.workspaceID,
+              metadata.workspaceRootPath == binding.host.canonicalWorkspaceRoot,
+              metadata.remoteHostIdentity == binding.host,
+              metadata.remoteAuthorityFingerprint == binding.authorityFingerprint,
+              metadata.remotePermissionFingerprint == binding.permissionFingerprint else {
+            throw RemoteExecutionError.invalidRequest(
+                "SSH host, credential, trust, or Task authority changed. Close this old terminal and create a new one."
+            )
+        }
+    }
+
     private func reconcilePersistedBinding(
         _ metadata: inout TaskTerminalMetadata
     ) throws {
@@ -992,6 +1159,28 @@ actor TaskTerminalService {
             throw TaskTerminalError.corruptMetadata(
                 "shell, working directory, capabilities, or offsets failed validation"
             )
+        }
+
+        if let remoteBinding {
+            // Keep old evidence visible for an explicit Close, but never
+            // reconnect it under a different host or permission authority.
+            if (try? requireRemoteBinding(metadata, matches: remoteBinding)) == nil {
+                metadata.state = .failed
+                metadata.updatedAt = Date()
+            }
+            guard metadata.workingDirectory == "." else {
+                throw TaskTerminalError.corruptMetadata("remote working directory is invalid")
+            }
+            return
+        }
+        guard let validator else {
+            throw TaskTerminalError.corruptMetadata("missing local workspace binding")
+        }
+        if metadata.remoteHostIdentity != nil || metadata.remoteAuthorityFingerprint != nil
+            || metadata.remotePermissionFingerprint != nil {
+            metadata.state = .failed
+            metadata.updatedAt = Date()
+            return
         }
 
         let bindingChanged = metadata.workspaceID != nil
@@ -1069,6 +1258,11 @@ actor TaskTerminalService {
         case .stopped: entry.metadata.state = .stopped
         case .failed: entry.metadata.state = .failed
         }
+        if remoteBinding != nil, status.exitCode == 255 {
+            // OpenSSH reserves 255 for transport/authentication failures. A
+            // fresh verified connection is required before this tab restarts.
+            entry.metadata.state = .disconnected
+        }
         entry.metadata.rows = status.dimensions.rows
         entry.metadata.columns = status.dimensions.columns
         entry.metadata.exitCode = status.exitCode
@@ -1107,7 +1301,7 @@ actor TaskTerminalService {
         return TaskTerminalDescriptor(
             metadata: entry.metadata,
             persistenceState: currentPersistenceState,
-            processIdentifier: status?.processIdentifier,
+            processIdentifier: remoteBinding == nil ? status?.processIdentifier : nil,
             duration: status?.duration ?? 0,
             transportErrorCode: status?.transportErrorCode,
             earliestAvailableOffset: max(

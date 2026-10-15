@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
+import CryptoKit
 
 private struct PluginRegistryDocument: Decodable {
     struct Entry: Decodable {
         var id: String
         var source: PluginSource
+        var sha256: String
     }
 
     var plugins: [Entry]
@@ -64,7 +66,11 @@ actor PluginManager {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.urlCache = nil
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-            self.session = URLSession(configuration: configuration)
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: RejectingRedirectURLSessionDelegate(),
+                delegateQueue: nil
+            )
         }
     }
 
@@ -94,6 +100,9 @@ actor PluginManager {
                   Self.isDirectChild(installedRoot, of: installRoot),
                   fileManager.fileExists(atPath: plugin.installPath),
                   (try? Self.validatePackage(at: installedRoot, fileManager: fileManager)) != nil,
+                  (plugin.packageSHA256 == nil ||
+                    (try? Self.packageSHA256(at: installedRoot, fileManager: fileManager))
+                        == plugin.packageSHA256),
                   (try? Self.validateDeclaredFiles(
                     manifest: plugin.manifest,
                     packageRoot: installedRoot,
@@ -190,6 +199,11 @@ actor PluginManager {
             guard matches.count == 1 else {
                 throw ExtensionSubsystemError.invalidManifest("Registry plugin ID 重複")
             }
+            guard entry.sha256.range(
+                of: #"^[a-fA-F0-9]{64}$"#, options: .regularExpression
+            ) != nil else {
+                throw ExtensionSubsystemError.invalidManifest("Registry 缺少有效的 package SHA-256")
+            }
             if case .localDirectory = entry.source {
                 throw ExtensionSubsystemError.unsupportedSource(
                     "Remote registry 不可指向本機目錄"
@@ -215,10 +229,20 @@ actor PluginManager {
                 }
                 throw ExtensionSubsystemError.invalidManifest("Registry ID 與 manifest 不一致")
             }
+            guard resolved.packageSHA256.caseInsensitiveCompare(entry.sha256) == .orderedSame else {
+                let resolvedRoot = URL(fileURLWithPath: resolved.stagedPath, isDirectory: true)
+                if Self.isDirectChild(resolvedRoot, of: scratchRoot) {
+                    try? fileManager.removeItem(at: resolvedRoot)
+                }
+                throw ExtensionSubsystemError.invalidManifest("Registry package SHA-256 不符")
+            }
             return PluginCandidate(
                 manifest: resolved.manifest,
                 source: source,
-                stagedPath: resolved.stagedPath
+                stagedPath: resolved.stagedPath,
+                packageSHA256: resolved.packageSHA256,
+                registryIndexSHA256: SHA256.hash(data: data)
+                    .map { String(format: "%02x", $0) }.joined()
             )
         }
 
@@ -235,7 +259,8 @@ actor PluginManager {
             return PluginCandidate(
                 manifest: manifest,
                 source: source,
-                stagedPath: staged.path
+                stagedPath: staged.path,
+                packageSHA256: try Self.packageSHA256(at: staged, fileManager: fileManager)
             )
         } catch {
             if ownsStagedPath { try? fileManager.removeItem(at: staged) }
@@ -262,6 +287,10 @@ actor PluginManager {
             .standardizedFileURL
             .resolvingSymlinksInPath()
         try Self.validatePackage(at: sourceRoot, fileManager: fileManager)
+        guard try Self.packageSHA256(at: sourceRoot, fileManager: fileManager)
+                == candidate.packageSHA256 else {
+            throw ExtensionSubsystemError.invalidManifest("Plugin 內容在檢查後已變更，請重新檢查")
+        }
         try Self.validateDeclaredFiles(
             manifest: candidate.manifest,
             packageRoot: sourceRoot,
@@ -288,6 +317,10 @@ actor PluginManager {
         do {
             try fileManager.copyItem(at: sourceRoot, to: stagedCopy)
             try Self.validatePackage(at: stagedCopy, fileManager: fileManager)
+            guard try Self.packageSHA256(at: stagedCopy, fileManager: fileManager)
+                    == candidate.packageSHA256 else {
+                throw ExtensionSubsystemError.invalidManifest("Plugin 複本與檢查結果不符")
+            }
             let copiedManifest = try Self.readManifest(at: stagedCopy, fileManager: fileManager)
             guard copiedManifest == candidate.manifest else {
                 throw ExtensionSubsystemError.invalidManifest(
@@ -317,7 +350,9 @@ actor PluginManager {
                 },
                 installedAt: existing?.installedAt ?? now,
                 updatedAt: now,
-                lastError: nil
+                lastError: nil,
+                packageSHA256: candidate.packageSHA256,
+                registryIndexSHA256: candidate.registryIndexSHA256
             )
             records.removeAll { $0.id == record.id }
             records.append(record)
@@ -460,7 +495,7 @@ actor PluginManager {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
-              http.url?.scheme?.lowercased() == "https",
+              AgentHTTPOrigin.isSameOrigin(url, http.url),
               (200..<300).contains(http.statusCode) else {
             throw ExtensionSubsystemError.unsupportedSource("Remote plugin source 回應失敗")
         }
@@ -821,6 +856,83 @@ actor PluginManager {
         guard !traversalStatus.didFail else {
             throw ExtensionSubsystemError.unsafePath(root.path)
         }
+    }
+
+    /// Canonical package digest: sorted relative paths, type, file size,
+    /// executable bits, and complete bytes. Files are opened without following
+    /// symlinks; install rehashes the copied package before swapping it in.
+    private static func packageSHA256(
+        at root: URL,
+        fileManager: FileManager
+    ) throws -> String {
+        let traversalStatus = PluginTraversalStatus()
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [],
+            errorHandler: { _, _ in
+                traversalStatus.markFailed()
+                return false
+            }
+        ) else { throw ExtensionSubsystemError.unsafePath(root.path) }
+        guard let discovered = enumerator.allObjects as? [URL] else {
+            throw ExtensionSubsystemError.unsafePath(root.path)
+        }
+        let entries = discovered.sorted { $0.path < $1.path }
+        guard entries.count <= maximumPackageEntries, !traversalStatus.didFail else {
+            throw ExtensionSubsystemError.unsafePath(root.path)
+        }
+        var hasher = SHA256()
+        for entry in entries {
+            let relative = String(entry.path.dropFirst(root.path.count + 1))
+            guard !relative.isEmpty, !relative.contains("\0") else {
+                throw ExtensionSubsystemError.unsafePath(entry.path)
+            }
+            var metadata = stat()
+            guard lstat(entry.path, &metadata) == 0 else {
+                throw ExtensionSubsystemError.unsafePath(entry.path)
+            }
+            if metadata.st_mode & S_IFMT == S_IFDIR {
+                hasher.update(data: Data("d:\(relative)\0".utf8))
+                continue
+            }
+            guard metadata.st_mode & S_IFMT == S_IFREG,
+                  metadata.st_size >= 0,
+                  metadata.st_size <= maximumPackageBytes else {
+                throw ExtensionSubsystemError.unsafePath(entry.path)
+            }
+            hasher.update(data: Data(
+                "f:\(relative)\0\(metadata.st_size)\0\(metadata.st_mode & 0o111)\0".utf8
+            ))
+            let descriptor = open(entry.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { throw ExtensionSubsystemError.unsafePath(entry.path) }
+            defer { _ = Darwin.close(descriptor) }
+            var opened = stat()
+            guard fstat(descriptor, &opened) == 0,
+                  opened.st_mode & S_IFMT == S_IFREG,
+                  opened.st_dev == metadata.st_dev,
+                  opened.st_ino == metadata.st_ino,
+                  opened.st_size == metadata.st_size else {
+                throw ExtensionSubsystemError.unsafePath(entry.path)
+            }
+            var bytesRead: Int64 = 0
+            var buffer = [UInt8](repeating: 0, count: 65_536)
+            while true {
+                let count = buffer.withUnsafeMutableBytes { raw in
+                    Darwin.read(descriptor, raw.baseAddress, raw.count)
+                }
+                guard count >= 0 else { throw ExtensionSubsystemError.unsafePath(entry.path) }
+                if count == 0 { break }
+                bytesRead += Int64(count)
+                guard bytesRead <= metadata.st_size else {
+                    throw ExtensionSubsystemError.unsafePath(entry.path)
+                }
+                hasher.update(data: Data(buffer.prefix(count)))
+            }
+            guard bytesRead == metadata.st_size else {
+                throw ExtensionSubsystemError.unsafePath(entry.path)
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private static func validateDeclaredFiles(

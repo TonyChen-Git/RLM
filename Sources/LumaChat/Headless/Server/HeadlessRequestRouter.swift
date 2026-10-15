@@ -132,6 +132,11 @@ enum LumaChatHeadlessRouteResult: Sendable {
     case events(headers: [String: String], stream: AsyncThrowingStream<LumaChatTaskEvent, Error>)
 }
 
+private struct GitHubWebhookIngressResult: Encodable {
+    let deliveryID: String
+    let eventName: String
+}
+
 actor LumaChatHeadlessRequestRouter {
     private struct RoutingFailure: Error, Sendable {
         let status: Int
@@ -229,6 +234,21 @@ actor LumaChatHeadlessRequestRouter {
                     apiVersion: LumaChatAPIVersion.v1,
                     serverID: serverID,
                     startedAt: startedAt
+                ),
+                requestID: responseRequestID
+            ))
+        }
+
+        if path == ["v1", "webhooks", "github"] {
+            try requireMethod(request.method, allowed: ["POST"])
+            try requireNoQuery(queryItems)
+            let event = try await runtime.receiveGitHubWebhook(
+                headers: request.headers, body: request.body
+            )
+            return .response(try jsonResponse(
+                status: 202,
+                value: GitHubWebhookIngressResult(
+                    deliveryID: event.id, eventName: event.name
                 ),
                 requestID: responseRequestID
             ))

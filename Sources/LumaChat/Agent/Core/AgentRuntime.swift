@@ -24,27 +24,46 @@ final class AgentRunCancellationController: @unchecked Sendable {
     }
 }
 
-/// A per-run, process-memory mailbox. Enqueue never interrupts a provider or
-/// tool operation; the loop consumes messages only at a model-turn boundary.
-/// Until the loop publishes its next session snapshot, a process crash can
-/// lose an accepted Steer. Queue has separate durable storage for that case.
+/// A per-run mailbox. Task-bound enqueue atomically saves the redacted message
+/// and its stable identity before it reports success to the composer.
 actor AgentSteerMailbox {
     static let maximumEntries = 8
     static let maximumPromptBytes = 16 * 1024
 
-    private var pending: [String] = []
+    private var pending: [AgentMessage] = []
     private var accepting = true
+    private let sessionID: UUID?
+    private let receiptStore: AgentSteerReceiptStore?
+
+    init(sessionID: UUID? = nil, receiptStore: AgentSteerReceiptStore? = nil) {
+        self.sessionID = sessionID
+        self.receiptStore = receiptStore
+    }
 
     func enqueue(_ rawText: String) -> Bool {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard accepting, !text.isEmpty,
               text.utf8.count <= Self.maximumPromptBytes,
               pending.count < Self.maximumEntries else { return false }
-        pending.append(text)
+        let message: AgentMessage
+        if let sessionID, let receiptStore {
+            do {
+                let receipt = try receiptStore.accept(text, sessionID: sessionID)
+                guard let accepted = receipt.message else { return false }
+                message = accepted
+            }
+            catch { return false }
+        } else if receiptStore == nil {
+            message = AgentMessage(role: .user, content: SecretRedactor().redact(text),
+                                   name: "luma-agent-steer")
+        } else {
+            return false
+        }
+        pending.append(message)
         return true
     }
 
-    func drain() -> [String] {
+    func drain() -> [AgentMessage] {
         let messages = pending
         pending.removeAll()
         return messages
@@ -52,13 +71,13 @@ actor AgentSteerMailbox {
 
     /// Atomically closes acceptance when the model is ready to finish. A
     /// concurrent Steer is either returned for another turn or rejected.
-    func drainOrClose() -> [String] {
+    func drainOrClose() -> [AgentMessage] {
         let messages = drain()
         if messages.isEmpty { accepting = false }
         return messages
     }
 
-    func closeAndDrain() -> [String] {
+    func closeAndDrain() -> [AgentMessage] {
         accepting = false
         return drain()
     }
@@ -411,6 +430,12 @@ struct AgentLoop: Sendable {
                     tools: definitions
                 )
                 var providerMessages = session.messages
+                if let importedRules = ProjectInstructionRuleProjector().project(
+                    rules: projectSettings.importedRules,
+                    messages: session.messages
+                ) {
+                    providerMessages.insert(importedRules, at: min(2, providerMessages.count))
+                }
                 providerMessages.append(contentsOf: transientSkillMessages(loadedSkills))
                 if let approvedMemoryContext,
                    !approvedMemoryContext.isEmpty,
@@ -1131,14 +1156,8 @@ struct AgentLoop: Sendable {
         }
     }
 
-    private func appendSteerMessages(_ messages: [String], to session: inout AgentSession) {
-        for text in messages {
-            session.messages.append(AgentMessage(
-                role: .user,
-                content: redactor.redact(text),
-                name: "luma-agent-steer"
-            ))
-        }
+    private func appendSteerMessages(_ messages: [AgentMessage], to session: inout AgentSession) {
+        session.messages.append(contentsOf: messages)
         session.updatedAt = Date()
     }
 
@@ -2325,18 +2344,25 @@ actor AgentRuntime {
     private var activeCancellationController: AgentRunCancellationController?
     private var activeSteerMailbox: AgentSteerMailbox?
     private var didStartRun = false
+    private let steerReceiptStore: AgentSteerReceiptStore?
+    private let boundSessionID: UUID?
     /// The view model exposes this runtime while run preflight is still in
     /// progress. Reserve one mailbox for that first run so Steer accepted in
     /// the gap reaches its first model turn. It is consumed at most once.
-    private var preRunSteerMailbox: AgentSteerMailbox? = AgentSteerMailbox()
+    private var preRunSteerMailbox: AgentSteerMailbox?
 
     init(
         registry: ToolRegistry,
         executor: ToolExecutor,
         contextManager: ContextManager = ContextManager(),
         todoManager: TodoManager = TodoManager(),
-        imageAttachmentStore: AgentImageAttachmentStore = AgentImageAttachmentStore()
+        imageAttachmentStore: AgentImageAttachmentStore = AgentImageAttachmentStore(),
+        sessionID: UUID? = nil,
+        steerReceiptStore: AgentSteerReceiptStore? = nil
     ) {
+        self.steerReceiptStore = steerReceiptStore
+        boundSessionID = sessionID
+        preRunSteerMailbox = AgentSteerMailbox(sessionID: sessionID, receiptStore: steerReceiptStore)
         loop = AgentLoop(
             registry: registry,
             executor: executor,
@@ -2366,6 +2392,9 @@ actor AgentRuntime {
         hookFailureHandler: PluginHookFailureHandler? = nil,
         eventHandler: @escaping AgentEventHandler
     ) async -> AgentSession {
+        // A preflight mailbox already has durable receipts for its originating
+        // Task. Never attach those messages to a different Task's transcript.
+        guard boundSessionID == nil || boundSessionID == session.id else { return session }
         // A cancelled view-model preflight may enter this actor after Stop or
         // Pause observed that no model task had started yet. Never create a
         // fresh unstructured model task on behalf of that cancelled caller.
@@ -2384,7 +2413,9 @@ actor AgentRuntime {
         guard !Task.isCancelled else { return session }
         let runID = UUID()
         let cancellationController = AgentRunCancellationController()
-        let steerMailbox = preRunSteerMailbox ?? AgentSteerMailbox()
+        let steerMailbox = preRunSteerMailbox ?? AgentSteerMailbox(
+            sessionID: session.id, receiptStore: steerReceiptStore
+        )
         preRunSteerMailbox = nil
         activeRunID = runID
         activeCancellationController = cancellationController
@@ -2415,14 +2446,7 @@ actor AgentRuntime {
             )
             let undelivered = await steerMailbox.closeAndDrain()
             if !undelivered.isEmpty {
-                let redactor = SecretRedactor()
-                for text in undelivered {
-                    result.messages.append(AgentMessage(
-                        role: .user,
-                        content: redactor.redact(text),
-                        name: "luma-agent-steer"
-                    ))
-                }
+                result.messages.append(contentsOf: undelivered)
                 result.updatedAt = Date()
                 if result.state == .completed {
                     result.state = .stepLimit

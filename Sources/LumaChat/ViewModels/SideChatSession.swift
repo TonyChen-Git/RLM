@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import ImageIO
 
 /// Side chat uses only the text chat transport. It receives no Agent runtime,
 /// ToolRegistry, workspace lease, or Task persistence capability.
@@ -9,6 +10,21 @@ protocol SideChatStreaming: Sendable {
         settings: AppSettings,
         apiKey: String?
     ) -> AsyncThrowingStream<LLMStreamDelta, Error>
+    func stream(
+        messages: [ChatMessage],
+        settings: AppSettings,
+        apiKey: String?,
+        imageSnapshots: [UUID: Data]
+    ) -> AsyncThrowingStream<LLMStreamDelta, Error>
+}
+
+extension SideChatStreaming {
+    func stream(
+        messages: [ChatMessage], settings: AppSettings, apiKey: String?,
+        imageSnapshots: [UUID: Data]
+    ) -> AsyncThrowingStream<LLMStreamDelta, Error> {
+        stream(messages: messages, settings: settings, apiKey: apiKey)
+    }
 }
 
 struct LLMSideChatStreamer: SideChatStreaming {
@@ -19,6 +35,15 @@ struct LLMSideChatStreamer: SideChatStreaming {
         settings: AppSettings,
         apiKey: String?
     ) -> AsyncThrowingStream<LLMStreamDelta, Error> {
+        stream(messages: messages, settings: settings, apiKey: apiKey, imageSnapshots: [:])
+    }
+
+    func stream(
+        messages: [ChatMessage],
+        settings: AppSettings,
+        apiKey: String?,
+        imageSnapshots: [UUID: Data]
+    ) -> AsyncThrowingStream<LLMStreamDelta, Error> {
         let parameters = ModelParameterRecommendationEngine.effectiveProfile(
             for: ModelParameterRoute(settings: settings, useCase: .chat),
             profiles: settings.modelParameterProfiles
@@ -28,16 +53,20 @@ struct LLMSideChatStreamer: SideChatStreaming {
             settings: settings,
             parameters: parameters,
             apiKey: apiKey,
-            attachmentLoader: { _ in nil }
+            attachmentLoader: { attachment in imageSnapshots[attachment.id] }
         )
     }
 }
 
 private enum SideChatError: LocalizedError {
     case responseTooLong
+    case invalidSnapshot
 
     var errorDescription: String? {
-        "Side chat 回覆超過安全上限。"
+        switch self {
+        case .responseTooLong: "Side chat 回覆超過安全上限。"
+        case .invalidSnapshot: "選取的檔案無法安全建立快照。"
+        }
     }
 }
 
@@ -45,6 +74,7 @@ private enum SideChatError: LocalizedError {
 final class SideChatSession: ObservableObject {
     static let maximumPromptBytes = 8 * 1_024
     static let maximumResponseBytes = 128 * 1_024
+    static let maximumImageSnapshotBytes = AgentImageAttachmentLimits.maximumTotalBytes
 
     let parentTaskID: UUID
     let parentTitle: String
@@ -53,6 +83,7 @@ final class SideChatSession: ObservableObject {
     @Published private(set) var isGenerating = false
     @Published private(set) var isClosed = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var selectedSnapshots: [ChatAttachment] = []
 
     private let parentContext: ChatMessage
     private let settings: AppSettings
@@ -60,6 +91,7 @@ final class SideChatSession: ObservableObject {
     private var apiKey: String?
     private var activeGenerationID: UUID?
     private var requestTask: Task<Void, Never>?
+    private var imageSnapshots: [UUID: Data] = [:]
 
     init(
         parent: AgentSession,
@@ -93,9 +125,17 @@ final class SideChatSession: ObservableObject {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = ""
         errorMessage = nil
-        messages.append(ChatMessage(role: .user, content: prompt))
+        let snapshots = selectedSnapshots
+        var userMessage = ChatMessage(role: .user, content: prompt)
+        userMessage.attachments = snapshots
+        messages.append(userMessage)
+        selectedSnapshots = []
 
         let history = messages.suffix(16).filter { !$0.isError && !$0.content.isEmpty }
+        // Keep the same image bytes available for follow-up questions while
+        // their messages remain in the bounded context window.
+        let retainedImageIDs = Set(history.flatMap(\.attachments).filter { $0.kind == .image }.map(\.id))
+        imageSnapshots = imageSnapshots.filter { retainedImageIDs.contains($0.key) }
         let requestMessages = [parentContext] + history
         let assistant = ChatMessage(role: .assistant, content: "")
         messages.append(assistant)
@@ -105,6 +145,7 @@ final class SideChatSession: ObservableObject {
         let settingsSnapshot = settings
         let keySnapshot = apiKey
         let streamer = streamer
+        let imageSnapshot = imageSnapshots
 
         requestTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -112,7 +153,8 @@ final class SideChatSession: ObservableObject {
                 let stream = streamer.stream(
                     messages: requestMessages,
                     settings: settingsSnapshot,
-                    apiKey: keySnapshot
+                    apiKey: keySnapshot,
+                    imageSnapshots: imageSnapshot
                 )
                 for try await delta in stream {
                     try Task.checkCancellation()
@@ -145,7 +187,81 @@ final class SideChatSession: ObservableObject {
         draft = ""
         errorMessage = nil
         apiKey = nil
+        selectedSnapshots = []
+        imageSnapshots = [:]
         isClosed = true
+    }
+
+    func attachWorkspaceFile(path: String, workspace: AgentWorkspace) {
+        guard !isClosed, !isGenerating, selectedSnapshots.count < 4 else { return }
+        do {
+            let read = try SecureWorkspaceIO(
+                validator: WorkspaceSecurityValidator(workspace: workspace)
+            ).readRegularFile(path: path, maximumBytes: 32 * 1_024)
+            guard !read.truncated, let content = String(data: read.data, encoding: .utf8),
+                  !content.contains("\u{0}") else { throw SideChatError.invalidSnapshot }
+            let safeName = URL(fileURLWithPath: path).lastPathComponent
+            let safe = SecretRedactor().redact(content)
+            selectedSnapshots.append(ChatAttachment(
+                name: safeName, mimeType: "text/plain", kind: .text,
+                byteCount: Int64(read.data.count), extractedText: safe,
+                sourceLabel: "User-selected side chat snapshot"
+            ))
+            errorMessage = nil
+        } catch {
+            errorMessage = SecretRedactor().redact(error.localizedDescription)
+        }
+    }
+
+    func attachWorkspaceImage(path: String, workspace: AgentWorkspace) {
+        guard !isClosed, !isGenerating, selectedSnapshots.count < 4 else { return }
+        do {
+            let read = try SecureWorkspaceIO(
+                validator: WorkspaceSecurityValidator(workspace: workspace)
+            ).readRegularFile(path: path, maximumBytes: AgentImageAttachmentLimits.maximumFileBytes)
+            let retainedBytes = imageSnapshots.values.reduce(0) { $0 + $1.count }
+            guard !read.truncated,
+                  read.data.count <= Self.maximumImageSnapshotBytes - retainedBytes,
+                  let source = CGImageSourceCreateWithData(read.data as CFData, nil),
+                  let type = CGImageSourceGetType(source) as String?,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+                  let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight as String] as? Int,
+                  width > 0, height > 0,
+                  width <= AgentImageAttachmentLimits.maximumDimension,
+                  height <= AgentImageAttachmentLimits.maximumDimension,
+                  width <= AgentImageAttachmentLimits.maximumPixels / height else {
+                throw SideChatError.invalidSnapshot
+            }
+            let mime: String
+            switch type {
+            case "public.png": mime = "image/png"
+            case "public.jpeg": mime = "image/jpeg"
+            case "org.webmproject.webp": mime = "image/webp"
+            default: throw SideChatError.invalidSnapshot
+            }
+            let attachment = ChatAttachment(
+                name: URL(fileURLWithPath: path).lastPathComponent,
+                mimeType: mime, kind: .image,
+                byteCount: Int64(read.data.count),
+                sourceLabel: "User-selected side chat image snapshot"
+            )
+            imageSnapshots[attachment.id] = read.data
+            selectedSnapshots.append(attachment)
+            errorMessage = nil
+        } catch {
+            errorMessage = SecretRedactor().redact(error.localizedDescription)
+        }
+    }
+
+    func removeSnapshot(id: UUID) {
+        guard let index = selectedSnapshots.firstIndex(where: { $0.id == id }) else { return }
+        imageSnapshots.removeValue(forKey: id)
+        selectedSnapshots.remove(at: index)
+    }
+
+    func showSnapshotError(_ error: Error) {
+        errorMessage = SecretRedactor().redact(error.localizedDescription)
     }
 
     func waitForCompletion() async {

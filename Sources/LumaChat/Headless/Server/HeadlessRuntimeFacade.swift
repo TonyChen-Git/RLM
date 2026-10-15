@@ -37,6 +37,13 @@ protocol LumaChatHeadlessRuntimeFacade: AnyObject, Sendable {
         request: LumaChatControlRequest
     ) async throws -> LumaChatAcceptedOperation
     func diff(taskID: UUID) async throws -> LumaChatTaskDiff
+    func receiveGitHubWebhook(headers: [String: String], body: Data) async throws -> AutomationEvent
+}
+
+extension LumaChatHeadlessRuntimeFacade {
+    func receiveGitHubWebhook(headers _: [String: String], body _: Data) async throws -> AutomationEvent {
+        throw LumaChatHeadlessRuntimeFailure.backendUnavailable("GitHub webhook ingress is unavailable.")
+    }
 }
 
 /// Expected, user-safe failures crossing the runtime/HTTP boundary. Unknown

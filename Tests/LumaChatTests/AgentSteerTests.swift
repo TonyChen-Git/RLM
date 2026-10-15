@@ -386,7 +386,51 @@ final class AgentSteerTests: XCTestCase {
         let lateAccepted = await mailbox.enqueue("Late instruction")
         XCTAssertFalse(lateAccepted)
         let pending = await mailbox.closeAndDrain()
-        XCTAssertEqual(pending, ["Pending instruction"])
+        XCTAssertEqual(pending.map(\.content), ["Pending instruction"])
+        XCTAssertEqual(pending.first?.name, "luma-agent-steer")
+    }
+
+    func testDurableSteerCarriesReceiptIdentityThroughRuntimeAndRejectsAnotherTask() async throws {
+        let (root, session) = try makeSession()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(session.id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let receipts = AgentSteerReceiptStore(sessionsRoot: root)
+        let provider = SteerProvider(responses: [finalResponse("Done")], firstEntered: SteerGate())
+        let registry = ToolRegistry()
+        let runtime = AgentRuntime(
+            registry: registry, executor: ToolExecutor(registry: registry),
+            sessionID: session.id, steerReceiptStore: receipts
+        )
+        let accepted = await runtime.steer("Continue with token=steer-secret-123456")
+        XCTAssertTrue(accepted)
+        let receipt = try XCTUnwrap(receipts.unresolved(sessionID: session.id).first)
+        XCTAssertFalse(try XCTUnwrap(receipt.redactedText).contains("steer-secret-123456"))
+
+        let other = AgentSession(mode: .agent)
+        let rejected = await runtime.run(
+            session: other, userRequest: "Wrong Task", provider: provider,
+            settings: AgentSettings(), approvalHandler: nil, eventHandler: { _ in }
+        )
+        XCTAssertEqual(rejected, other)
+        let requestsBeforeOwnerRuns = await provider.capturedRequests()
+        XCTAssertTrue(requestsBeforeOwnerRuns.isEmpty)
+        XCTAssertEqual(try receipts.unresolved(sessionID: session.id), [receipt])
+
+        let result = await runtime.run(
+            session: session, userRequest: "Original request", provider: provider,
+            settings: AgentSettings(), approvalHandler: nil, eventHandler: { _ in }
+        )
+        XCTAssertEqual(result.state, .completed)
+        XCTAssertEqual(result.messages.first(where: { $0.id == receipt.id }), receipt.message)
+        let requests = await provider.capturedRequests()
+        XCTAssertEqual(requests.first?.first(where: { $0.id == receipt.id }), receipt.message)
+        XCTAssertEqual(try receipts.unresolved(sessionID: session.id), [receipt],
+                       "The runtime cannot acknowledge before Session persistence succeeds")
+        let sessions = AgentSessionStore(sessionsRoot: root)
+        try await sessions.save(result)
+        let restored = try await sessions.loadSessions()
+        XCTAssertTrue(try receipts.reconcile(session: XCTUnwrap(restored.first)).isEmpty)
     }
 
     private func finalResponse(_ content: String) -> AgentModelResponse {

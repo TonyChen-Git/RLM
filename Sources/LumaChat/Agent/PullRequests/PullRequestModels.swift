@@ -10,6 +10,10 @@ struct PullRequestProviderConfiguration: Codable, Equatable, Identifiable, Senda
         providerID: "github",
         apiEndpoint: "https://api.github.com"
     )
+    static let gitlab = Self(
+        providerID: "gitlab",
+        apiEndpoint: "https://gitlab.com/api/v4"
+    )
 
     func normalized() throws -> Self {
         let provider = providerID

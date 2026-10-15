@@ -1,0 +1,594 @@
+#!/usr/bin/env python3
+"""LumaChat self-managed SSH worker protocol v1 (one JSON request per process).
+
+Install this file as an executable on a user-controlled Linux host. The client
+invokes it through a host-verified SSH connection; it opens no listening port.
+"""
+import hashlib
+import contextlib
+import ctypes
+import fcntl
+import json
+import os
+import pathlib
+import re
+import selectors
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import uuid
+
+VERSION = 1
+MAX_REQUEST = 64 * 1024
+MAX_LOG = 8 * 1024 * 1024
+MAX_RESPONSE = 1024 * 1024
+MAX_RUN_SECONDS = 24 * 60 * 60
+STATE_HOME = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")) / "lumachat-worker"
+
+
+def fail(code, detail):
+    raise WorkerError(code, detail)
+
+
+class WorkerError(Exception):
+    def __init__(self, code, detail):
+        self.code = code
+        self.detail = detail
+
+
+def emit(value):
+    raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(raw) > MAX_RESPONSE:
+        fail("response_too_large", "Worker response exceeds protocol bound")
+    os.write(1, raw + b"\n")
+
+
+def read_request():
+    raw = sys.stdin.buffer.read(MAX_REQUEST + 1)
+    if not raw or len(raw) > MAX_REQUEST:
+        fail("invalid_request", "Request is empty or too large")
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        fail("invalid_request", "Request is not JSON")
+    if not isinstance(value, dict) or value.get("protocol") != VERSION:
+        fail("protocol_mismatch", "Unsupported worker protocol")
+    return value
+
+
+def repo_root(value):
+    if not isinstance(value, str) or not value.startswith("/") or len(value.encode()) > 4096:
+        fail("invalid_repo", "Repository root must be an absolute path")
+    root = pathlib.Path(value)
+    if root.is_symlink() or os.path.realpath(value) != value or not root.is_dir():
+        fail("invalid_repo", "Repository root changed or is a link")
+    result = subprocess.run(["git", "-C", value, "rev-parse", "--show-toplevel"],
+                            capture_output=True, timeout=10, check=False)
+    if result.returncode != 0 or result.stdout.decode().strip() != value:
+        fail("invalid_repo", "Path is not the expected Git worktree root")
+    return root
+
+
+def state_root(repo):
+    STATE_HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if STATE_HOME.is_symlink():
+        fail("invalid_state", "State root must not be a symbolic link")
+    os.chmod(STATE_HOME, 0o700)
+    digest = hashlib.sha256(str(repo).encode()).hexdigest()
+    path = STATE_HOME / digest
+    path.mkdir(mode=0o700, exist_ok=True)
+    if path.is_symlink():
+        fail("invalid_state", "Repository state must not be a symbolic link")
+    os.chmod(path, 0o700)
+    return path
+
+
+def job_path(repo, job_id):
+    try:
+        parsed = uuid.UUID(job_id)
+    except (ValueError, TypeError):
+        fail("invalid_job", "Job ID must be a UUID")
+    return state_root(repo) / str(parsed)
+
+
+@contextlib.contextmanager
+def job_lock(directory):
+    descriptor = os.open(directory / "job.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def save(path, value):
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def load(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if not (info.st_mode & 0o170000 == 0o100000) or info.st_size > MAX_REQUEST:
+            fail("invalid_state", "Job state is invalid")
+        raw = os.read(descriptor, MAX_REQUEST + 1)
+        return json.loads(raw)
+    finally:
+        os.close(descriptor)
+
+
+def validate_argv(value):
+    if not isinstance(value, list) or not (1 <= len(value) <= 128):
+        fail("invalid_request", "argv must contain 1...128 elements")
+    for item in value:
+        if not isinstance(item, str) or not item or "\0" in item or len(item.encode()) > 4096:
+            fail("invalid_request", "argv contains invalid input")
+    executable = value[0]
+    if "/" in executable and not executable.startswith("/"):
+        fail("invalid_request", "executable must be a name or absolute path")
+    return value
+
+
+def supports_network_denial():
+    if sys.platform != "linux" or shutil.which("unshare") is None:
+        return False
+    result = subprocess.run(["unshare", "--user", "--map-root-user", "--net", "true"],
+                            capture_output=True, timeout=5, check=False)
+    return result.returncode == 0
+
+
+def process_info(pid):
+    try:
+        # comm is parenthesized and may contain whitespace or closing parens.
+        fields = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return {"pid": int(pid), "parent": int(fields[1]), "birth": fields[19],
+                "state": fields[0]}
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def process_birth(pid):
+    info = process_info(pid)
+    return info["birth"] if info else None
+
+
+class ChildProcesses:
+    """Track PID/birth pairs, including reparented Linux descendants."""
+    def __init__(self):
+        self.identities = {}
+        if sys.platform == "linux":
+            # Reparent double-forked jobs here, rather than to init, so normal
+            # completion and cancellation can collect their descendants too.
+            if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
+                fail("process_isolation_unavailable", "Cannot track job descendants")
+
+    def collect(self):
+        if sys.platform != "linux":
+            return
+        snapshot = {}
+        for path in pathlib.Path("/proc").iterdir():
+            if path.name.isdigit():
+                info = process_info(path.name)
+                if info:
+                    snapshot[info["pid"]] = info
+        parents = {os.getpid()}
+        changed = True
+        while changed:
+            changed = False
+            for pid, info in snapshot.items():
+                if info["parent"] in parents and pid not in parents:
+                    parents.add(pid)
+                    self.identities[pid] = info["birth"]
+                    changed = True
+
+    def signal(self, child, signum):
+        self.collect()
+        # The unreaped direct child pins its process group against PID reuse.
+        if child is not None and child.poll() is None:
+            try:
+                os.killpg(child.pid, signum)
+            except ProcessLookupError:
+                pass
+        for pid, birth in self.identities.items():
+            info = process_info(pid)
+            if info and info["birth"] == birth and info["state"] != "Z":
+                try:
+                    os.kill(pid, signum)
+                except ProcessLookupError:
+                    pass
+
+    def stop(self, child):
+        self.signal(child, signal.SIGTERM)
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            self.collect()
+            if child is not None:
+                child.poll()
+            if not self.alive(child):
+                break
+            time.sleep(0.02)
+        self.signal(child, signal.SIGKILL)
+        if child is not None:
+            child.wait(timeout=5)
+        # Reap adopted grandchildren after killing them. Never block on a
+        # process that has not exited yet.
+        if sys.platform == "linux":
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                try:
+                    pid, _ = os.waitpid(-1, os.WNOHANG)
+                    if pid == 0:
+                        if not self.alive(None):
+                            break
+                        time.sleep(0.02)
+                except ChildProcessError:
+                    break
+
+    def alive(self, child):
+        if child is not None and child.poll() is None:
+            return True
+        for pid, birth in self.identities.items():
+            info = process_info(pid)
+            if info and info["birth"] == birth and info["state"] != "Z":
+                return True
+        return False
+
+
+def start(request, repo):
+    job_id = request.get("job_id")
+    directory = job_path(repo, job_id)
+    argv = validate_argv(request.get("argv"))
+    ref = request.get("ref", "HEAD")
+    if not isinstance(ref, str) or not re.fullmatch(r"[A-Za-z0-9_./@{}^~-]{1,256}", ref) or ref.startswith("-"):
+        fail("invalid_request", "Git ref is invalid")
+    network = request.get("network", "deny")
+    if network not in ("deny", "allow"):
+        fail("invalid_request", "Network policy is invalid")
+    if network == "deny" and not supports_network_denial():
+        fail("network_isolation_unavailable", "Host cannot enforce network denial")
+    request_digest = hashlib.sha256(json.dumps(
+        {"argv": argv, "ref": ref, "network": network},
+        sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        fail("invalid_state", "Job directory is unsafe")
+    worktree = directory / "checkout"
+    with job_lock(directory):
+        state_path = directory / "state.json"
+        if state_path.exists():
+            existing = load(state_path)
+            if existing.get("request_digest") != request_digest:
+                fail("idempotency_conflict", "Job ID already belongs to another request")
+            return public_state(existing)
+        if worktree.is_symlink():
+            fail("invalid_state", "Job checkout is unsafe")
+        if worktree.exists():
+            removed = subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force",
+                                      str(worktree)], capture_output=True, timeout=60,
+                                     check=False)
+            if removed.returncode != 0 or worktree.exists():
+                fail("invalid_state", "Incomplete checkout needs operator repair")
+        try:
+            resolved = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify",
+                                       ref + "^{commit}"], capture_output=True, timeout=10,
+                                      check=False)
+            if resolved.returncode != 0:
+                fail("invalid_ref", "Git ref does not resolve to a commit")
+            commit = resolved.stdout.decode().strip()
+            created = subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach",
+                                      str(worktree), commit], capture_output=True, timeout=60,
+                                     check=False)
+            if created.returncode != 0:
+                fail("checkout_failed", "Could not create isolated worktree")
+            state = {"protocol": VERSION, "job_id": job_id, "repo": str(repo),
+                     "checkout": str(worktree), "commit": commit, "argv": argv,
+                     "request_digest": request_digest,
+                     "network": network, "status": "queued", "created_at": time.time(),
+                     "heartbeat_at": time.time(), "exit_code": None, "pid": None,
+                     "process_birth": None}
+            save(state_path, state)
+            subprocess.Popen([sys.executable, os.path.realpath(__file__), "__execute",
+                              str(repo), job_id], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             close_fds=True, start_new_session=True)
+            return public_state(state)
+        except Exception:
+            if state_path.exists():
+                try:
+                    persisted = load(state_path)
+                    if persisted.get("request_digest") == request_digest:
+                        persisted["status"] = "interrupted"
+                        persisted["heartbeat_at"] = time.time()
+                        save(state_path, persisted)
+                except Exception:
+                    # Preserve the checkout for operator recovery when the
+                    # state file itself cannot be trusted or durably updated.
+                    pass
+            elif worktree.exists():
+                subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force",
+                                str(worktree)], capture_output=True, check=False)
+            raise
+
+
+def public_state(state):
+    return {key: state.get(key) for key in ("protocol", "job_id", "checkout", "commit",
+                                            "network", "status", "created_at", "heartbeat_at",
+                                            "exit_code")}
+
+
+def execute(repo, job_id):
+    directory = job_path(repo, job_id)
+    path = directory / "state.json"
+    interrupted = False
+
+    def request_stop(_signum, _frame):
+        nonlocal interrupted
+        interrupted = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGHUP, request_stop)
+    with job_lock(directory):
+        state = load(path)
+        if state["status"] != "queued":
+            return
+        state["status"] = "running"
+        state["pid"] = os.getpid()
+        state["process_birth"] = process_birth(os.getpid())
+        state["heartbeat_at"] = time.time()
+        save(path, state)
+    child = None
+    tree = None
+    selector = selectors.DefaultSelector()
+    try:
+        tree = ChildProcesses()
+        argv = state["argv"]
+        if state["network"] == "deny":
+            argv = ["unshare", "--user", "--map-root-user", "--net", "--"] + argv
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(directory),
+               "LANG": "C.UTF-8", "TMPDIR": str(directory)}
+        # Open the log before launching so an unsafe/stale log cannot leave a
+        # process running after preparation fails.
+        descriptor = os.open(directory / "output.log",
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "wb", buffering=0) as output:
+            child = subprocess.Popen(argv, cwd=state["checkout"], env=env,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, bufsize=0, close_fds=True,
+                                     start_new_session=True)
+            selector.register(child.stdout, selectors.EVENT_READ)
+            began = time.monotonic()
+            total = 0
+            while True:
+                tree.collect()
+                with job_lock(directory):
+                    current = load(path)
+                    if current.get("cancel_requested") or current["status"] == "cancelled":
+                        state["cancel_requested"] = True
+                        break
+                    state["heartbeat_at"] = time.time()
+                    save(path, state)
+                if interrupted:
+                    state["error"] = "supervisor_interrupted"
+                    break
+                if time.monotonic() - began > MAX_RUN_SECONDS:
+                    state["error"] = "time_limit_exceeded"
+                    break
+                for key, _ in selector.select(timeout=0.2):
+                    chunk = os.read(key.fd, 16 * 1024)
+                    if chunk:
+                        remaining = MAX_LOG - total
+                        output.write(chunk[:remaining])
+                        total += min(len(chunk), remaining)
+                        if len(chunk) > remaining:
+                            state["error"] = "log_limit_exceeded"
+                            break
+                    else:
+                        selector.unregister(key.fileobj)
+                if state.get("error"):
+                    break
+                if child.poll() is not None:
+                    # An exited command must not keep a background writer
+                    # alive indefinitely through its inherited stdout pipe.
+                    tree.stop(child)
+                    if not selector.get_map():
+                        break
+    except Exception:
+        state["error"] = "execution_failed"
+    finally:
+        if tree is not None:
+            tree.stop(child)
+        if child is not None and child.stdout is not None:
+            child.stdout.close()
+        selector.close()
+        state["exit_code"] = child.returncode if child is not None else None
+        state["heartbeat_at"] = time.time()
+        with job_lock(directory):
+            current = load(path)
+            if current.get("cancel_requested") or state.get("cancel_requested"):
+                state["status"] = "cancelled"
+            elif interrupted:
+                state["status"] = "interrupted"
+            else:
+                state["status"] = "completed" if not state.get("error") and state["exit_code"] == 0 else "failed"
+            save(path, state)
+
+
+def status(request, repo):
+    directory = job_path(repo, request.get("job_id"))
+    with job_lock(directory):
+        state = load(directory / "state.json")
+        if (state["status"] in ("queued", "running")
+                and time.time() - state["heartbeat_at"] > 15
+                and (not state.get("pid") or
+                     process_birth(state["pid"]) != state.get("process_birth"))):
+            state["status"] = "interrupted"
+            save(directory / "state.json", state)
+        return public_state(state)
+
+
+def cancel(request, repo):
+    directory = job_path(repo, request.get("job_id"))
+    path = directory / "state.json"
+    with job_lock(directory):
+        state = load(path)
+        if state["status"] == "queued":
+            # The executor checks queued under this same lock before launch.
+            state["status"] = "cancelled"
+            state["heartbeat_at"] = time.time()
+            save(path, state)
+        elif state["status"] == "running":
+            state["cancel_requested"] = True
+            save(path, state)
+    # Let the supervisor terminate and reap the job before exposing a terminal
+    # state (and before diff/takeover can read a supposedly stopped checkout).
+    deadline = time.monotonic() + 5
+    while state["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        with job_lock(directory):
+            state = load(path)
+    return public_state(state)
+
+
+def logs(request, repo):
+    directory = job_path(repo, request.get("job_id"))
+    offset = request.get("offset", 0)
+    if not isinstance(offset, int) or offset < 0 or offset > MAX_LOG:
+        fail("invalid_request", "Log offset is invalid")
+    path = directory / "output.log"
+    if not path.exists():
+        return {"offset": 0, "next_offset": 0, "text": ""}
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.lseek(descriptor, offset, os.SEEK_SET)
+        content = os.read(descriptor, 64 * 1024)
+    finally:
+        os.close(descriptor)
+    return {"offset": offset, "next_offset": offset + len(content),
+            "text": content.decode("utf-8", errors="replace")}
+
+
+def bounded_output(argv, limit, timeout):
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    output = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                fail("diff_unavailable", "Git output timed out")
+            for key, _ in selector.select(timeout=0.2):
+                chunk = os.read(key.fd, min(16 * 1024, limit - len(output) + 1))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                else:
+                    output.extend(chunk)
+                    if len(output) > limit:
+                        fail("diff_unavailable", "Git output exceeds safety bound")
+        return process.wait(timeout=max(0.1, deadline - time.monotonic())), bytes(output)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stdout.close()
+        selector.close()
+
+
+def diff(request, repo):
+    state = load(job_path(repo, request.get("job_id")) / "state.json")
+    if state["status"] not in ("completed", "failed", "cancelled", "interrupted"):
+        fail("job_active", "Diff is available after the job stops")
+    returncode, output = bounded_output([
+        "git", "-C", state["checkout"], "diff", "--no-ext-diff",
+        "--no-textconv", state["commit"]
+    ], 768 * 1024, 30)
+    if returncode != 0:
+        fail("diff_unavailable", "Diff failed")
+    patches = [output]
+    remaining = 768 * 1024 - len(output)
+    returncode, output = bounded_output([
+        "git", "-C", state["checkout"], "ls-files", "--others",
+        "--exclude-standard", "-z"
+    ], 1024 * 1024, 30)
+    if returncode != 0:
+        fail("diff_unavailable", "Untracked file list failed")
+    paths = [value for value in output.split(b"\0") if value]
+    if len(paths) > 1024:
+        fail("diff_unavailable", "Too many untracked files")
+    for raw_path in paths:
+        relative = os.fsdecode(raw_path)
+        if relative.startswith("/") or ".." in pathlib.PurePath(relative).parts:
+            fail("diff_unavailable", "Untracked path is unsafe")
+        returncode, output = bounded_output([
+            "git", "-C", state["checkout"], "diff", "--no-index",
+            "--no-ext-diff", "--no-textconv", "--", "/dev/null", relative
+        ], remaining, 30)
+        if returncode not in (0, 1):
+            fail("diff_unavailable", "Untracked diff failed")
+        remaining -= len(output)
+        patches.append(output)
+    result = {"job_id": state["job_id"], "commit": state["commit"],
+              "diff": b"".join(patches).decode("utf-8", errors="replace")}
+    if len(json.dumps({"ok": True, "result": result}, ensure_ascii=False).encode()) > MAX_RESPONSE:
+        fail("diff_unavailable", "Encoded diff exceeds protocol bound")
+    return result
+
+
+def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "__execute":
+        execute(pathlib.Path(sys.argv[2]), sys.argv[3])
+        return
+    if len(sys.argv) != 1:
+        fail("invalid_request", "Use JSON request on stdin")
+    request = read_request()
+    repo = repo_root(request.get("repo"))
+    operation = request.get("operation")
+    if operation == "hello":
+        response = {"protocol": VERSION, "worker": "lumachat-worker", "repo": str(repo),
+                    "uid": os.getuid(), "platform": sys.platform,
+                    "capabilities": ["worktree", "heartbeat", "reconnect", "cancel",
+                                     "logs", "diff"]
+                    + (["network_deny"] if supports_network_denial() else [])}
+    elif operation == "start":
+        response = start(request, repo)
+    elif operation == "status":
+        response = status(request, repo)
+    elif operation == "cancel":
+        response = cancel(request, repo)
+    elif operation == "logs":
+        response = logs(request, repo)
+    elif operation == "diff":
+        response = diff(request, repo)
+    else:
+        fail("invalid_request", "Unknown operation")
+    emit({"ok": True, "result": response})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except WorkerError as error:
+        emit({"ok": False, "error": error.code, "detail": error.detail})
+        sys.exit(2)
+    except Exception:
+        emit({"ok": False, "error": "internal_error", "detail": "Worker operation failed"})
+        sys.exit(1)

@@ -52,8 +52,8 @@ enum AutomationStoreError: LocalizedError, Equatable, Sendable {
 }
 
 /// One versioned snapshot is atomically replaced after each scheduler state
-/// transition. Version 1 and the early unversioned snapshot shape remain
-/// readable; every successful save upgrades them to version 2.
+/// transition. Older snapshots remain readable; version 3 prevents older apps
+/// from silently discarding the non-evicting producer replay ledger on rollback.
 actor AutomationStore: AutomationPersisting {
     private enum ExactFileImage: Equatable {
         case absent
@@ -62,11 +62,38 @@ actor AutomationStore: AutomationPersisting {
 
     private struct VersionProbe: Decodable { var version: Int? }
 
-    private struct EnvelopeV2: Codable {
+    private struct Envelope: Codable {
         var version: Int
         var automations: [AutomationDefinition]
         var runs: [AutomationRunRecord]
         var schedulerState: AutomationSchedulerState
+
+        private enum CodingKeys: String, CodingKey {
+            case version, automations, runs, schedulerState
+        }
+        private enum StateIntegrityKeys: String, CodingKey { case producerEventClaims }
+
+        init(version: Int, automations: [AutomationDefinition], runs: [AutomationRunRecord], schedulerState: AutomationSchedulerState) {
+            self.version = version
+            self.automations = automations
+            self.runs = runs
+            self.schedulerState = schedulerState
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            version = try container.decode(Int.self, forKey: .version)
+            if version == AutomationStore.currentVersion {
+                let state = try container.nestedContainer(keyedBy: StateIntegrityKeys.self, forKey: .schedulerState)
+                guard state.contains(.producerEventClaims),
+                      try !state.decodeNil(forKey: .producerEventClaims) else {
+                    throw AutomationStoreError.invalidSnapshot("Schema 3 缺少 producer event replay ledger；無法安全復原。")
+                }
+            }
+            automations = try container.decode([AutomationDefinition].self, forKey: .automations)
+            runs = try container.decode([AutomationRunRecord].self, forKey: .runs)
+            schedulerState = try container.decode(AutomationSchedulerState.self, forKey: .schedulerState)
+        }
     }
 
     private struct EnvelopeV1: Decodable {
@@ -94,7 +121,7 @@ actor AutomationStore: AutomationPersisting {
         }
     }
 
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     private let fileManager: FileManager
     private let fileURL: URL
@@ -130,8 +157,8 @@ actor AutomationStore: AutomationPersisting {
         let version = probe?.version
         let snapshot: AutomationSnapshot
         switch version {
-        case .some(Self.currentVersion):
-            let envelope = try decoder.decode(EnvelopeV2.self, from: data)
+        case .some(2), .some(Self.currentVersion):
+            let envelope = try decoder.decode(Envelope.self, from: data)
             snapshot = AutomationSnapshot(
                 automations: envelope.automations,
                 runs: envelope.runs,
@@ -158,7 +185,7 @@ actor AutomationStore: AutomationPersisting {
         try AutomationValidation.validate(snapshot)
         let parent = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-        let envelope = EnvelopeV2(
+        let envelope = Envelope(
             version: Self.currentVersion,
             automations: snapshot.automations.sorted(by: Self.definitionSort),
             runs: snapshot.runs.sorted(by: Self.runSort),
@@ -303,6 +330,10 @@ enum AutomationValidation {
                 <= AutomationLimits.maximumOccurrenceClaims else {
             throw AutomationStoreError.invalidSnapshot("Occurrence claim 超過上限。")
         }
+        guard snapshot.schedulerState.producerEventClaims.count
+                <= AutomationLimits.maximumProducerEventClaims else {
+            throw AutomationStoreError.invalidSnapshot("Producer event replay ledger 超過上限。")
+        }
 
         var definitionIDs = Set<UUID>()
         for definition in snapshot.automations {
@@ -341,6 +372,15 @@ enum AutomationValidation {
                   claim.claimedAt.timeIntervalSince1970.isFinite,
                   claimKeys.insert(claim.key).inserted else {
                 throw AutomationStoreError.invalidSnapshot("Occurrence claim 無效或重複。")
+            }
+        }
+        var producerKeys = Set<String>()
+        for claim in snapshot.schedulerState.producerEventClaims {
+            guard claim.key.hasPrefix("producer:event:"),
+                  claim.key.utf8.count <= 1_024,
+                  claim.claimedAt.timeIntervalSince1970.isFinite,
+                  producerKeys.insert(claim.key).inserted else {
+                throw AutomationStoreError.invalidSnapshot("Producer event replay ledger 無效或重複。")
             }
         }
         if let date = snapshot.schedulerState.lastEvaluationAt,

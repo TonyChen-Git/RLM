@@ -107,6 +107,30 @@ final class SharedAgentHeadlessRuntime: LumaChatHeadlessRuntimeFacade, @unchecke
         return agentViewModel.headlessSessions().map(snapshot)
     }
 
+    func receiveGitHubWebhook(headers: [String: String], body: Data) async throws -> AutomationEvent {
+        try requireStarted()
+        guard let secret = ProcessInfo.processInfo.environment["LUMACHAT_GITHUB_WEBHOOK_SECRET"],
+              !secret.isEmpty else {
+            throw LumaChatHeadlessRuntimeFailure.backendUnavailable(
+                "GitHub webhook secret is not configured."
+            )
+        }
+        let event: AutomationEvent
+        do {
+            event = try GitHubWebhookIngress.event(headers: headers, body: body, secret: secret)
+        } catch GitHubWebhookIngressError.unavailable {
+            throw LumaChatHeadlessRuntimeFailure.backendUnavailable("Webhook secret is invalid.")
+        } catch {
+            throw LumaChatHeadlessRuntimeFailure(
+                status: 401, code: .unauthorized, message: "Webhook signature or payload is invalid."
+            )
+        }
+        guard await agentViewModel.emitAutomationEvent(event) else {
+            throw LumaChatHeadlessRuntimeFailure.backendUnavailable("Automation ingress failed.")
+        }
+        return event
+    }
+
     /// Resolves CLI omissions to the configured default while preserving every
     /// explicitly supplied backend/model exactly. A shorthand that would need
     /// canonicalization is rejected instead of silently selecting another

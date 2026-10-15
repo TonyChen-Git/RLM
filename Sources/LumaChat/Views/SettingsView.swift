@@ -72,6 +72,13 @@ private struct ProbeFingerprint: Hashable {
     let apiKey: String
 }
 
+private struct ChatImportSheetSelection: Identifiable {
+    let preview: ExternalAssistantChatImportPreview
+    let targetProjectID: UUID
+
+    var id: String { "\(targetProjectID):\(preview.id)" }
+}
+
 struct SettingsView: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var agentViewModel: AgentViewModel
@@ -103,8 +110,11 @@ struct SettingsView: View {
     @State private var activeProbeID: UUID?
     @State private var saveError: String?
     @State private var instructionImportPreview: ProjectInstructionImportPreview?
-    @State private var instructionImportDraft = ""
-    @State private var isShowingInstructionImport = false
+    @State private var instructionImportDraft: String?
+    @State private var pendingProjectImport: AgentProjectImportSaveRequest?
+    @State private var importRollbackPreview: AgentProjectImportRollbackPreview?
+    @State private var isRestoringImport = false
+    @State private var chatImportSelection: ChatImportSheetSelection?
 
     init(viewModel: ChatViewModel, agentViewModel: AgentViewModel) {
         self.viewModel = viewModel
@@ -193,6 +203,12 @@ struct SettingsView: View {
         .onChange(of: pullRequestProviderDraft.apiEndpoint) {
             resetPullRequestCredentialIfScopeChanged()
         }
+        .onChange(of: pullRequestProviderDraft.providerID) {
+            pullRequestProviderDraft.apiEndpoint = pullRequestProviderDraft.providerID == "gitlab"
+                ? PullRequestProviderConfiguration.gitlab.apiEndpoint
+                : PullRequestProviderConfiguration.github.apiEndpoint
+            resetPullRequestCredentialIfScopeChanged()
+        }
         .task(id: probeFingerprint) {
             await runConnectionProbe(after: .milliseconds(650))
         }
@@ -201,6 +217,8 @@ struct SettingsView: View {
         }
         .onChange(of: agentViewModel.selectedSessionID) { _, _ in
             synchronizeProjectCatalogName()
+            pendingProjectImport = nil
+            importRollbackPreview = nil
         }
         .onChange(of: agentViewModel.projects) { _, _ in
             synchronizeProjectCatalogName()
@@ -223,8 +241,14 @@ struct SettingsView: View {
         } message: {
             Text(saveError ?? "")
         }
-        .sheet(isPresented: $isShowingInstructionImport) {
-            instructionImportSheet
+        .sheet(item: $instructionImportPreview) { preview in
+            instructionImportSheet(preview)
+        }
+        .sheet(item: $chatImportSelection) { selection in
+            chatImportSheet(selection)
+        }
+        .sheet(item: $importRollbackPreview) { preview in
+            projectImportRollbackSheet(preview)
         }
     }
 
@@ -492,33 +516,38 @@ struct SettingsView: View {
 
     private var pullRequestProviderSection: some View {
         SettingsSection(
-            title: "GitHub Pull Requests",
-            subtitle: "Agent 可讀取 PR context，並在你明確核准後建立 PR。Endpoint 設定會隨每次 run 固定快照。"
+            title: "Pull Requests / Merge Requests",
+            subtitle: "Agent 可讀取 PR/MR context，並在你明確核准後建立。Endpoint 設定會隨每次 run 固定快照。"
         ) {
             VStack(alignment: .leading, spacing: 13) {
                 HStack {
                     Text("Provider").font(.callout.weight(.medium))
                     Spacer()
-                    Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
-                        .foregroundStyle(.secondary)
+                    Picker("Provider", selection: $pullRequestProviderDraft.providerID) {
+                        Text("GitHub").tag("github")
+                        Text("GitLab").tag("gitlab")
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("API Endpoint").font(.callout.weight(.medium))
                     TextField(
-                        "https://api.github.com",
+                        pullRequestProviderDraft.providerID == "gitlab"
+                            ? "https://gitlab.com/api/v4" : "https://api.github.com",
                         text: $pullRequestProviderDraft.apiEndpoint
                     )
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
-                    Text("GitHub Enterprise 可填 credential-free HTTPS API base URL；僅 loopback 測試端點可使用 HTTP。")
+                    Text("GitHub Enterprise 或自管 GitLab 可填 credential-free HTTPS API base URL；GitLab 路徑須以 /api/v4 結尾。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Personal Access Token").font(.callout.weight(.medium))
-                    SecureField("GitHub token（留空會移除目前 endpoint 的 token）", text: $pullRequestToken)
+                    SecureField("Provider token（留空會移除目前 endpoint 的 token）", text: $pullRequestToken)
                         .textFieldStyle(.roundedBorder)
                     Label(
                         "Token 只儲存在 macOS Keychain，不會寫入 settings.json、Task 或模型 context。",
@@ -690,6 +719,11 @@ struct SettingsView: View {
 
                 Toggle("啟用本機記憶", isOn: $agentDraft.memoriesEnabled)
                 Text("預設關閉。啟用後仍須在專案與 Task 明確允許；已核准的記憶會隨下一次執行傳給所選模型服務。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("從已完成 Task 背景建議記憶", isOn: $agentDraft.automaticMemorySuggestionsEnabled)
+                    .disabled(!agentDraft.memoriesEnabled)
+                Text("另行選用。只掃描允許提交記憶的已完成 Task；本機擷取的建議須經您核准才可使用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1125,9 +1159,28 @@ struct SettingsView: View {
                         Text("優先序：System Safety → App Agent Instructions → Project Settings / AGENTS.md → User Request。")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("目前支援專案根目錄的 CLAUDE.md 與舊版 .cursorrules。匯入前可預覽及編輯，套用後仍須儲存 Project Settings。")
+                        Text("可預覽 CLAUDE.md 參照、Cursor .mdc 範圍，以及 Claude/Cursor 的 Project 設定欄位。只有明確選取的模型偏好會從外部設定套入；權限、MCP 憑證及 hooks 不會匯入。")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        Button("預覽上次匯入還原…") {
+                            Task { await previewProjectImportRollback() }
+                        }
+                        .disabled(agentViewModel.isLoadingProjectSettings || isRestoringImport)
+                        Text("儲存匯入時保留一筆有界還原紀錄；可預覽並還原該次變更的模型、指令或規則。後續編輯衝突時停止還原。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("其他助理的聊天紀錄").font(.callout.weight(.medium))
+                        Text("只匯入您明確選取的文字匯出檔。預覽後建立已完成的唯文字 Task；工具呼叫、圖片、憑證和執行權不會匯入。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Menu("選取聊天匯出檔…") {
+                            ForEach(ExternalAssistantChatSource.allCases) { source in
+                                Button(source.title) { chooseExternalChat(source) }
+                            }
+                        }
                     }
 
                     HStack {
@@ -1164,43 +1217,118 @@ struct SettingsView: View {
                 source: source,
                 workspaceRootPath: workspace.rootPath
             )
+            instructionImportDraft = nil
             instructionImportPreview = preview
-            instructionImportDraft = preview.redactedContent
-            isShowingInstructionImport = true
         } catch {
             saveError = SecretRedactor().redact(error.localizedDescription)
         }
     }
 
-    private var instructionImportSheet: some View {
+    private func instructionImportSheet(_ preview: ProjectInstructionImportPreview) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(instructionImportPreview?.source.title ?? "匯入預覽")
+                Text(preview.source.title)
                     .font(.title3.weight(.semibold))
                 Spacer()
-                Button("取消") { isShowingInstructionImport = false }
+                Button("取消") { instructionImportPreview = nil }
             }
-            Text(instructionImportPreview?.sourcePath ?? "")
+            Text(preview.sourcePath)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-            Text("請審閱並修改內容。按「套用到草稿」會取代目前的 System Prompt 草稿；關閉設定前仍需按儲存。匯入檔案不會被改寫。")
+            Group {
+                Text("來源 \(preview.components.count) 個檔案 · \(preview.sourceByteCount) bytes")
+                    .font(.caption)
+                if let configuration = preview.configuration {
+                    Text("欄位：\(configuration.topLevelKeys.joined(separator: ", "))")
+                        .font(.caption)
+                        .textSelection(.enabled)
+                    if !configuration.mcpServerNames.isEmpty {
+                        Text("MCP Server 名稱：\(configuration.mcpServerNames.joined(separator: ", "))；設定與憑證不匯入。")
+                            .font(.caption)
+                    }
+                    if let model = configuration.modelSuggestion {
+                        Text("模型偏好：\(projectDraft.preferredModel ?? "沿用全域") → \(model)")
+                            .font(.caption)
+                    }
+                } else if preview.source == .cursorRules {
+                    Text("目前已儲存 \(projectDraft.importedRules.count) 個規則；套用將以這份預覽取代現有規則。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("目前 Project System Prompt \((projectDraft.systemPrompt ?? "").utf8.count) bytes；套用將取代草稿。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let existing = projectDraft.systemPrompt, !existing.isEmpty {
+                        DisclosureGroup("檢視目前草稿") {
+                            Text(existing)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(preview.components, id: \.relativePath) { component in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(component.relativePath)
+                                    .font(.caption.monospaced().weight(.semibold))
+                                Text(instructionImportScopeDescription(component.scope))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                if preview.source == .cursorRules {
+                                    Text(instructionImportRuleDifference(component))
+                                        .font(.caption2.weight(.medium))
+                                }
+                                if preview.source == .cursorRules {
+                                    Text(component.redactedContent)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: preview.source == .cursorRules ? 310 : 130)
+            }
+            Text(preview.configuration != nil
+                 ? "外部設定僅顯示安全摘要；權限、hooks、commands、環境變數與 MCP 憑證不匯入。模型偏好仍須審閱並儲存 Project Settings。"
+                 : preview.source == .cursorRules
+                    ? "請審閱每個規則及啟用範圍。套用後仍須按儲存；來源檔案不會被改寫。"
+                    : "請審閱並修改下方無條件指令。按「套用到草稿」會取代目前的 System Prompt 草稿；關閉設定前仍需按儲存。匯入檔案不會被改寫。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextEditor(text: $instructionImportDraft)
-                .font(.system(.callout, design: .monospaced))
-                .frame(minHeight: 310)
-                .padding(7)
-                .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            if preview.source != .cursorRules,
+               preview.configuration == nil {
+                TextEditor(text: Binding(
+                    get: { instructionImportDraft ?? preview.redactedContent },
+                    set: { instructionImportDraft = $0 }
+                ))
+                    .font(.system(.callout, design: .monospaced))
+                    .frame(minHeight: 310)
+                    .padding(7)
+                    .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            }
             HStack {
-                Text("\(instructionImportDraft.utf8.count) / \(AgentProjectSettingsLimits.maximumSystemPromptBytes) bytes")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if preview.source != .cursorRules,
+                   preview.configuration == nil {
+                    Text("\((instructionImportDraft ?? preview.redactedContent).utf8.count) / \(AgentProjectSettingsLimits.maximumSystemPromptBytes) bytes")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("套用到草稿") { applyInstructionImport() }
-                    .disabled(instructionImportDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || instructionImportDraft.utf8.count
-                            > AgentProjectSettingsLimits.maximumSystemPromptBytes)
+                Button(preview.configuration != nil
+                    ? (preview.configuration?.modelSuggestion == nil ? "完成" : "套用模型偏好")
+                    : (preview.source == .cursorRules ? "套用規則到草稿" : "套用到草稿")) {
+                    applyInstructionImport(preview)
+                }
+                    .disabled(preview.source != .cursorRules
+                        && preview.configuration == nil
+                        && ((instructionImportDraft ?? preview.redactedContent).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || (instructionImportDraft ?? preview.redactedContent).utf8.count
+                                > AgentProjectSettingsLimits.maximumSystemPromptBytes))
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -1208,21 +1336,253 @@ struct SettingsView: View {
         .frame(minWidth: 620, minHeight: 500)
     }
 
-    private func applyInstructionImport() {
-        guard let preview = instructionImportPreview,
-              let rootPath = agentViewModel.selectedHostSettingsWorkspace?.rootPath,
+    private func applyInstructionImport(_ preview: ProjectInstructionImportPreview) {
+        guard let rootPath = agentViewModel.selectedHostSettingsWorkspace?.rootPath,
               preview.belongs(toWorkspaceRootPath: rootPath) else {
             saveError = "Project folder 已變更；請重新預覽指令檔。"
             return
         }
-        let redacted = SecretRedactor().redact(instructionImportDraft)
+        guard let current = try? ProjectInstructionImporter().preview(
+            source: preview.source,
+            workspaceRootPath: rootPath
+        ), current.components == preview.components else {
+            saveError = "指令來源在預覽後變更；請重新預覽。"
+            return
+        }
+        if let configuration = preview.configuration {
+            if let model = configuration.modelSuggestion {
+                guard recordProjectImport(.preferredModel, identity: preview.projectIdentity) else { return }
+                projectDraft.preferredModel = model
+            }
+            instructionImportPreview = nil
+            return
+        }
+        if preview.source == .cursorRules {
+            guard recordProjectImport(.importedRules, identity: preview.projectIdentity) else { return }
+            projectDraft.importedRules = preview.components
+            instructionImportPreview = nil
+            return
+        }
+        let redacted = ExternalImportSanitizer.redact(instructionImportDraft ?? preview.redactedContent)
         guard !redacted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               redacted.utf8.count <= AgentProjectSettingsLimits.maximumSystemPromptBytes else {
             saveError = "匯入內容為空或超出 Project System Prompt 長度上限。"
             return
         }
+        guard recordProjectImport(.systemPrompt, identity: preview.projectIdentity) else { return }
         projectDraft.systemPrompt = redacted
-        isShowingInstructionImport = false
+        instructionImportPreview = nil
+    }
+
+    private func recordProjectImport(_ field: AgentProjectImportField, identity: AgentProjectIdentity) -> Bool {
+        do {
+            guard pendingProjectImport == nil || pendingProjectImport?.identity == identity else {
+                throw AgentProjectSettingsError.importConflict
+            }
+            var fields = pendingProjectImport?.fields ?? []
+            fields.insert(field)
+            pendingProjectImport = try AgentProjectImportSaveRequest(
+                identity: identity, fields: fields, baseline: agentViewModel.projectSettings
+            )
+            return true
+        } catch {
+            saveError = SecretRedactor().redact(error.localizedDescription)
+            return false
+        }
+    }
+
+    @MainActor
+    private func previewProjectImportRollback() async {
+        do {
+            guard let workspace = agentViewModel.selectedHostSettingsWorkspace else {
+                throw AgentProjectSettingsError.invalidWorkspace
+            }
+            guard try normalizedProjectDraft() == agentViewModel.projectSettings,
+                  pendingProjectImport == nil else {
+                saveError = "請先儲存目前草稿，或關閉並重新開啟設定，再預覽上次匯入還原。"
+                return
+            }
+            let store = try AgentProjectSettingsStore(workspaceRootPath: workspace.rootPath)
+            let preview = try await store.loadImportRollback()
+            guard agentViewModel.selectedHostSettingsWorkspace?.rootPath == workspace.rootPath else { return }
+            guard let preview else {
+                saveError = "目前 Project 沒有可還原的已儲存匯入。"
+                return
+            }
+            importRollbackPreview = preview
+        } catch {
+            saveError = SecretRedactor().redact(error.localizedDescription)
+        }
+    }
+
+    private func projectImportRollbackSheet(_ preview: AgentProjectImportRollbackPreview) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("還原上次已儲存匯入").font(.title3.weight(.semibold))
+            Text(preview.identity.canonicalRootPath).font(.caption.monospaced())
+            Text(preview.createdAt.formatted()).font(.caption).foregroundStyle(.secondary)
+            Text("還原內容已遮蔽敏感資訊；只還原下列匯入欄位。環境憑證、權限及其他設定維持目前值。")
+                .font(.callout)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("目前內容").font(.headline)
+                    Text(preview.current).font(.caption.monospaced()).textSelection(.enabled)
+                    Divider()
+                    Text("還原後內容").font(.headline)
+                    Text(preview.previous).font(.caption.monospaced()).textSelection(.enabled)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !preview.canRestore {
+                Label("匯入欄位已有後續編輯，無法安全還原。", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            HStack {
+                Button("取消") { importRollbackPreview = nil }.disabled(isRestoringImport)
+                Spacer()
+                if isRestoringImport { ProgressView().controlSize(.small) }
+                Button("確認還原並儲存") {
+                    Task { await restoreProjectImport(preview) }
+                }
+                .disabled(!preview.canRestore || isRestoringImport)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 620, minHeight: 500)
+        .interactiveDismissDisabled(isRestoringImport)
+    }
+
+    @MainActor
+    private func restoreProjectImport(_ preview: AgentProjectImportRollbackPreview) async {
+        guard !isRestoringImport,
+              let workspace = agentViewModel.selectedHostSettingsWorkspace,
+              (try? AgentProjectIdentity.resolve(workspaceRootPath: workspace.rootPath)) == preview.identity else {
+            saveError = "Project 已變更；請重新預覽還原內容。"
+            return
+        }
+        isRestoringImport = true
+        defer { isRestoringImport = false }
+        guard await agentViewModel.saveProjectSettings(
+            agentViewModel.projectSettings, restoringImportID: preview.id
+        ) else {
+            saveError = agentViewModel.errorMessage ?? "無法還原匯入。"
+            agentViewModel.errorMessage = nil
+            return
+        }
+        synchronizeProjectDraft(agentViewModel.projectSettings)
+        importRollbackPreview = nil
+    }
+
+    private func instructionImportScopeDescription(
+        _ scope: ProjectInstructionImportScope
+    ) -> String {
+        switch scope {
+        case .always: "無條件套用"
+        case .files(let globs): "檔案範圍：\(globs.joined(separator: ", "))"
+        case .agentRequested(let description): "明確 @提及時啟用：\(description)"
+        case .manual: "明確 @提及時啟用"
+        }
+    }
+
+    private func instructionImportRuleDifference(
+        _ rule: ProjectInstructionImportComponent
+    ) -> String {
+        guard let existing = projectDraft.importedRules.first(where: {
+            $0.relativePath == rule.relativePath
+        }) else { return "新增" }
+        return existing == rule ? "與目前設定相同" : "將更新目前規則"
+    }
+
+    private func chooseExternalChat(_ source: ExternalAssistantChatSource) {
+        guard let projectID = agentViewModel.selectedProject?.id else {
+            saveError = "請先選擇 Project。"
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "預覽聊天"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let preview = try ExternalAssistantChatImporter().preview(
+                source: source,
+                url: url
+            )
+            chatImportSelection = ChatImportSheetSelection(
+                preview: preview,
+                targetProjectID: projectID
+            )
+        } catch {
+            saveError = SecretRedactor().redact(error.localizedDescription)
+        }
+    }
+
+    private func chatImportSheet(_ selection: ChatImportSheetSelection) -> some View {
+        let preview = selection.preview
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(preview.source.title)
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("取消") {
+                    chatImportSelection = nil
+                }
+            }
+            Group {
+                Text(preview.sourceURL.path)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                Text("目標 Project：\(agentViewModel.projects.first(where: { $0.id == selection.targetProjectID })?.name ?? "已變更") · \(preview.messages.count) 則文字訊息 · \(preview.sourceByteCount) bytes")
+                    .font(.caption)
+                let duplicate = agentViewModel.sessions.contains {
+                    $0.projectID == selection.targetProjectID
+                        && $0.importSourceDigest == preview.sourceDigest
+                }
+                if duplicate {
+                    Label("此聊天已匯入目前 Project。", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.orange)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(preview.messages) { message in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(message.role == .user ? "User" : "Assistant")
+                                    .font(.caption.weight(.semibold))
+                                Text(message.content)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(minHeight: 300)
+                HStack {
+                    Text("匯入後可開啟 Task 檢視；再次匯入相同檔案會被拒絕。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("匯入為 Task") {
+                        Task {
+                            do {
+                                _ = try await agentViewModel.importExternalChat(
+                                    preview,
+                                    route: viewModel.settings,
+                                    expectedProjectID: selection.targetProjectID
+                                )
+                                chatImportSelection = nil
+                            } catch {
+                                saveError = SecretRedactor().redact(error.localizedDescription)
+                            }
+                        }
+                    }
+                    .disabled(duplicate
+                        || agentViewModel.selectedProject?.id != selection.targetProjectID)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 670, minHeight: 530)
     }
 
     private func projectCommandEditor(
@@ -1342,7 +1702,7 @@ struct SettingsView: View {
         case .project:
             do {
                 let project = try normalizedProjectDraft()
-                guard await agentViewModel.saveProjectSettings(project) else {
+                guard await agentViewModel.saveProjectSettings(project, importRequest: pendingProjectImport) else {
                     saveError = agentViewModel.errorMessage ?? "Project Settings 無法儲存。"
                     agentViewModel.errorMessage = nil
                     return
@@ -1379,6 +1739,7 @@ struct SettingsView: View {
     }
 
     private func synchronizeProjectDraft(_ settings: AgentProjectSettings) {
+        pendingProjectImport = nil
         var settings = settings
         if agentViewModel.selectedSession?.projectID != nil {
             // Projects 2.0 owns the catalog name. Workspace settings retain the
@@ -1495,8 +1856,7 @@ struct SettingsView: View {
     }
 
     private func resetPullRequestCredentialIfScopeChanged() {
-        var candidate = pullRequestProviderDraft
-        candidate.providerID = "github"
+        let candidate = pullRequestProviderDraft
         guard let normalized = try? candidate.normalized(),
               let newScope = try? PullRequestCredentialStore.account(
                   configuration: normalized

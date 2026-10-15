@@ -3,6 +3,30 @@ import XCTest
 @testable import LumaChat
 
 final class PullRequestProviderTests: XCTestCase {
+    func testGitLabCreateAndDiffContract() async throws {
+        let merge = #"{"iid":7,"title":"Draft: Review","description":"Body","web_url":"https://gitlab.com/acme/luma/-/merge_requests/7","state":"opened","draft":true,"source_branch":"topic","target_branch":"main","changes_count":"1"}"#
+        let changes = #"[{"old_path":"README.md","new_path":"README.md","diff":"@@ -1 +1 @@\n-old\n+new","new_file":false,"deleted_file":false,"renamed_file":false}]"#
+        let transport = PullRequestMockTransport(responses: [
+            Self.response(body: merge), Self.response(body: merge),
+            Self.response(body: changes)
+        ])
+        let provider = try GitLabPullRequestProvider(token: "test-token", transport: transport)
+        let summary = try await provider.create(PullRequestCreateRequest(
+            repositoryID: "acme/luma", title: "Review", body: "Body",
+            headBranch: "topic", baseBranch: "main", isDraft: true
+        ))
+        XCTAssertEqual(summary.reference.providerID, "gitlab")
+        XCTAssertEqual(summary.reference.pullRequestID, "7")
+        let context = try await provider.context(for: summary.reference, maximumFiles: 10)
+        XCTAssertEqual(context.files.first?.path, "README.md")
+        XCTAssertEqual(context.files.first?.additions, 1)
+        let requests = await transport.capturedRequests()
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "PRIVATE-TOKEN"), "test-token")
+        XCTAssertEqual(requests.first?.url?.absoluteString,
+                       "https://gitlab.com/api/v4/projects/acme%2Fluma/merge_requests")
+        let body = try XCTUnwrap(requests.first?.httpBody)
+        XCTAssertTrue(String(decoding: body, as: UTF8.self).contains("Draft: Review"))
+    }
     func testGitHubCreateUsesVersionedCredentialedJSONRequest() async throws {
         let transport = PullRequestMockTransport(responses: [
             Self.response(body: Self.pullJSON(number: 17, changedFiles: 2))

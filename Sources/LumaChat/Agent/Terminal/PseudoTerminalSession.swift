@@ -878,8 +878,12 @@ actor PseudoTerminalSession {
     static let maximumCommandBytes = 256 * 1_024
     static let defaultScrollbackBytes = 2 * 1_024 * 1_024
 
-    private let validator: WorkspaceSecurityValidator
-    private let sandbox: any AgentSandboxPolicy
+    private let validator: WorkspaceSecurityValidator?
+    private let sandbox: (any AgentSandboxPolicy)?
+    /// A host-owned invocation may use the PTY machinery without treating a
+    /// remote workspace path as a directory on this Mac.
+    private let directInvocation: SSHInvocation?
+    private let directLease: SSHLaunchMaterialLease?
     private let initialDirectory: URL
     private let sessionEnvironment: [String: String]
     private let scrollbackBytes: Int
@@ -918,7 +922,23 @@ actor PseudoTerminalSession {
             throw PseudoTerminalError.workspaceBoundary(initialDirectory.path)
         }
         sandbox = createdSandbox
+        directInvocation = nil
+        directLease = nil
         sessionEnvironment = environment
+        self.scrollbackBytes = min(max(4_096, scrollbackBytes), 16 * 1_024 * 1_024)
+    }
+
+    init(
+        directInvocation: SSHInvocation,
+        launchMaterial: SSHLaunchMaterialLease,
+        scrollbackBytes: Int = PseudoTerminalSession.defaultScrollbackBytes
+    ) {
+        validator = nil
+        sandbox = nil
+        self.directInvocation = directInvocation
+        directLease = launchMaterial
+        initialDirectory = AppPaths.projectTemporaryRoot
+        sessionEnvironment = [:]
         self.scrollbackBytes = min(max(4_096, scrollbackBytes), 16 * 1_024 * 1_024)
     }
 
@@ -932,6 +952,10 @@ actor PseudoTerminalSession {
         let orphanedRecord = record
         orphanedRecord?.requestSignal(SIGKILL)
         if readPump == nil { orphanedRecord?.closeMaster() }
+        guard let sandbox else {
+            directLease?.dispose()
+            return
+        }
         let runtime = sandbox.runtimeEnvironment.root.standardizedFileURL
         let parent = AppPaths.agentProcesses.standardizedFileURL
         // The PTY child inherits TMPDIR/HOME below this runtime. Do not remove
@@ -975,33 +999,49 @@ actor PseudoTerminalSession {
         }
 
         let workingDirectory: URL
-        do {
-            workingDirectory = try cwd.map { try validator.validate(cwd: $0) }
-                ?? initialDirectory
-        } catch {
-            throw PseudoTerminalError.workspaceBoundary(cwd ?? ".")
+        let executable: String
+        let arguments: [String]
+        var environment: [String: String]
+        if let directInvocation {
+            guard command == nil, cwd == nil || cwd == ".",
+                  commandEnvironment.isEmpty else {
+                throw PseudoTerminalError.invalidCommand
+            }
+            workingDirectory = initialDirectory
+            executable = directInvocation.executableURL.path
+            arguments = [executable] + directInvocation.arguments
+            environment = directInvocation.environment
+        } else {
+            guard let validator, let sandbox else {
+                throw PseudoTerminalError.invalidCommand
+            }
+            do {
+                workingDirectory = try cwd.map { try validator.validate(cwd: $0) }
+                    ?? initialDirectory
+            } catch {
+                throw PseudoTerminalError.workspaceBoundary(cwd ?? ".")
+            }
+            guard sandbox.containsWorkspacePath(workingDirectory) else {
+                throw PseudoTerminalError.workspaceBoundary(workingDirectory.path)
+            }
+            let assessment = riskAnalyzer.assess(actualCommand)
+            executable = sandbox.pseudoTerminalLauncherExecutable.path
+            arguments = [executable] + sandbox.pseudoTerminalLauncherArguments(
+                command: actualCommand,
+                shell: shell,
+                allowsNetwork: allowsNetwork || assessment.usesNetwork,
+                allowsGitMetadata: allowsGitMetadata,
+                allowsGitMetadataWrite: allowsGitMetadataWrite,
+                allowsWorkspaceWrite: true
+            )
+            environment = sandbox.environment(
+                session: sessionEnvironment,
+                command: commandEnvironment
+            )
+            environment["LUMACHAT_PTY"] = "1"
         }
-        guard sandbox.containsWorkspacePath(workingDirectory) else {
-            throw PseudoTerminalError.workspaceBoundary(workingDirectory.path)
-        }
-
-        let assessment = riskAnalyzer.assess(actualCommand)
-        let executable = sandbox.pseudoTerminalLauncherExecutable.path
-        let arguments = [executable] + sandbox.pseudoTerminalLauncherArguments(
-            command: actualCommand,
-            shell: shell,
-            allowsNetwork: allowsNetwork || assessment.usesNetwork,
-            allowsGitMetadata: allowsGitMetadata,
-            allowsGitMetadataWrite: allowsGitMetadataWrite,
-            allowsWorkspaceWrite: true
-        )
-        var environment = sandbox.environment(
-            session: sessionEnvironment,
-            command: commandEnvironment
-        )
         environment["TERM"] = environment["TERM"] ?? "xterm-256color"
         environment["COLORTERM"] = environment["COLORTERM"] ?? "truecolor"
-        environment["LUMACHAT_PTY"] = "1"
         let environmentValues = environment
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
@@ -1181,6 +1221,26 @@ actor PseudoTerminalSession {
         guard record.status().state == .running else {
             throw PseudoTerminalError.notRunning
         }
+        if directInvocation != nil {
+            // SSH forwards the local terminal's line-discipline control bytes
+            // to the remote foreground group. Sending a POSIX signal to the
+            // local ssh PID would instead tear down the transport.
+            let control: Data?
+            switch signal {
+            case SIGINT: control = Data([0x03])
+            case SIGQUIT: control = Data([0x1c])
+            case SIGTSTP: control = Data([0x1a])
+            case SIGCONT: control = Data("fg\n".utf8)
+            default: control = nil
+            }
+            if let control {
+                switch record.write(control, offset: 0) {
+                case .success(let count) where count == control.count:
+                    return record.status()
+                default: throw PseudoTerminalError.notRunning
+                }
+            }
+        }
         record.requestSignal(signal)
         return record.status()
     }
@@ -1225,11 +1285,14 @@ actor PseudoTerminalSession {
         // Exit monitor self-retains until it publishes wait status/reaps. Only
         // release this actor's reference after bounded cleanup has completed.
         exitMonitor = nil
-        let runtime = sandbox.runtimeEnvironment.root.standardizedFileURL
-        let parent = AppPaths.agentProcesses.standardizedFileURL
-        if runtime.path.hasPrefix(parent.path + "/") {
-            try? FileManager.default.removeItem(at: runtime)
+        if let sandbox {
+            let runtime = sandbox.runtimeEnvironment.root.standardizedFileURL
+            let parent = AppPaths.agentProcesses.standardizedFileURL
+            if runtime.path.hasPrefix(parent.path + "/") {
+                try? FileManager.default.removeItem(at: runtime)
+            }
         }
+        directLease?.dispose()
     }
 }
 

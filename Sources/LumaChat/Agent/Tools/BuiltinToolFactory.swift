@@ -40,6 +40,12 @@ actor BuiltinToolEnvironment {
     }
 
     private var servicesBySession: [ServiceKey: WorkspaceToolServices] = [:]
+    private var remoteTaskTerminals: [UUID: (binding: RemoteTaskTerminalHostIdentity,
+                                            workspaceID: UUID,
+                                            authority: String,
+                                            permission: String,
+                                            service: TaskTerminalService)] = [:]
+    private var pendingRemoteTerminalDisposals: Set<UUID> = []
     private var pendingTaskTerminalDisposals: Set<ServiceKey> = []
     private var closingSessionIDs: Set<UUID> = []
     private var disposalSessionIDsInFlight: Set<UUID> = []
@@ -213,7 +219,25 @@ actor BuiltinToolEnvironment {
                 durable = false
             }
         }
-        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
+        if let remote = remoteTaskTerminals[sessionID] {
+            let state: TaskTerminalPersistenceState
+            if pendingRemoteTerminalDisposals.contains(sessionID) {
+                state = (try? await remote.service.retryPendingPersistence())
+                    ?? .retryRequired("Remote terminal metadata retry failed.")
+            } else {
+                pendingRemoteTerminalDisposals.insert(sessionID)
+                state = await remote.service.disposeAll()
+            }
+            if state == .durable {
+                pendingRemoteTerminalDisposals.remove(sessionID)
+                remoteTaskTerminals.removeValue(forKey: sessionID)
+            } else {
+                durable = false
+            }
+        }
+        if !pendingTaskTerminalDisposals.isEmpty || !pendingRemoteTerminalDisposals.isEmpty {
+            scheduleTaskTerminalPersistenceRetry()
+        }
         if durable {
             closingSessionIDs.remove(sessionID)
         } else {
@@ -259,18 +283,37 @@ actor BuiltinToolEnvironment {
                 durable = false
             }
         }
-        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
+        for (sessionID, remote) in Array(remoteTaskTerminals) {
+            let state: TaskTerminalPersistenceState
+            if pendingRemoteTerminalDisposals.contains(sessionID) {
+                state = (try? await remote.service.retryPendingPersistence())
+                    ?? .retryRequired("Remote terminal metadata retry failed.")
+            } else {
+                pendingRemoteTerminalDisposals.insert(sessionID)
+                state = await remote.service.disposeAll()
+            }
+            if state == .durable {
+                pendingRemoteTerminalDisposals.remove(sessionID)
+                remoteTaskTerminals.removeValue(forKey: sessionID)
+            } else {
+                durable = false
+            }
+        }
+        if !pendingTaskTerminalDisposals.isEmpty || !pendingRemoteTerminalDisposals.isEmpty {
+            scheduleTaskTerminalPersistenceRetry()
+        }
         if durable { isStoppingAllProcesses = false }
         return durable
     }
 
     func pendingTaskTerminalPersistenceCount() -> Int {
-        pendingTaskTerminalDisposals.count
+        pendingTaskTerminalDisposals.count + pendingRemoteTerminalDisposals.count
     }
 
     private func scheduleTaskTerminalPersistenceRetry() {
         guard taskTerminalPersistenceRetryTask == nil,
-              !pendingTaskTerminalDisposals.isEmpty else { return }
+              !pendingTaskTerminalDisposals.isEmpty
+                || !pendingRemoteTerminalDisposals.isEmpty else { return }
         taskTerminalPersistenceRetryTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
@@ -296,18 +339,73 @@ actor BuiltinToolEnvironment {
                 // here would lose the only authoritative stopped snapshot.
             }
         }
+        for sessionID in Array(pendingRemoteTerminalDisposals) {
+            guard let remote = remoteTaskTerminals[sessionID] else {
+                pendingRemoteTerminalDisposals.remove(sessionID)
+                continue
+            }
+            guard (try? await remote.service.retryPendingPersistence()) == .durable else {
+                continue
+            }
+            pendingRemoteTerminalDisposals.remove(sessionID)
+            remoteTaskTerminals.removeValue(forKey: sessionID)
+        }
         for sessionID in Array(closingSessionIDs) where
-            !pendingTaskTerminalDisposals.contains(where: { $0.sessionID == sessionID }) {
+            !pendingTaskTerminalDisposals.contains(where: { $0.sessionID == sessionID })
+                && !pendingRemoteTerminalDisposals.contains(sessionID) {
             closingSessionIDs.remove(sessionID)
         }
-        if pendingTaskTerminalDisposals.isEmpty {
+        if pendingTaskTerminalDisposals.isEmpty && pendingRemoteTerminalDisposals.isEmpty {
             isStoppingAllProcesses = false
         }
-        if !pendingTaskTerminalDisposals.isEmpty { scheduleTaskTerminalPersistenceRetry() }
+        if !pendingTaskTerminalDisposals.isEmpty || !pendingRemoteTerminalDisposals.isEmpty {
+            scheduleTaskTerminalPersistenceRetry()
+        }
     }
 
     func taskTerminalService(for context: AgentToolContext) throws -> TaskTerminalService {
         try services(for: context).taskTerminal
+    }
+
+    func remoteTaskTerminalService(
+        sessionID: UUID,
+        binding: RemoteTaskTerminalBinding,
+        backend: any PTYBackend
+    ) async throws -> TaskTerminalService {
+        guard !isStoppingAllProcesses, !closingSessionIDs.contains(sessionID),
+              !pendingRemoteTerminalDisposals.contains(sessionID) else {
+            throw BuiltinToolEnvironmentConfigurationError.terminalPersistencePending
+        }
+        if let existing = remoteTaskTerminals[sessionID] {
+            if existing.binding == binding.host,
+               existing.workspaceID == binding.workspaceID,
+               existing.authority == binding.authorityFingerprint,
+               existing.permission == binding.permissionFingerprint {
+                return existing.service
+            }
+            let state = await existing.service.disposeAll()
+            guard state == .durable else {
+                pendingRemoteTerminalDisposals.insert(sessionID)
+                scheduleTaskTerminalPersistenceRetry()
+                throw BuiltinToolEnvironmentConfigurationError.terminalPersistencePending
+            }
+            remoteTaskTerminals.removeValue(forKey: sessionID)
+        }
+        let service = TaskTerminalService(
+            taskID: sessionID,
+            remoteBinding: binding,
+            backend: backend
+        )
+        remoteTaskTerminals[sessionID] = (
+            binding.host, binding.workspaceID, binding.authorityFingerprint,
+            binding.permissionFingerprint, service
+        )
+        return service
+    }
+
+    func hasLiveRemoteTaskTerminals(sessionID: UUID) async throws -> Bool {
+        guard let service = remoteTaskTerminals[sessionID]?.service else { return false }
+        return try await service.list().contains { $0.metadata.state == .running }
     }
 
     /// Review UI/actions must share the exact task-owned Git actor used by

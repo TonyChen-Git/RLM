@@ -25,6 +25,17 @@ protocol RemoteRunnerServicing: Sendable {
         for id: UUID,
         matching expectedIdentity: AgentRemoteExecutionIdentity
     ) async throws -> any RemoteExecutionBackend
+    func workerCall(
+        request: Data, runnerID: UUID,
+        matching expectedIdentity: AgentRemoteExecutionIdentity
+    ) async throws -> Data
+}
+
+extension RemoteRunnerServicing {
+    func workerCall(request _: Data, runnerID _: UUID,
+                    matching _: AgentRemoteExecutionIdentity) async throws -> Data {
+        throw RemoteExecutionError.invalidRequest("Self-managed worker is unavailable.")
+    }
 }
 
 /// Host-owned facade over durable runner metadata, Keychain credentials, and
@@ -186,6 +197,17 @@ actor RemoteRunnerService: RemoteRunnerServicing {
             credential: authority.credential,
             knownHostsData: authority.knownHostsData
         )
+    }
+
+    func workerCall(
+        request: Data, runnerID: UUID,
+        matching expectedIdentity: AgentRemoteExecutionIdentity
+    ) async throws -> Data {
+        let backend = try await backend(for: runnerID, matching: expectedIdentity)
+        guard let ssh = backend as? SSHRemoteExecutionBackend else {
+            throw RemoteExecutionError.invalidRequest("Worker requires SSH transport.")
+        }
+        return try await ssh.callWorker(request)
     }
 
     private func makeBackend(

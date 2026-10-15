@@ -4,6 +4,7 @@ import Foundation
 enum AgentSessionStoreError: LocalizedError, Equatable, Sendable {
     case sessionDeleted(UUID)
     case staleSnapshot(UUID)
+    case unsafeStorage
 
     var errorDescription: String? {
         switch self {
@@ -11,6 +12,8 @@ enum AgentSessionStoreError: LocalizedError, Equatable, Sendable {
             "Session \(id.uuidString) 已刪除，拒絕延遲寫入。"
         case .staleSnapshot(let id):
             "Session \(id.uuidString) 的舊快照晚於新狀態抵達，已拒絕倒退覆寫。"
+        case .unsafeStorage:
+            "Task 資料路徑或檔案無法安全讀寫；請檢查本機儲存空間。"
         }
     }
 }
@@ -37,7 +40,7 @@ actor AgentSessionStore {
     }
 
     func loadSessions() throws -> [AgentSession] {
-        try fileManager.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
+        try ensureDirectory(sessionsRoot)
         let entries = try fileManager.contentsOfDirectory(
             at: sessionsRoot,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -48,8 +51,11 @@ actor AgentSessionStore {
                   (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
                 return nil
             }
-            let file = directory.appendingPathComponent("session.json")
-            guard let data = try? Data(contentsOf: file),
+            guard let id = UUID(uuidString: directory.lastPathComponent),
+                  let data = try? AgentInteractionFileIO.read(
+                    sessionsRoot: sessionsRoot, sessionID: id, name: "session.json",
+                    maximumBytes: Self.maximumSessionBytes
+                  ),
                   let session = try? JSONDecoder().decode(AgentSession.self, from: data),
                   session.id.uuidString == directory.lastPathComponent else { return nil }
             return session
@@ -63,22 +69,30 @@ actor AgentSessionStore {
         guard !deletedSessionIDs.contains(session.id) else {
             throw AgentSessionStoreError.sessionDeleted(session.id)
         }
-        try fileManager.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
         let directory = sessionDirectory(session.id)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("session.json")
-        if let data = try? Data(contentsOf: file),
-           let persisted = try? JSONDecoder().decode(AgentSession.self, from: data),
-           persisted.id == session.id,
-           persisted.updatedAt > session.updatedAt {
-            throw AgentSessionStoreError.staleSnapshot(session.id)
+        try ensureDirectory(directory)
+        let previous: Data?
+        do {
+            previous = try AgentInteractionFileIO.read(
+                sessionsRoot: sessionsRoot, sessionID: session.id, name: "session.json",
+                maximumBytes: Self.maximumSessionBytes
+            )
+        } catch { throw AgentSessionStoreError.unsafeStorage }
+        if let previous {
+            guard let persisted = try? JSONDecoder().decode(AgentSession.self, from: previous),
+                  persisted.id == session.id else { throw AgentSessionStoreError.unsafeStorage }
+            if persisted.updatedAt > session.updatedAt {
+                throw AgentSessionStoreError.staleSnapshot(session.id)
+            }
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try AtomicFileWriter.write(
-            try encoder.encode(session),
-            to: file
-        )
+        let data = try encoder.encode(session)
+        guard data.count <= Self.maximumSessionBytes else { throw AgentSessionStoreError.unsafeStorage }
+        do {
+            try AgentInteractionFileIO.write(data, sessionsRoot: sessionsRoot,
+                                            sessionID: session.id, name: "session.json")
+        } catch { throw AgentSessionStoreError.unsafeStorage }
     }
 
     func delete(id: UUID) throws {
@@ -109,7 +123,10 @@ actor AgentSessionStore {
               fileInfo.st_mode & S_IFMT == S_IFREG,
               fileInfo.st_size >= 0,
               fileInfo.st_size <= Int64(Self.maximumSessionBytes),
-              let data = try? Data(contentsOf: file, options: [.mappedIfSafe]),
+              let data = try? AgentInteractionFileIO.read(
+                sessionsRoot: sessionsRoot, sessionID: id, name: "session.json",
+                maximumBytes: Self.maximumSessionBytes
+              ),
               let session = try? JSONDecoder().decode(AgentSession.self, from: data),
               session.id == id else {
             return .corrupt
@@ -119,6 +136,11 @@ actor AgentSessionStore {
 
     private func sessionDirectory(_ id: UUID) -> URL {
         sessionsRoot.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    private func ensureDirectory(_ url: URL) throws {
+        do { try AgentInteractionFileIO.ensureDirectory(url) }
+        catch { throw AgentSessionStoreError.unsafeStorage }
     }
 }
 

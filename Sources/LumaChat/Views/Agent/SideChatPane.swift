@@ -13,9 +13,13 @@ struct SideChatPane: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var agentViewModel: AgentViewModel
     @StateObject private var sideChat: SideChatSession
+    private let snapshotWorkspace: AgentWorkspace?
 
     init(configuration: SideChatConfiguration, agentViewModel: AgentViewModel) {
         self.agentViewModel = agentViewModel
+        let kind = configuration.parent.resolvedExecutionLocation.kind
+        snapshotWorkspace = (kind == .local || kind == .worktree)
+            ? configuration.parent.workspace : nil
         _sideChat = StateObject(
             wrappedValue: SideChatSession(
                 parent: configuration.parent,
@@ -49,7 +53,7 @@ struct SideChatPane: View {
 
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "eye")
-                Text("唯讀暫存對話。只能依開啟時的 Task 文字摘要回答；不會使用工具、讀取檔案、核准操作或修改原 Task。關閉後對話會清除。")
+                Text("唯讀暫存對話。可明確選取 Workspace 檔案或影像快照；Side chat 不會使用工具、核准操作或修改原 Task。關閉後對話會清除。")
                     .fixedSize(horizontal: false, vertical: true)
             }
             .font(.caption)
@@ -106,7 +110,52 @@ struct SideChatPane: View {
             }
 
             Divider()
+            if !sideChat.selectedSnapshots.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(sideChat.selectedSnapshots) { snapshot in
+                            HStack(spacing: 4) {
+                                Label(snapshot.name, systemImage: snapshot.kind == .image ? "photo" : "doc.text")
+                                    .lineLimit(1)
+                                Button {
+                                    sideChat.removeSnapshot(id: snapshot.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                }
+            }
             HStack(alignment: .bottom, spacing: 10) {
+                if let snapshotWorkspace {
+                    Menu {
+                        Button("檔案快照…") {
+                            do {
+                                for path in try AgentComposerFilePicker.chooseWorkspaceFiles(workspace: snapshotWorkspace, snapshotOnly: true) {
+                                    sideChat.attachWorkspaceFile(path: path, workspace: snapshotWorkspace)
+                                }
+                            } catch {
+                                sideChat.showSnapshotError(error)
+                            }
+                        }
+                        Button("影像快照…") {
+                            do {
+                                if let path = try AgentComposerFilePicker.chooseWorkspaceImage(workspace: snapshotWorkspace, snapshotOnly: true) {
+                                    sideChat.attachWorkspaceImage(path: path, workspace: snapshotWorkspace)
+                                }
+                            } catch {
+                                sideChat.showSnapshotError(error)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "paperclip")
+                    }
+                    .disabled(sideChat.isGenerating || sideChat.selectedSnapshots.count >= 4)
+                }
                 TextField("詢問這個 Task…", text: $sideChat.draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...5)

@@ -1,0 +1,40 @@
+name: macOS development gate
+
+on:
+  push:
+    paths:
+      - Sources/**
+      - Tests/**
+      - Scripts/**
+      - AppBundle/**
+      - Package.swift
+      - .github/workflows/development-gate.yml
+  pull_request:
+    paths:
+      - Sources/**
+      - Tests/**
+      - Scripts/**
+      - AppBundle/**
+      - Package.swift
+      - .github/workflows/development-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Swift tests and desktop build
+        run: |
+          swift test
+          swift build --configuration release --product LumaChatDesktop
+      - name: Release metadata and archive contract tests
+        run: |
+          python3 Scripts/test_release_archive.py
+          python3 Scripts/test_soak.py

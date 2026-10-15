@@ -5,6 +5,7 @@ enum AutomationLimits {
     static let maximumRuns = 4_096
     static let maximumQueuedRuns = 512
     static let maximumOccurrenceClaims = 8_192
+    static let maximumProducerEventClaims = 16_384
     static let maximumFileBytes = 16 * 1_024 * 1_024
     static let maximumNameBytes = 256
     static let maximumPromptBytes = 128 * 1_024
@@ -681,19 +682,24 @@ struct AutomationSchedulerState: Codable, Equatable, Sendable {
     var lastEvaluationAt: Date?
     var lastScheduledAtByAutomation: [UUID: Date]
     var occurrenceClaims: [AutomationOccurrenceClaim]
+    /// Producer identities are replay authority, not disposable run history.
+    /// A full ledger rejects new events rather than making an old signature reusable.
+    var producerEventClaims: [AutomationOccurrenceClaim]
 
     init(
         lastEvaluationAt: Date? = nil,
         lastScheduledAtByAutomation: [UUID: Date] = [:],
-        occurrenceClaims: [AutomationOccurrenceClaim] = []
+        occurrenceClaims: [AutomationOccurrenceClaim] = [],
+        producerEventClaims: [AutomationOccurrenceClaim] = []
     ) {
         self.lastEvaluationAt = lastEvaluationAt
         self.lastScheduledAtByAutomation = lastScheduledAtByAutomation
         self.occurrenceClaims = occurrenceClaims
+        self.producerEventClaims = producerEventClaims
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lastEvaluationAt, lastScheduledAtByAutomation, occurrenceClaims
+        case lastEvaluationAt, lastScheduledAtByAutomation, occurrenceClaims, producerEventClaims
     }
 
     init(from decoder: Decoder) throws {
@@ -707,6 +713,51 @@ struct AutomationSchedulerState: Codable, Equatable, Sendable {
             [AutomationOccurrenceClaim].self,
             forKey: .occurrenceClaims
         ) ?? []
+        producerEventClaims = try container.decodeIfPresent(
+            [AutomationOccurrenceClaim].self,
+            forKey: .producerEventClaims
+        ) ?? []
+    }
+
+    mutating func preserveLegacyProducerClaims(runs: [AutomationRunRecord] = []) throws {
+        // Earlier schemas only recorded per-Automation event claims/runs. Recover
+        // their producer identity before either bounded history can be pruned.
+        // Stage the complete migration so a capacity failure leaves state intact.
+        var migrated = producerEventClaims
+        var keys = Set(migrated.map(\.key))
+        func preserve(_ claim: AutomationOccurrenceClaim) throws {
+            guard keys.insert(claim.key).inserted else { return }
+            guard migrated.count < AutomationLimits.maximumProducerEventClaims else {
+                throw AutomationError.capacityExceeded("Producer event replay ledger 已滿；無法安全遷移。")
+            }
+            migrated.append(claim)
+        }
+        for claim in occurrenceClaims {
+            if claim.key.hasPrefix("producer:") {
+                try preserve(claim)
+            } else if let separator = claim.key.firstIndex(of: ":"),
+                      UUID(uuidString: String(claim.key[..<separator])) != nil,
+                      let key = Self.producerKey(for: String(claim.key[claim.key.index(after: separator)...])) {
+                try preserve(AutomationOccurrenceClaim(key: key, claimedAt: claim.claimedAt, runID: claim.runID))
+            }
+        }
+        for run in runs {
+            guard let key = Self.producerKey(for: run.occurrenceKey) else { continue }
+            try preserve(AutomationOccurrenceClaim(key: key, claimedAt: run.scheduledAt, runID: run.id))
+        }
+        producerEventClaims = migrated
+        occurrenceClaims.removeAll { $0.key.hasPrefix("producer:") }
+    }
+
+    private static func producerKey(for occurrence: String) -> String? {
+        let parts = occurrence.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "event",
+              parts.dropFirst().allSatisfy({ hash in
+                  hash.utf8.count == 16 && hash.utf8.allSatisfy {
+                      (48...57).contains($0) || (97...102).contains($0)
+                  }
+              }) else { return nil }
+        return "producer:" + occurrence
     }
 }
 

@@ -28,17 +28,64 @@ enum AgentLocalMemoryStatus: String, Codable, Sendable {
     case approved
 }
 
+enum AgentLocalMemoryCategory: String, Codable, CaseIterable, Sendable {
+    case preference
+    case projectFact
+    case workflow
+    case other
+
+    var title: String {
+        switch self {
+        case .preference: "偏好"
+        case .projectFact: "專案事實"
+        case .workflow: "工作流程"
+        case .other: "其他"
+        }
+    }
+}
+
+enum AgentLocalMemorySort: String, CaseIterable, Sendable {
+    case relevance
+    case recent
+
+    var title: String {
+        switch self {
+        case .relevance: "相關"
+        case .recent: "最近"
+        }
+    }
+}
+
+struct AgentLocalMemorySource: Codable, Equatable, Sendable {
+    var taskID: UUID
+    var messageID: UUID
+    var taskTitle: String
+    var excerpt: String
+}
+
 struct AgentLocalMemoryEntry: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var text: String
     var status: AgentLocalMemoryStatus
     var createdAt: Date
     var updatedAt: Date
+    var category: AgentLocalMemoryCategory? = nil
+    var source: AgentLocalMemorySource? = nil
 }
 
 struct AgentLocalMemorySnapshot: Equatable, Sendable {
     var enabled: Bool = false
     var entries: [AgentLocalMemoryEntry] = []
+    /// Tombstones prevent a deleted or cleared suggestion from reappearing on
+    /// restart. They are stored in the same atomic project document.
+    var processedSourceIDs: [UUID] = []
+}
+
+struct AgentLocalMemorySearchResult: Identifiable, Sendable {
+    var projectID: UUID
+    var projectName: String
+    var entry: AgentLocalMemoryEntry
+    var id: UUID { entry.id }
 }
 
 /// Private, project-scoped memory storage. A new project starts disabled, and
@@ -50,12 +97,15 @@ actor AgentLocalMemoryStore {
     static let maximumFileBytes = 512 * 1_024
     static let maximumContextEntries = 16
     static let maximumContextBytes = 16 * 1_024
+    static let maximumProcessedSources = 4_096
+    static let maximumContextEntriesPerCategory = 6
 
     private struct Document: Codable {
         var version: Int
         var projectID: UUID
         var enabled: Bool
         var entries: [AgentLocalMemoryEntry]
+        var processedSourceIDs: [UUID]?
     }
 
     private let storageRoot: URL
@@ -116,7 +166,8 @@ actor AgentLocalMemoryStore {
         }
         let snapshot = AgentLocalMemorySnapshot(
             enabled: document.enabled,
-            entries: document.entries
+            entries: document.entries,
+            processedSourceIDs: document.processedSourceIDs ?? []
         )
         try validate(snapshot)
         return snapshot
@@ -132,7 +183,10 @@ actor AgentLocalMemoryStore {
     }
 
     @discardableResult
-    func propose(_ text: String, projectID: UUID) throws -> AgentLocalMemoryEntry {
+    func propose(
+        _ text: String, category: AgentLocalMemoryCategory = .other,
+        projectID: UUID
+    ) throws -> AgentLocalMemoryEntry {
         var snapshot = try load(projectID: projectID)
         guard snapshot.enabled else { throw AgentLocalMemoryError.disabled }
         guard snapshot.entries.count < Self.maximumEntries else {
@@ -142,11 +196,53 @@ actor AgentLocalMemoryStore {
         let now = Date()
         let entry = AgentLocalMemoryEntry(
             id: UUID(), text: clean, status: .proposed,
-            createdAt: now, updatedAt: now
+            createdAt: now, updatedAt: now, category: category
         )
         snapshot.entries.append(entry)
         try saveReconciled(snapshot, projectID: projectID)
         return entry
+    }
+
+    /// Idempotent suggestion commit. Source acknowledgement and entry are
+    /// written together; deletion/clear retain the acknowledgement.
+    @discardableResult
+    func suggest(
+        _ text: String,
+        category: AgentLocalMemoryCategory,
+        source: AgentLocalMemorySource,
+        projectID: UUID
+    ) throws -> AgentLocalMemoryEntry? {
+        var snapshot = try load(projectID: projectID)
+        guard snapshot.enabled else { throw AgentLocalMemoryError.disabled }
+        guard !snapshot.processedSourceIDs.contains(source.messageID) else { return nil }
+        guard snapshot.processedSourceIDs.count < Self.maximumProcessedSources else {
+            throw AgentLocalMemoryError.capacityExceeded
+        }
+        let clean = try sanitizedText(text)
+        let evidence = AgentLocalMemorySource(
+            taskID: source.taskID,
+            messageID: source.messageID,
+            taskTitle: try sanitizedEvidence(source.taskTitle, maximumBytes: 256),
+            excerpt: try sanitizedEvidence(source.excerpt, maximumBytes: 1_024)
+        )
+        snapshot.processedSourceIDs.append(source.messageID)
+        let duplicate = snapshot.entries.contains {
+            $0.text.localizedStandardCompare(clean) == .orderedSame
+        }
+        var added: AgentLocalMemoryEntry?
+        if !duplicate {
+            guard snapshot.entries.count < Self.maximumEntries else {
+                throw AgentLocalMemoryError.capacityExceeded
+            }
+            let now = Date()
+            added = AgentLocalMemoryEntry(
+                id: UUID(), text: clean, status: .proposed,
+                createdAt: now, updatedAt: now, category: category, source: evidence
+            )
+            snapshot.entries.append(added!)
+        }
+        try saveReconciled(snapshot, projectID: projectID)
+        return added
     }
 
     @discardableResult
@@ -164,12 +260,17 @@ actor AgentLocalMemoryStore {
 
     /// Editing an approved memory returns it to review before it can be used.
     @discardableResult
-    func update(id: UUID, text: String, projectID: UUID) throws -> AgentLocalMemoryEntry {
+    func update(
+        id: UUID, text: String,
+        category: AgentLocalMemoryCategory? = nil,
+        projectID: UUID
+    ) throws -> AgentLocalMemoryEntry {
         var snapshot = try load(projectID: projectID)
         guard let index = snapshot.entries.firstIndex(where: { $0.id == id }) else {
             throw AgentLocalMemoryError.notFound
         }
         snapshot.entries[index].text = try sanitizedText(text)
+        if let category { snapshot.entries[index].category = category }
         snapshot.entries[index].status = .proposed
         snapshot.entries[index].updatedAt = Date()
         try saveReconciled(snapshot, projectID: projectID)
@@ -226,21 +327,82 @@ actor AgentLocalMemoryStore {
         }
     }
 
-    /// Returns a small, oldest-first slice of the most recent approved items.
+    /// Returns a bounded, query-ranked slice of approved Project items.
     /// The caller must also check global and per-Task memory-use preferences.
-    func approvedForContext(projectID: UUID) throws -> [AgentLocalMemoryEntry] {
+    func approvedForContext(projectID: UUID, query: String = "") throws -> [AgentLocalMemoryEntry] {
         let snapshot = try load(projectID: projectID)
         guard snapshot.enabled else { return [] }
         var selected: [AgentLocalMemoryEntry] = []
         var bytes = 0
-        for entry in snapshot.entries.reversed() where entry.status == .approved {
+        var categoryCounts: [AgentLocalMemoryCategory: Int] = [:]
+        let ranked = Self.rank(
+            snapshot.entries.filter { $0.status == .approved }, query: query
+        )
+        for entry in ranked {
             let count = entry.text.utf8.count
             if selected.count >= Self.maximumContextEntries { break }
             if bytes + count > Self.maximumContextBytes { continue }
+            let category = entry.category ?? .other
+            if categoryCounts[category, default: 0] >= Self.maximumContextEntriesPerCategory {
+                continue
+            }
             selected.append(entry)
             bytes += count
+            categoryCounts[category, default: 0] += 1
         }
-        return selected.reversed()
+        return selected
+    }
+
+    func search(
+        projectIDs: [UUID], query: String,
+        category: AgentLocalMemoryCategory? = nil,
+        sort: AgentLocalMemorySort = .relevance
+    ) throws -> [(UUID, AgentLocalMemoryEntry)] {
+        var matches: [(UUID, AgentLocalMemoryEntry)] = []
+        for projectID in Set(projectIDs) {
+            let snapshot = try load(projectID: projectID)
+            for entry in snapshot.entries where category == nil || entry.category == category {
+                if query.isEmpty || entry.text.localizedStandardContains(query)
+                    || (entry.source?.taskTitle.localizedStandardContains(query) == true) {
+                    matches.append((projectID, entry))
+                }
+            }
+        }
+        return matches.sorted {
+            if sort == .relevance {
+                let firstScore = Self.relevance($0.1.text, query: query)
+                let secondScore = Self.relevance($1.1.text, query: query)
+                if firstScore != secondScore { return firstScore > secondScore }
+            }
+            return $0.1.updatedAt > $1.1.updatedAt
+        }
+    }
+
+    private static func rank(
+        _ entries: [AgentLocalMemoryEntry], query: String
+    ) -> [AgentLocalMemoryEntry] {
+        entries.sorted {
+            let left = relevance($0.text, query: query)
+            let right = relevance($1.text, query: query)
+            if left != right { return left > right }
+            return $0.updatedAt > $1.updatedAt
+        }
+    }
+
+    private static func relevance(_ text: String, query: String) -> Int {
+        let terms = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .prefix(24).filter { $0.count >= 2 }
+        let value = text.lowercased()
+        return terms.reduce(0) { $0 + (value.contains($1) ? 1 : 0) }
+    }
+
+    private func sanitizedEvidence(_ value: String, maximumBytes: Int) throws -> String {
+        let clean = redactor.redact(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !clean.contains("\0"), clean.utf8.count <= maximumBytes else {
+            throw AgentLocalMemoryError.invalidText
+        }
+        return clean
     }
 
     private func sanitizedText(_ value: String) throws -> String {
@@ -257,12 +419,21 @@ actor AgentLocalMemoryStore {
         guard snapshot.entries.count <= Self.maximumEntries else {
             throw AgentLocalMemoryError.capacityExceeded
         }
+        guard snapshot.processedSourceIDs.count <= Self.maximumProcessedSources,
+              Set(snapshot.processedSourceIDs).count == snapshot.processedSourceIDs.count else {
+            throw AgentLocalMemoryError.corruptStore
+        }
         var IDs = Set<UUID>()
         for entry in snapshot.entries {
             let sanitized = try? sanitizedText(entry.text)
             guard IDs.insert(entry.id).inserted,
                   entry.text == sanitized else {
                 throw AgentLocalMemoryError.corruptStore
+            }
+            if let source = entry.source {
+                guard source.taskTitle == (try? sanitizedEvidence(source.taskTitle, maximumBytes: 256)),
+                      source.excerpt == (try? sanitizedEvidence(source.excerpt, maximumBytes: 1_024))
+                else { throw AgentLocalMemoryError.corruptStore }
             }
         }
     }
@@ -285,7 +456,8 @@ actor AgentLocalMemoryStore {
         try validate(snapshot)
         let document = Document(
             version: 1, projectID: projectID,
-            enabled: snapshot.enabled, entries: snapshot.entries
+            enabled: snapshot.enabled, entries: snapshot.entries,
+            processedSourceIDs: snapshot.processedSourceIDs
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

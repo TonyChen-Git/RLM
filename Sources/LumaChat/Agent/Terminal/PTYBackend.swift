@@ -38,6 +38,22 @@ protocol PTYBackend: Sendable {
         cwd: String?,
         environment: [String: String]
     ) throws -> any PTYSessionTransport
+
+    func makeRemoteSession(
+        shell: String,
+        cwd: String?,
+        environment: [String: String]
+    ) throws -> any PTYSessionTransport
+}
+
+extension PTYBackend {
+    func makeRemoteSession(
+        shell: String,
+        cwd: String?,
+        environment: [String: String]
+    ) throws -> any PTYSessionTransport {
+        throw RemoteExecutionError.unsupported("This PTY backend has no remote session transport.")
+    }
 }
 
 /// Current macOS implementation. PseudoTerminalSession contains the Darwin C

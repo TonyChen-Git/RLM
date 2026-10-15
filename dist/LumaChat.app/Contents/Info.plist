@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.4.5</string>
+    <string>1.4.6</string>
     <key>CFBundleVersion</key>
-	<string>12</string>
+	<string>13</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -30,6 +30,10 @@
 	<string>Luma Chat 只會在您連接 App 或送出訊息時讀取備忘錄與編輯器目前文件；直接修改原文件前會再次要求您確認。</string>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Luma Chat 需要輔助使用權限，才能即時讀取編輯器文件；只有在您啟用 Computer Use、將 App 加入白名單並核准動作後，才會在該 App 內點按、輸入或捲動。</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>您啟動 Task 語音輸入時，Luma Chat 需要麥克風來辨識語音；停止後不保留音訊。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Luma Chat 使用系統的裝置端語音辨識，將您主動錄製的語音轉成目前 Task 的文字訊息。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

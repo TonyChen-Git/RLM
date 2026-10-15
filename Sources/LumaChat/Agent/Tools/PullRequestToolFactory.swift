@@ -27,16 +27,16 @@ struct PullRequestProviderResolver: Sendable {
     ) -> Self {
         Self { rawConfiguration in
             let configuration = try rawConfiguration.normalized()
-            guard configuration.providerID == GitHubPullRequestProvider.providerID else {
+            let token = try credentialStore.loadToken(configuration: configuration)
+            let baseURL = try PullRequestCredentialStore.apiBaseURL(configuration: configuration)
+            switch configuration.providerID {
+            case GitHubPullRequestProvider.providerID:
+                return try GitHubPullRequestProvider(apiBaseURL: baseURL, token: token)
+            case GitLabPullRequestProvider.providerID:
+                return try GitLabPullRequestProvider(apiBaseURL: baseURL, token: token)
+            default:
                 throw PullRequestProviderError.providerUnavailable(configuration.providerID)
             }
-            let token = try credentialStore.loadToken(configuration: configuration)
-            return try GitHubPullRequestProvider(
-                apiBaseURL: PullRequestCredentialStore.apiBaseURL(
-                    configuration: configuration
-                ),
-                token: token
-            )
         }
     }
 }

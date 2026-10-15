@@ -7,6 +7,9 @@ actor MCPClient {
     private let transport: any MCPTransport
     private let requestTimeout: TimeInterval
     private var nextRequestID: Int64 = 1
+    private var connectionGeneration = UUID()
+    private var isConnecting = false
+    private var isDisconnecting = false
     private(set) var initializeResult: MCPInitializeResult?
     private(set) var isConnected = false
 
@@ -22,8 +25,13 @@ actor MCPClient {
 
     func connect() async throws -> MCPInitializeResult {
         if let initializeResult, isConnected { return initializeResult }
-        try await transport.start()
+        guard !isConnecting, !isDisconnecting else { throw MCPError.alreadyRunning }
+        let generation = UUID()
+        connectionGeneration = generation
+        isConnecting = true
         do {
+            try await transport.start()
+            try requireGeneration(generation)
             let resultValue = try await call(
                 method: "initialize",
                 params: .object([
@@ -40,25 +48,38 @@ actor MCPClient {
                 from: resultValue,
                 context: "initialize result"
             )
-            guard !result.protocolVersion.isEmpty else {
-                throw MCPError.invalidResponse("Initialize result omitted protocolVersion.")
+            guard result.protocolVersion == Self.protocolVersion else {
+                throw MCPError.invalidResponse(
+                    "Unsupported MCP protocol \(result.protocolVersion.isEmpty ? "(missing)" : result.protocolVersion); LumaChat supports \(Self.protocolVersion)."
+                )
             }
             try await notify(method: "notifications/initialized", params: .object([:]))
+            try requireGeneration(generation)
             initializeResult = result
             isConnected = true
+            isConnecting = false
             return result
         } catch {
-            await transport.stop()
-            initializeResult = nil
-            isConnected = false
+            if connectionGeneration == generation {
+                await stopConnection(generation: UUID())
+            }
             throw error
         }
     }
 
     func disconnect() async {
-        await transport.stop()
+        await stopConnection(generation: UUID())
+    }
+
+    private func stopConnection(generation: UUID) async {
+        // Invalidate pending replies before suspending on transport teardown.
+        connectionGeneration = generation
         initializeResult = nil
         isConnected = false
+        isConnecting = false
+        isDisconnecting = true
+        await transport.stop()
+        if connectionGeneration == generation { isDisconnecting = false }
     }
 
     func reconnect() async throws -> MCPInitializeResult {
@@ -261,6 +282,7 @@ actor MCPClient {
         params: JSONValue?,
         mayRecoverExpiredSession: Bool = true
     ) async throws -> JSONValue {
+        let generation = connectionGeneration
         let id = MCPJSONRPCID.integer(nextRequestID)
         nextRequestID += 1
         let request = MCPJSONRPCRequest(id: id, method: method, params: params)
@@ -268,22 +290,26 @@ actor MCPClient {
         do {
             response = try await responseWithTimeout(for: request)
         } catch MCPError.sessionExpired where mayRecoverExpiredSession && method != "initialize" {
-            await transport.stop()
-            initializeResult = nil
-            isConnected = false
+            try requireGeneration(generation)
+            try requireConnection()
+            let recoveryGeneration = UUID()
+            await stopConnection(generation: recoveryGeneration)
+            try requireGeneration(recoveryGeneration)
             _ = try await connect()
+            try requireConnection()
             return try await call(
                 method: method,
                 params: params,
                 mayRecoverExpiredSession: false
             )
         }
+        try requireGeneration(generation)
+        guard response.id == id else {
+            throw MCPError.invalidResponse("JSON-RPC response id does not match its request.")
+        }
         if let error = response.error {
             let redacted = SecretRedactor().redact(error.message)
             throw MCPError.remote(code: error.code, message: String(redacted.prefix(4_000)))
-        }
-        guard response.id == id else {
-            throw MCPError.invalidResponse("JSON-RPC response id does not match its request.")
         }
         guard let result = response.result else {
             throw MCPError.invalidResponse("JSON-RPC response contains neither result nor error.")
@@ -317,6 +343,10 @@ actor MCPClient {
 
     private func requireConnection() throws {
         guard isConnected else { throw MCPError.notConnected }
+    }
+
+    private func requireGeneration(_ generation: UUID) throws {
+        guard generation == connectionGeneration else { throw CancellationError() }
     }
 
     private func requireCapability(_ name: String) throws {

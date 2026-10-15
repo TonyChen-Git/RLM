@@ -4,8 +4,12 @@ actor MCPManager {
     private let registry: ToolRegistry
     private let transportFactory: any MCPTransportFactory
     private var clients: [UUID: MCPClient] = [:]
+    private var connectingClients: [UUID: MCPClient] = [:]
     private var snapshots: [UUID: MCPServerSnapshot] = [:]
     private var namespaces: [UUID: String] = [:]
+    // An interrupted connect/refresh can still be unwinding registry work.
+    // Reserve its namespace until cleanup ends so it cannot remove a successor.
+    private var transientNamespaces: [UUID: String] = [:]
     private var toolMappings: [UUID: [String: String]] = [:]
     private var connectionTokens: [UUID: UUID] = [:]
     private var discoveryRefreshes: [UUID: Task<MCPServerSnapshot, Error>] = [:]
@@ -34,6 +38,8 @@ actor MCPManager {
         // Reserve before the first await so two same-named servers cannot select
         // the same registry namespace while the actor is re-entrant.
         namespaces[configuration.id] = namespace
+        transientNamespaces[connectionToken] = namespace
+        defer { transientNamespaces.removeValue(forKey: connectionToken) }
 
         snapshots[configuration.id] = MCPServerSnapshot(
             configuration: configuration,
@@ -53,6 +59,7 @@ actor MCPManager {
             let transport = try transportFactory.makeTransport(for: configuration)
             let client = MCPClient(configuration: configuration, transport: transport)
             candidateClient = client
+            connectingClients[configuration.id] = client
             let initialized = try await client.connect()
             appendLog(
                 serverID: configuration.id,
@@ -84,6 +91,7 @@ actor MCPManager {
             }
 
             clients[configuration.id] = client
+            connectingClients.removeValue(forKey: configuration.id)
             toolMappings[configuration.id] = registration.mapping
             let snapshot = MCPServerSnapshot(
                 configuration: configuration,
@@ -115,57 +123,51 @@ actor MCPManager {
             await candidateClient?.disconnect()
             if connectionTokens[configuration.id] == connectionToken {
                 connectionTokens.removeValue(forKey: configuration.id)
+                connectingClients.removeValue(forKey: configuration.id)
+                toolMappings.removeValue(forKey: configuration.id)
+                clients.removeValue(forKey: configuration.id)
+                let safeError = SecretRedactor().redact(error.localizedDescription)
+                snapshots[configuration.id]?.state = .failed
+                snapshots[configuration.id]?.lastError = safeError
+                appendLog(
+                    serverID: configuration.id,
+                    level: .error,
+                    message: safeError
+                )
                 if namespaces[configuration.id] == namespace {
                     namespaces.removeValue(forKey: configuration.id)
                     await registry.unregister(namespace: namespace)
                 }
-                toolMappings.removeValue(forKey: configuration.id)
-                clients.removeValue(forKey: configuration.id)
-            }
-            var snapshot = snapshots[configuration.id] ?? MCPServerSnapshot(
-                configuration: configuration,
-                state: .failed,
-                negotiatedProtocolVersion: nil,
-                serverInfo: nil,
-                tools: [],
-                resources: [],
-                resourceTemplates: [],
-                prompts: [],
-                lastError: nil
-            )
-            if connectionTokens[configuration.id] == nil {
-                snapshot.state = .failed
-                snapshot.lastError = SecretRedactor().redact(error.localizedDescription)
-                snapshots[configuration.id] = snapshot
-                appendLog(
-                    serverID: configuration.id,
-                    level: .error,
-                    message: snapshot.lastError ?? "Connection failed"
-                )
             }
             throw error
         }
     }
 
     func disconnect(serverID: UUID) async {
-        // A refresh replaces the registered tool group atomically. Let that
-        // replacement finish before tearing down its client and namespace.
-        if let refresh = discoveryRefreshes[serverID] {
-            _ = try? await refresh.value
-        }
+        // Detach all state before the first suspension. Pending initialization
+        // is a live transport too, and late replies cannot regain authority.
         connectionTokens.removeValue(forKey: serverID)
-        if let namespace = namespaces.removeValue(forKey: serverID) {
-            await registry.unregister(namespace: namespace)
-        }
+        let namespace = namespaces.removeValue(forKey: serverID)
+        let retirement = UUID()
+        if let namespace { transientNamespaces[retirement] = namespace }
+        defer { transientNamespaces.removeValue(forKey: retirement) }
+        let connecting = connectingClients.removeValue(forKey: serverID)
+        let connected = clients.removeValue(forKey: serverID)
+        let refresh = discoveryRefreshes.removeValue(forKey: serverID)
+        refresh?.cancel()
         toolMappings.removeValue(forKey: serverID)
-        if let client = clients.removeValue(forKey: serverID) {
-            await client.disconnect()
-        }
         if var snapshot = snapshots[serverID] {
             snapshot.state = .disconnected
             snapshots[serverID] = snapshot
         }
         appendLog(serverID: serverID, level: .info, message: "Disconnected")
+        if let namespace { await registry.unregister(namespace: namespace) }
+        await connecting?.disconnect()
+        await connected?.disconnect()
+        _ = try? await refresh?.value
+        // A canceled refresh may have been awaiting registry.replace when the
+        // first unregister ran. Its reserved namespace still belongs only to us.
+        if let namespace { await registry.unregister(namespace: namespace) }
     }
 
     func disconnectAll() async {
@@ -191,9 +193,16 @@ actor MCPManager {
         if let refresh = discoveryRefreshes[serverID] {
             return try await refresh.value
         }
+        guard let connectionToken = connectionTokens[serverID] else {
+            throw MCPError.serverNotFound(serverID)
+        }
         let refresh = Task { try await performDiscoveryRefresh(serverID: serverID) }
         discoveryRefreshes[serverID] = refresh
-        defer { discoveryRefreshes.removeValue(forKey: serverID) }
+        defer {
+            if connectionTokens[serverID] == connectionToken {
+                discoveryRefreshes.removeValue(forKey: serverID)
+            }
+        }
         return try await refresh.value
     }
 
@@ -229,8 +238,10 @@ actor MCPManager {
                 removingNames: Set(toolMappings[serverID].map { Array($0.keys) } ?? []),
                 with: registration.adapters
             )
+            try requireCurrentConnection(serverID, token: connectionToken)
             toolMappings[serverID] = registration.mapping
         } catch {
+            try requireCurrentConnection(serverID, token: connectionToken)
             let safeError = redactedError(error)
             snapshot.lastError = safeError.localizedDescription
             snapshots[serverID] = snapshot
@@ -419,8 +430,14 @@ actor MCPManager {
     private func uniqueNamespace(for configuration: MCPServerConfiguration) -> String {
         let component = MCPToolNamespace.sanitize(configuration.name, fallback: "server")
         let base = "mcp.\(component)"
-        guard namespaces.values.contains(base) else { return base }
-        return "\(base)_\(configuration.id.uuidString.lowercased().prefix(8))"
+        let occupied = Set(namespaces.values).union(transientNamespaces.values)
+        guard occupied.contains(base) else { return base }
+        let suffix = "\(base)_\(configuration.id.uuidString.lowercased().prefix(8))"
+        var candidate = suffix
+        while occupied.contains(candidate) {
+            candidate = "\(suffix)_\(UUID().uuidString.lowercased().prefix(8))"
+        }
+        return candidate
     }
 
     private func requireCurrentConnection(_ serverID: UUID, token: UUID) throws {

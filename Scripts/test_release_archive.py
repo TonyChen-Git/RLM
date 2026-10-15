@@ -48,6 +48,9 @@ class ReleaseArchiveTests(unittest.TestCase):
         (self.application / "Contents/Resources/bin/lumachat-updater").write_bytes(
             b"updater"
         )
+        (self.application / "Contents/Resources/bin/lumachat-worker").write_bytes(
+            b"worker"
+        )
         (plugin / "plugin.json").write_bytes(b"{}")
         for skill in ARTIFACT_WORKFLOW_SKILLS:
             directory = plugin / "skills" / skill
@@ -97,6 +100,9 @@ class ReleaseArchiveTests(unittest.TestCase):
         )
         self.assertEqual(
             modes["LumaChat.app/Contents/Resources/bin/lumachat-updater"], 0o755
+        )
+        self.assertEqual(
+            modes["LumaChat.app/Contents/Resources/bin/lumachat-worker"], 0o755
         )
         self.assertEqual(
             modes[

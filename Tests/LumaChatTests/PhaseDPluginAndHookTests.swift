@@ -179,6 +179,29 @@ final class PhaseDPluginAndHookTests: XCTestCase {
         }
     }
 
+    func testPackageDigestRejectsMutationAfterPreviewAndPreservesInstalledVersion() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        try writePackage(at: source, manifest: basicManifest())
+        let manager = PluginManager(
+            recordsFile: root.appendingPathComponent("state/plugins.json"),
+            installRoot: root.appendingPathComponent("installed", isDirectory: true),
+            scratchRoot: root.appendingPathComponent("scratch", isDirectory: true)
+        )
+        let first = try await manager.inspect(source: .localDirectory(path: source.path))
+        XCTAssertEqual(first.packageSHA256.count, 64)
+        _ = try await manager.install(first, grantedPermissions: [.filesystemRead])
+        let changed = try await manager.inspect(source: .localDirectory(path: source.path))
+        try Data("unexpected change".utf8).write(to: source.appendingPathComponent("README.md"))
+        await assertAsyncThrows {
+            _ = try await manager.install(changed, grantedPermissions: [.filesystemRead])
+        }
+        let installed = await manager.installed()
+        XCTAssertEqual(installed.first?.packageSHA256, first.packageSHA256)
+        XCTAssertEqual(installed.first?.manifest.version, "1.0.0")
+    }
+
     func testHookSchemaIsHostOnlyAndExecutionUsesPermissionRedactionAndFailurePolicy() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

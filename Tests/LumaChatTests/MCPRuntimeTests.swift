@@ -190,6 +190,30 @@ final class MCPRuntimeTests: XCTestCase {
         XCTAssertEqual(stopCount, 1)
     }
 
+    func testUnsupportedProtocolVersionFailsBeforeDiscoveryAndRegistersNoTools() async throws {
+        let transport = MockMCPTransport(protocolVersion: "2026-07-28")
+        let registry = ToolRegistry()
+        let manager = MCPManager(
+            registry: registry,
+            transportFactory: MockMCPTransportFactory(transport: transport)
+        )
+        let configuration = MCPServerConfiguration(
+            name: "Future Server",
+            transport: .stdio(MCPStdioConfiguration(command: "/usr/bin/mock"))
+        )
+        do {
+            _ = try await manager.connect(configuration)
+            XCTFail("Unsupported protocol must fail closed")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Unsupported MCP protocol"))
+        }
+        let snapshot = await manager.snapshot(serverID: configuration.id)
+        XCTAssertEqual(snapshot?.state, .failed)
+        XCTAssertTrue(snapshot?.lastError?.contains("2026-07-28") == true)
+        let tools = await registry.definitions(for: .agent)
+        XCTAssertFalse(tools.contains { $0.name.hasPrefix("mcp.future_server") })
+    }
+
     func testProjectScopedToolIsHiddenAndRejectedOutsideCapturedWorkspace() async throws {
         let transport = MockMCPTransport()
         let registry = ToolRegistry()
@@ -1121,6 +1145,7 @@ private struct MockMCPTransportFactory: MCPTransportFactory {
 
 private actor MockMCPTransport: MCPTransport {
     private var failingMethod: String?
+    private let protocolVersion: String
     private var toolNames = ["Read File"]
     private var started = false
     private var starts = 0
@@ -1128,8 +1153,9 @@ private actor MockMCPTransport: MCPTransport {
     private var methods: [String] = []
     private var calledTool: String?
 
-    init(failingMethod: String? = nil) {
+    init(failingMethod: String? = nil, protocolVersion: String = MCPClient.protocolVersion) {
         self.failingMethod = failingMethod
+        self.protocolVersion = protocolVersion
     }
 
     func start() async throws {
@@ -1161,7 +1187,7 @@ private actor MockMCPTransport: MCPTransport {
         switch request.method {
         case "initialize":
             result = .object([
-                "protocolVersion": .string(MCPClient.protocolVersion),
+                "protocolVersion": .string(protocolVersion),
                 "capabilities": .object([
                     "tools": .object([:]),
                     "resources": .object([:]),

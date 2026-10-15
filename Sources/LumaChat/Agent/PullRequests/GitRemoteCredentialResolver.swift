@@ -51,7 +51,8 @@ struct GitRemoteCredentialResolver: Sendable {
     ) -> Self {
         Self { remoteURL, rawConfiguration in
             let configuration = try rawConfiguration.normalized()
-            guard configuration.providerID == GitHubPullRequestProvider.providerID,
+            guard (configuration.providerID == GitHubPullRequestProvider.providerID
+                    || configuration.providerID == GitLabPullRequestProvider.providerID),
                   try authorizes(
                     remoteURL: remoteURL,
                     providerConfiguration: configuration
@@ -74,7 +75,8 @@ struct GitRemoteCredentialResolver: Sendable {
         providerConfiguration: PullRequestProviderConfiguration
     ) throws -> Bool {
         let configuration = try providerConfiguration.normalized()
-        guard configuration.providerID == GitHubPullRequestProvider.providerID,
+        guard (configuration.providerID == GitHubPullRequestProvider.providerID
+                || configuration.providerID == GitLabPullRequestProvider.providerID),
               let apiURL = URL(
                 string: configuration.apiEndpoint,
                 encodingInvalidCharacters: false

@@ -815,6 +815,284 @@ final class AutomationSchedulerTests: XCTestCase {
         try await scheduler.shutdown()
     }
 
+    func testIgnoredProducerEventCannotRunAfterNewAutomationOrRestart() async throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let clock = AutomationTestClock(current)
+        let store = MemoryAutomationStore()
+        let event = AutomationEvent(
+            id: "delivery-ignored-before-configuration",
+            name: "github.push",
+            occurredAt: current,
+            payload: ["repository": "acme/luma"]
+        )
+        let firstScheduler = Self.scheduler(
+            store: store,
+            clock: clock,
+            executor: { _ in
+                XCTFail("An ignored delivery must not launch a run")
+                return AutomationExecutionOutcome(status: .failed)
+            }
+        )
+        try await firstScheduler.start()
+        let initiallyIgnored = try await firstScheduler.emitEvent(event)
+        XCTAssertTrue(initiallyIgnored.isEmpty)
+        try await firstScheduler.shutdown()
+
+        let definition = Self.definition(
+            name: "Added later",
+            schedule: .event(AutomationEventTrigger(name: "github.push")),
+            createdAt: current
+        )
+        let restarted = Self.scheduler(
+            store: store,
+            clock: clock,
+            executor: { _ in
+                XCTFail("A replayed delivery must not launch a run")
+                return AutomationExecutionOutcome(status: .failed)
+            }
+        )
+        try await restarted.start()
+        _ = try await restarted.createAutomation(definition)
+        let replayed = try await restarted.emitEvent(event)
+        XCTAssertTrue(replayed.isEmpty)
+        let runs = try await restarted.listRuns(automationID: definition.id)
+        XCTAssertTrue(runs.isEmpty)
+        let persisted = await store.capturedSnapshot()
+        XCTAssertTrue(persisted.schedulerState.occurrenceClaims.isEmpty)
+        XCTAssertEqual(persisted.schedulerState.producerEventClaims.count, 1)
+        try await restarted.shutdown()
+    }
+
+    func testProducerReplaySurvivesOccurrencePruningMigrationAndRestart() async throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let clock = AutomationTestClock(current)
+        let initialStore = MemoryAutomationStore()
+        let original = Self.scheduler(store: initialStore, clock: clock, executor: { _ in
+            XCTFail("Ignored producer event must not execute")
+            return AutomationExecutionOutcome(status: .failed)
+        })
+        try await original.start()
+        let event = AutomationEvent(id: "signed-body-stable", name: "github.push", occurredAt: current)
+        _ = try await original.emitEvent(event)
+        try await original.shutdown()
+        var legacy = await initialStore.capturedSnapshot()
+        let producer = try XCTUnwrap(legacy.schedulerState.producerEventClaims.first)
+        legacy.schedulerState.producerEventClaims = []
+        legacy.schedulerState.occurrenceClaims = [producer] + (0..<(AutomationLimits.maximumOccurrenceClaims - 1)).map {
+            AutomationOccurrenceClaim(key: "historical-\($0)", claimedAt: current, runID: UUID())
+        }
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent("producer-ledger-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let legacyFile = directory.appendingPathComponent("legacy-v2.json")
+        var legacyWire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        legacyWire["version"] = 2
+        var legacyState = try XCTUnwrap(legacyWire["schedulerState"] as? [String: Any])
+        legacyState.removeValue(forKey: "producerEventClaims")
+        legacyWire["schedulerState"] = legacyState
+        try JSONSerialization.data(withJSONObject: legacyWire).write(to: legacyFile)
+        let store = AutomationStore(fileURL: legacyFile)
+        let restarted = Self.scheduler(store: store, clock: clock, executor: { _ in
+            AutomationExecutionOutcome(status: .succeeded)
+        })
+        try await restarted.start()
+        let manual = Self.definition(name: "Independent manual history", schedule: .event(.init(name: "manual")), createdAt: current)
+        _ = try await restarted.createAutomation(manual)
+        for index in 0..<3 {
+            let run = try await restarted.runNow(automationID: manual.id, idempotencyKey: "new-\(index)")
+            _ = try await Self.waitForTerminalRun(run.id, scheduler: restarted)
+        }
+        let afterPruning = try await restarted.currentSnapshot()
+        XCTAssertEqual(afterPruning.schedulerState.occurrenceClaims.count, AutomationLimits.maximumOccurrenceClaims)
+        XCTAssertEqual(afterPruning.schedulerState.producerEventClaims, [producer])
+        try await restarted.shutdown()
+
+        // Round-trip through the real durable store, not only the actor fixture.
+        let file = directory.appendingPathComponent("automations.json")
+        let durable = AutomationStore(fileURL: file)
+        try await durable.saveSnapshot(try await store.loadSnapshot())
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        XCTAssertEqual(wire["version"] as? Int, 3, "Old apps must fail closed on the replay ledger schema")
+        let final = Self.scheduler(store: durable, clock: clock, executor: { _ in
+            XCTFail("Old signed body must remain blocked after ordinary history eviction")
+            return AutomationExecutionOutcome(status: .failed)
+        })
+        try await final.start()
+        let enabledLater = Self.definition(name: "Enabled later", schedule: .event(.init(name: "github.push")), createdAt: current)
+        _ = try await final.createAutomation(enabledLater)
+        let replay = try await final.emitEvent(event)
+        XCTAssertTrue(replay.isEmpty)
+        let runs = try await final.listRuns(automationID: enabledLater.id)
+        XCTAssertTrue(runs.isEmpty)
+        try await final.shutdown()
+    }
+
+    func testVersionTwoPerAutomationClaimsAndRunsRecoverProducerReplayAuthority() async throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let clock = AutomationTestClock(current)
+        let memory = MemoryAutomationStore()
+        let original = Self.scheduler(store: memory, clock: clock, executor: { _ in
+            AutomationExecutionOutcome(status: .succeeded)
+        })
+        try await original.start()
+        let oldDefinition = Self.definition(name: "Original", schedule: .event(.init(name: "github.push")), createdAt: current)
+        _ = try await original.createAutomation(oldDefinition)
+        let events = ["legacy-claim-only", "legacy-run-only"].map {
+            AutomationEvent(id: $0, name: "github.push", occurredAt: current)
+        }
+        var accepted: [AutomationRunRecord] = []
+        for event in events {
+            let records = try await original.emitEvent(event)
+            let record = try XCTUnwrap(records.first)
+            accepted.append(try await Self.waitForTerminalRun(record.id, scheduler: original))
+        }
+        try await original.shutdown()
+        var legacy = await memory.capturedSnapshot()
+        legacy.automations = []
+        legacy.runs = [accepted[1]]
+        legacy.schedulerState.producerEventClaims = []
+        legacy.schedulerState.occurrenceClaims = legacy.schedulerState.occurrenceClaims.filter {
+            $0.runID == accepted[0].id
+        }
+        XCTAssertEqual(legacy.schedulerState.occurrenceClaims.count, 1)
+        XCTAssertFalse(legacy.schedulerState.occurrenceClaims.contains { $0.key.hasPrefix("producer:") })
+
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent("legacy-event-ledger-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("automations.json")
+        var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        wire["version"] = 2
+        var state = try XCTUnwrap(wire["schedulerState"] as? [String: Any])
+        state.removeValue(forKey: "producerEventClaims")
+        wire["schedulerState"] = state
+        try JSONSerialization.data(withJSONObject: wire).write(to: file)
+
+        let store = AutomationStore(fileURL: file)
+        let migrated = Self.scheduler(store: store, clock: clock, executor: { _ in
+            XCTFail("Retained v2 event evidence must block replay against a newly added Automation")
+            return AutomationExecutionOutcome(status: .failed)
+        })
+        try await migrated.start()
+        let newDefinition = Self.definition(name: "Added after migration", schedule: .event(.init(name: "github.push")), createdAt: current)
+        _ = try await migrated.createAutomation(newDefinition)
+        for event in events {
+            let replay = try await migrated.emitEvent(event)
+            XCTAssertTrue(replay.isEmpty)
+        }
+        let snapshot = try await migrated.currentSnapshot()
+        XCTAssertEqual(Set(snapshot.schedulerState.producerEventClaims.map(\.key)), Set(accepted.map { "producer:" + $0.occurrenceKey }))
+        XCTAssertTrue(snapshot.runs.filter { $0.automationID == newDefinition.id }.isEmpty)
+        try await migrated.shutdown()
+        let durable = try await store.loadSnapshot()
+        XCTAssertEqual(durable.schedulerState.producerEventClaims.count, 2)
+    }
+
+    func testProducerMigrationRequiresExactEventShapeAndUUIDClaimPrefix() throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let occurrence = "event:0123456789abcdef:fedcba9876543210"
+        let id = UUID()
+        let valid = AutomationOccurrenceClaim(key: "\(id.uuidString.lowercased()):\(occurrence)", claimedAt: current, runID: UUID())
+        var state = AutomationSchedulerState(occurrenceClaims: [
+            valid,
+            .init(key: "\(UUID().uuidString):\(occurrence)", claimedAt: current, runID: UUID()),
+            .init(key: "manual:event:0000000000000000:1111111111111111", claimedAt: current, runID: UUID()),
+            .init(key: "\(id.uuidString):manual:\(occurrence)", claimedAt: current, runID: UUID()),
+            .init(key: "\(id.uuidString):event:short:short", claimedAt: current, runID: UUID()),
+            .init(key: "\(id.uuidString):\(occurrence):suffix", claimedAt: current, runID: UUID())
+        ])
+        try state.preserveLegacyProducerClaims()
+        XCTAssertEqual(state.producerEventClaims, [.init(key: "producer:" + occurrence, claimedAt: current, runID: valid.runID)])
+        XCTAssertEqual(state.occurrenceClaims.count, 6)
+
+        state.producerEventClaims = (0..<AutomationLimits.maximumProducerEventClaims).map {
+            .init(key: "producer:event:capacity:\($0)", claimedAt: current, runID: UUID())
+        }
+        let previous = state
+        XCTAssertThrowsError(try state.preserveLegacyProducerClaims()) { error in
+            guard case AutomationError.capacityExceeded = error else {
+                return XCTFail("Expected migration capacity error, got \(error)")
+            }
+        }
+        XCTAssertEqual(state, previous, "Migration must never partly consume or prune retained authority")
+    }
+
+    func testVersionThreeRejectsMissingOrNullProducerLedger() async throws {
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent("missing-event-ledger-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("automations.json")
+        let store = AutomationStore(fileURL: file)
+        for ledger in [nil, NSNull()] as [Any?] {
+            var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(AutomationSnapshot())) as? [String: Any])
+            wire["version"] = 3
+            var state = try XCTUnwrap(wire["schedulerState"] as? [String: Any])
+            state["producerEventClaims"] = ledger
+            wire["schedulerState"] = state
+            try JSONSerialization.data(withJSONObject: wire).write(to: file)
+            do {
+                _ = try await store.loadSnapshot()
+                XCTFail("Schema 3 must not interpret missing/null replay authority as an empty ledger")
+            } catch AutomationStoreError.invalidSnapshot { }
+        }
+    }
+
+    func testFullProducerLedgerRejectsNewEventsWithoutEviction() async throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let clock = AutomationTestClock(current)
+        let seed = MemoryAutomationStore()
+        let first = Self.scheduler(store: seed, clock: clock, executor: { _ in
+            AutomationExecutionOutcome(status: .succeeded)
+        })
+        try await first.start()
+        let duplicate = AutomationEvent(id: "already-recorded", name: "github.push", occurredAt: current)
+        _ = try await first.emitEvent(duplicate)
+        try await first.shutdown()
+        var full = await seed.capturedSnapshot()
+        full.schedulerState.producerEventClaims += (1..<AutomationLimits.maximumProducerEventClaims).map {
+            AutomationOccurrenceClaim(key: "producer:event:seed:\($0)", claimedAt: current, runID: UUID())
+        }
+        try AutomationValidation.validate(full)
+        let store = MemoryAutomationStore(snapshot: full)
+        let scheduler = Self.scheduler(store: store, clock: clock, executor: { _ in
+            XCTFail("A full producer ledger must never launch new event work")
+            return AutomationExecutionOutcome(status: .failed)
+        })
+        try await scheduler.start()
+        let replay = try await scheduler.emitEvent(duplicate)
+        XCTAssertTrue(replay.isEmpty, "An old event remains idempotent even when capacity is full")
+        do {
+            _ = try await scheduler.emitEvent(.init(id: "new-event", name: "github.push", occurredAt: current))
+            XCTFail("Expected fail-closed ledger capacity")
+        } catch AutomationError.capacityExceeded { }
+        let unchanged = await store.capturedSnapshot()
+        XCTAssertEqual(unchanged.schedulerState.producerEventClaims, full.schedulerState.producerEventClaims)
+        XCTAssertTrue(unchanged.runs.isEmpty)
+        try await scheduler.shutdown()
+    }
+
+    func testProducerLedgerFailedWriteDoesNotFalselyConsumeEvent() async throws {
+        let current = Self.date("2025-04-02T08:00:00Z")
+        let store = FailingAutomationStore()
+        let scheduler = Self.scheduler(store: store, clock: AutomationTestClock(current), executor: { _ in
+            AutomationExecutionOutcome(status: .succeeded)
+        })
+        try await scheduler.start()
+        let event = AutomationEvent(id: "retry-after-write-failure", name: "github.push", occurredAt: current)
+        await store.fail()
+        do {
+            _ = try await scheduler.emitEvent(event)
+            XCTFail("Expected durable receipt write failure")
+        } catch AutomationStoreTestError.injectedFailure { }
+        let failed = await store.capturedSnapshot()
+        XCTAssertTrue(failed.schedulerState.producerEventClaims.isEmpty)
+        await store.allowSaves()
+        _ = try await scheduler.emitEvent(event)
+        let accepted = await store.capturedSnapshot()
+        XCTAssertEqual(accepted.schedulerState.producerEventClaims.count, 1)
+        try await scheduler.shutdown()
+    }
+
     func testManualRunIdempotencyKeyDeduplicatesButKeylessRunsStayDistinct() async throws {
         let current = Self.date("2025-05-01T08:00:00Z")
         let clock = AutomationTestClock(current)

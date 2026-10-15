@@ -21,31 +21,31 @@
   "shards": [
     {
       "category": "agent",
-      "filter": "(AgentCoreTests|AgentRuntime.*Tests|AgentProvider.*Tests)"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AgentCoreTests|AgentRuntimeApprovalSerializationTests|AgentRuntimeAutoTestTests|AgentRuntimeCompletionInvariantTests|AgentRuntimeGitLifecycleTests|AgentRuntimeLimitTests|AgentRuntimeReviewWorkflowTests|AgentRuntimeStreamingTests|AgentProviderStreamingTests|AgentProviderToolCallingTests|AgentLocalMemoryStoreTests|AgentLocalMemoryIntegrationTests|AgentProjectSettingsTests|AgentProjectSettingsIntegrationTests|AgentProjectImportRollbackTests|ProjectInstructionImporterTests|ProjectInstructionRuleProjectorTests|ExternalAssistantChatImporterTests|ExternalAssistantChatImportIntegrationTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "pty",
-      "filter": "(PseudoTerminalSessionTests|TaskTerminalServiceTests|AgentTerminalStreamingTests)"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:PseudoTerminalSessionTests|TaskTerminalServiceTests|AgentTerminalStreamingTests|SSHInteractiveTerminalTests|AgentViewModelTaskTerminalLifecycleTests|AgentWorkerAuthorityTests|RemoteRunnerTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "subagent",
-      "filter": "SubagentSchedulerTests"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:SubagentSchedulerTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "automation",
-      "filter": "AutomationSchedulerTests"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AutomationSchedulerTests|GitHubWebhookIngressTests|PullRequestProviderTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "browser",
-      "filter": "(BrowserToolTests|BrowserAnnotationTests)"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:BrowserToolTests|BrowserAnnotationTests|CDPWebSocketLifecycleTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "ollama-reconnect",
-      "filter": "(AgentProviderStreamingTests|LLMReasoningStreamTests|MCPRuntimeTests)"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AgentProviderStreamingTests|LLMReasoningStreamTests|MCPRuntimeTests|MCPConnectionLifecycleTests|MCPStreamableHTTPTests|MCPResourcesPromptsTests|PhaseDOAuthAndMCPTests|PluginRegistryIntegrityTests|PhaseDPluginAndHookTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "task-switching",
-      "filter": "(AgentViewModelConcurrencyTests|ChatViewModelConcurrencyTests)"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AgentViewModelConcurrencyTests|ChatViewModelConcurrencyTests|AgentViewModelPersistenceTests|AgentSessionStoreOrderingTests|AgentQueuedFollowUpTests|AgentSteerTests|AgentSteerReceiptStoreTests|SideChatSessionTests|TaskVoiceProviderTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "failure-injection",

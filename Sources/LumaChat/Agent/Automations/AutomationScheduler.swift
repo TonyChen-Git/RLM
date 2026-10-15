@@ -87,6 +87,7 @@ actor AutomationScheduler {
             try validateArtifactRoot()
             var loaded = try await store.loadSnapshot()
             durableLoaded = loaded
+            try loaded.schedulerState.preserveLegacyProducerClaims(runs: loaded.runs)
             guard !isShuttingDown else { throw AutomationError.unavailable }
             let current = now()
             for index in loaded.runs.indices where loaded.runs[index].status == .running {
@@ -454,8 +455,9 @@ actor AutomationScheduler {
         return queued
     }
 
-    /// Event ID + Automation ID form the durable idempotency identity. Matching
-    /// filters use exact key/value equality and never execute payload text.
+    /// Claim each producer event before evaluating matches, so a delivery that
+    /// was ignored cannot run later if an Automation is subsequently enabled.
+    /// Matching filters use exact key/value equality and never execute payload text.
     func emitEvent(_ input: AutomationEvent) async throws -> [AutomationRunRecord] {
         try await acquireActiveMutationPermit()
         guard executor != nil else {
@@ -474,16 +476,35 @@ actor AutomationScheduler {
                   case .event(let trigger) = definition.schedule else { return false }
             return trigger.matches(event)
         }
-        guard !definitions.isEmpty else {
+        let occurrence = "event:\(Self.stableHash(event.name)):\(Self.stableHash(event.id))"
+        let producerClaimKey = "producer:\(occurrence)"
+        if snapshot.schedulerState.producerEventClaims.contains(where: {
+            $0.key == producerClaimKey
+        }) {
+            let existing = definitions.compactMap {
+                existingRun(automationID: $0.id, occurrenceKey: occurrence)
+            }
             releaseMutationPermit()
-            return []
+            return existing
+        }
+
+        guard snapshot.schedulerState.producerEventClaims.count
+                < AutomationLimits.maximumProducerEventClaims else {
+            releaseMutationPermit()
+            throw AutomationError.capacityExceeded(
+                "Producer event replay ledger 已滿；已停收新事件，既有去重紀錄不會被刪除。"
+            )
         }
 
         let previous = snapshot
         var records: [AutomationRunRecord] = []
         do {
+            snapshot.schedulerState.producerEventClaims.append(AutomationOccurrenceClaim(
+                key: producerClaimKey,
+                claimedAt: now(),
+                runID: UUID()
+            ))
             for definition in definitions {
-                let occurrence = "event:\(Self.stableHash(event.name)):\(Self.stableHash(event.id))"
                 if let existing = existingRun(
                     automationID: definition.id,
                     occurrenceKey: occurrence

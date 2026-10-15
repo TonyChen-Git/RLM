@@ -5,11 +5,38 @@ import XCTest
 private final class PhaseDOAuthURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var captured: [(URLRequest, Data)] = []
+    nonisolated(unsafe) private static var holdNext = false
+    nonisolated(unsafe) private static var held: [PhaseDOAuthURLProtocol] = []
+    private static let defaultTokenResponse = #"{"access_token":"oauth-access-secret-123456","refresh_token":"oauth-refresh-secret-123456","expires_in":3600,"token_type":"Bearer"}"#
+    nonisolated(unsafe) private static var tokenResponse = defaultTokenResponse
 
     static func reset() {
         lock.lock()
         captured = []
+        holdNext = false
+        held = []
+        tokenResponse = defaultTokenResponse
         lock.unlock()
+    }
+
+    static func setTokenResponse(_ response: String) {
+        lock.lock()
+        tokenResponse = response
+        lock.unlock()
+    }
+
+    static func holdNextResponse() {
+        lock.lock()
+        holdNext = true
+        lock.unlock()
+    }
+
+    static func releaseHeldResponses() {
+        lock.lock()
+        let requests = held
+        held = []
+        lock.unlock()
+        requests.forEach { $0.complete() }
     }
 
     static func requests() -> [(URLRequest, Data)] {
@@ -25,6 +52,19 @@ private final class PhaseDOAuthURLProtocol: URLProtocol, @unchecked Sendable {
         let body = Self.bodyData(from: request)
         Self.lock.lock()
         Self.captured.append((request, body))
+        let shouldHold = Self.holdNext
+        if shouldHold {
+            Self.holdNext = false
+            Self.held.append(self)
+        }
+        Self.lock.unlock()
+        if shouldHold { return }
+        complete()
+    }
+
+    private func complete() {
+        Self.lock.lock()
+        let responseBody = Self.tokenResponse
         Self.lock.unlock()
         let response = HTTPURLResponse(
             url: request.url!,
@@ -35,9 +75,7 @@ private final class PhaseDOAuthURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(
             self,
-            didLoad: Data(
-                #"{"access_token":"oauth-access-secret-123456","refresh_token":"oauth-refresh-secret-123456","expires_in":3600,"token_type":"Bearer"}"#.utf8
-            )
+            didLoad: Data(responseBody.utf8)
         )
         client?.urlProtocolDidFinishLoading(self)
     }
@@ -195,6 +233,145 @@ final class PhaseDOAuthAndMCPTests: XCTestCase {
         await assertAsyncThrows {
             _ = try await store.save(invalid)
         }
+    }
+
+    func testOAuthRefreshAndRevocationKeepSecretsInVault() async throws {
+        PhaseDOAuthURLProtocol.reset()
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = PhaseDSecretVault()
+        let transport = URLSessionConfiguration.ephemeral
+        transport.protocolClasses = [PhaseDOAuthURLProtocol.self]
+        let store = OAuthConnectorStore(
+            fileURL: root.appendingPathComponent("oauth.json"),
+            secretStore: vault, session: URLSession(configuration: transport)
+        )
+        let connector = OAuthConnectorConfiguration(
+            name: "Refreshable", kind: .custom,
+            authorizationEndpoint: URL(string: "https://oauth.example.test/authorize")!,
+            tokenEndpoint: URL(string: "https://oauth.example.test/token")!,
+            revocationEndpoint: URL(string: "https://oauth.example.test/revoke")!,
+            clientID: "test-client", scopes: ["read"],
+            redirectURI: URL(string: "http://127.0.0.1/callback")!
+        )
+        _ = try await store.save(connector)
+        let authorization = try await store.authorizationRequest(for: connector.id)
+        _ = try await store.exchangeAuthorizationCode(
+            connectorID: connector.id, code: "code",
+            codeVerifier: authorization.codeVerifier, state: authorization.state
+        )
+        _ = try await store.refresh(connector.id)
+        let forms = PhaseDOAuthURLProtocol.requests().map {
+            String(decoding: $0.1, as: UTF8.self)
+        }
+        XCTAssertTrue(forms.contains { $0.contains("grant_type=refresh_token") })
+        XCTAssertFalse(try String(contentsOf: root.appendingPathComponent("oauth.json"), encoding: .utf8)
+            .contains("oauth-refresh-secret"))
+        _ = try await store.setEnabled(false, id: connector.id)
+        _ = try await store.revoke(connector.id)
+        XCTAssertTrue(PhaseDOAuthURLProtocol.requests().contains {
+            $0.0.url?.path == "/revoke"
+        })
+        XCTAssertTrue(vault.allValues().isEmpty)
+        let disconnectedCredential = try await store.credential(for: connector.id)
+        XCTAssertNil(disconnectedCredential)
+    }
+
+    func testOAuthRejectsAlreadyExpiredAuthorizationTokensInsteadOfStoringUnlimitedExpiry() async throws {
+        PhaseDOAuthURLProtocol.reset()
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = PhaseDSecretVault()
+        let transport = URLSessionConfiguration.ephemeral
+        transport.protocolClasses = [PhaseDOAuthURLProtocol.self]
+        let store = OAuthConnectorStore(
+            fileURL: root.appendingPathComponent("oauth.json"),
+            secretStore: vault, session: URLSession(configuration: transport)
+        )
+        let connector = OAuthConnectorConfiguration(
+            name: "Expired", kind: .custom,
+            authorizationEndpoint: URL(string: "https://oauth.example.test/authorize")!,
+            tokenEndpoint: URL(string: "https://oauth.example.test/token")!,
+            clientID: "test-client", scopes: ["read"],
+            redirectURI: URL(string: "http://127.0.0.1/callback")!
+        )
+        _ = try await store.save(connector)
+        for lifetime in [0, -1] {
+            PhaseDOAuthURLProtocol.setTokenResponse(
+                "{\"access_token\":\"already-expired\",\"expires_in\":\(lifetime)}"
+            )
+            let authorization = try await store.authorizationRequest(for: connector.id)
+            await assertAsyncThrows {
+                _ = try await store.exchangeAuthorizationCode(
+                    connectorID: connector.id, code: "code",
+                    codeVerifier: authorization.codeVerifier, state: authorization.state
+                )
+            }
+            XCTAssertTrue(vault.allValues().isEmpty)
+        }
+    }
+
+    func testInFlightRefreshAndRevokeCannotOverwriteReauthorization() async throws {
+        PhaseDOAuthURLProtocol.reset()
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = PhaseDSecretVault()
+        let transport = URLSessionConfiguration.ephemeral
+        transport.protocolClasses = [PhaseDOAuthURLProtocol.self]
+        let store = OAuthConnectorStore(
+            fileURL: root.appendingPathComponent("oauth.json"),
+            secretStore: vault, session: URLSession(configuration: transport)
+        )
+        let connector = OAuthConnectorConfiguration(
+            name: "Race", kind: .custom,
+            authorizationEndpoint: URL(string: "https://oauth.example.test/authorize")!,
+            tokenEndpoint: URL(string: "https://oauth.example.test/token")!,
+            revocationEndpoint: URL(string: "https://oauth.example.test/revoke")!,
+            clientID: "test-client", scopes: ["read"],
+            redirectURI: URL(string: "http://127.0.0.1/callback")!
+        )
+        _ = try await store.save(connector)
+        let initial = try await store.authorizationRequest(for: connector.id)
+        _ = try await store.exchangeAuthorizationCode(
+            connectorID: connector.id, code: "initial",
+            codeVerifier: initial.codeVerifier, state: initial.state
+        )
+
+        PhaseDOAuthURLProtocol.holdNextResponse()
+        let refresh = Task { try await store.refresh(connector.id) }
+        try await waitForOAuthRequestCount(2)
+        _ = try await store.disconnect(connector.id)
+        let renewed = try await store.authorizationRequest(for: connector.id)
+        _ = try await store.exchangeAuthorizationCode(
+            connectorID: connector.id, code: "renewed",
+            codeVerifier: renewed.codeVerifier, state: renewed.state
+        )
+        PhaseDOAuthURLProtocol.releaseHeldResponses()
+        await assertAsyncThrows { _ = try await refresh.value }
+        let credentialAfterRefresh = try await store.credential(for: connector.id)
+        XCTAssertNotNil(credentialAfterRefresh)
+
+        PhaseDOAuthURLProtocol.holdNextResponse()
+        let revoke = Task { try await store.revoke(connector.id) }
+        try await waitForOAuthRequestCount(4)
+        _ = try await store.disconnect(connector.id)
+        let newest = try await store.authorizationRequest(for: connector.id)
+        _ = try await store.exchangeAuthorizationCode(
+            connectorID: connector.id, code: "newest",
+            codeVerifier: newest.codeVerifier, state: newest.state
+        )
+        PhaseDOAuthURLProtocol.releaseHeldResponses()
+        await assertAsyncThrows { _ = try await revoke.value }
+        let credentialAfterRevoke = try await store.credential(for: connector.id)
+        XCTAssertNotNil(credentialAfterRevoke)
+    }
+
+    private func waitForOAuthRequestCount(_ count: Int) async throws {
+        for _ in 0..<100 {
+            if PhaseDOAuthURLProtocol.requests().count >= count { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for OAuth request")
     }
 
     func testPluginMCPServerOwnershipPersistsWithoutAffectingManualServers() async throws {

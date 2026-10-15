@@ -65,8 +65,8 @@ does not affect another terminal session.
 
 The platform boundary is expressed by `PTYBackend` and
 `PTYSessionTransport`. Task lifecycle, tools, and UI depend on that seam rather
-than Darwin file descriptors. Only `DarwinPTYBackend` exists today; this is an
-architectural seam, not a claim of Linux, Windows, or remote PTY support.
+than Darwin file descriptors. The development tree also uses this PTY engine to
+host the system OpenSSH client for an SSH Task. No non-macOS backend exists.
 
 ## Sandbox and permissions
 
@@ -103,6 +103,18 @@ relative working directory, shell, capability snapshot, workspace binding, and
 raw offset bounds are written atomically beneath the Agent Session's
 `Terminals/metadata.json`. The document is no-follow validated, identity-bound,
 and limited to 256 KiB.
+
+For SSH Tasks, metadata additionally pins the verified host/user/UID/canonical
+root, runner authority fingerprint (configuration, Keychain credential, exact
+`known_hosts` bytes), and Task permission fingerprint. A changed value leaves
+the old tab visible as failed and forbids Reconnect; Close removes it. Each
+create/reconnect performs a fresh authenticated probe. Input, output, resize,
+and terminal signals use the Task-owned OpenSSH process and the same bounded
+2 MiB raw scrollback. The SSH invocation has strict host-key checking,
+disabled password prompts/forwarding/user config, and per-launch 0600 key
+material. The remote shell runs as the selected SSH user with that host's own
+permissions and network policy. Its cwd is the host-verified workspace root;
+an arbitrary remote cwd selector is not exposed.
 
 Commands, environment values, PIDs, PTY descriptors, and raw scrollback are
 deliberately not persisted. On App relaunch, metadata that said `running` is
@@ -182,8 +194,14 @@ output, preserved terminal/review state across pane navigation and quit cleanly.
 
 - App relaunch cannot reattach to the previous Unix process or recover raw
   scrollback; explicit Reconnect starts a fresh shell from verified metadata.
-- Only the Darwin backend is implemented. Remote SSH PTY and non-macOS backends
-  remain later-phase work.
+- The historical Phase B gate covered only the local Darwin backend. Phase I's
+  SSH transport is a newer development-tree change; live-host and packaged UI
+  validation remain. No non-macOS backend exists.
+- SSH Ctrl-C, Ctrl-\\, Ctrl-Z and shell `fg` use terminal control input;
+  resize uses `TIOCSWINSZ`/`SIGWINCH` forwarding. Hangup/terminate/kill stop
+  the local SSH connection; remote cleanup relies on SSH/TTY hangup and cannot
+  prove termination of a daemonized remote descendant. A real-host signal,
+  disconnect, host-restart and credential-revocation matrix remains pending.
 - The requested real-program matrix is covered where the release host provides
   the program. Node/npm are not installed and are recorded as not applicable;
   `/usr/bin/top` is explicitly skipped for the setuid sandbox reason above.

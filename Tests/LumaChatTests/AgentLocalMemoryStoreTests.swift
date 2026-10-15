@@ -179,6 +179,118 @@ final class AgentLocalMemoryStoreTests: XCTestCase {
         XCTAssertTrue(restored.entries.isEmpty)
     }
 
+    func testSuggestionIsAtomicIdempotentAndDeletionDoesNotResurface() async throws {
+        let (base, root) = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let projectID = UUID()
+        let taskID = UUID()
+        let source = AgentLocalMemorySource(
+            taskID: taskID, messageID: UUID(), taskTitle: "Task",
+            excerpt: "Remember: use small PRs"
+        )
+        let store = AgentLocalMemoryStore(storageRoot: root)
+        _ = try await store.setEnabled(true, projectID: projectID)
+        let initialSuggestion = try await store.suggest(
+            "use small PRs", category: .workflow,
+            source: source, projectID: projectID
+        )
+        let first = try XCTUnwrap(initialSuggestion)
+        XCTAssertEqual(first.status, .proposed)
+        let beforeApproval = try await store.approvedForContext(projectID: projectID)
+        XCTAssertTrue(beforeApproval.isEmpty)
+
+        let reopened = AgentLocalMemoryStore(storageRoot: root)
+        let repeated = try await reopened.suggest(
+            "use small PRs", category: .workflow,
+            source: source, projectID: projectID
+        )
+        XCTAssertNil(repeated)
+        _ = try await reopened.remove(id: first.id, projectID: projectID)
+        let afterRemoval = try await reopened.suggest(
+            "use small PRs", category: .workflow,
+            source: source, projectID: projectID
+        )
+        XCTAssertNil(afterRemoval)
+        let duplicateSource = AgentLocalMemorySource(
+            taskID: UUID(), messageID: UUID(), taskTitle: "Other Task",
+            excerpt: "Remember: use small PRs"
+        )
+        let secondSuggestion = try await reopened.suggest(
+            "use small PRs", category: .workflow,
+            source: duplicateSource, projectID: projectID
+        )
+        let second = try XCTUnwrap(secondSuggestion)
+        _ = try await reopened.clear(projectID: projectID)
+        let afterClear = try await reopened.suggest(
+            "use small PRs", category: .workflow,
+            source: duplicateSource, projectID: projectID
+        )
+        XCTAssertNil(afterClear)
+        let clearedSnapshot = try await reopened.load(projectID: projectID)
+        XCTAssertTrue(clearedSnapshot.entries.isEmpty)
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
+    func testSearchCategoryRankingAndSecretEvidenceBoundary() async throws {
+        let (base, root) = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let projectA = UUID()
+        let projectB = UUID()
+        let store = AgentLocalMemoryStore(storageRoot: root)
+        _ = try await store.setEnabled(true, projectID: projectA)
+        _ = try await store.setEnabled(true, projectID: projectB)
+        let source = AgentLocalMemorySource(
+            taskID: UUID(), messageID: UUID(), taskTitle: "Build Task",
+            excerpt: "token=super-secret-value"
+        )
+        let suggestion = try await store.suggest(
+            "Use release checklist", category: .workflow,
+            source: source, projectID: projectA
+        )
+        let entry = try XCTUnwrap(suggestion)
+        XCTAssertFalse(try XCTUnwrap(entry.source).excerpt.contains("super-secret-value"))
+        _ = try await store.approve(id: entry.id, projectID: projectA)
+        let other = try await store.propose("Use concise output", projectID: projectB)
+        _ = try await store.approve(id: other.id, projectID: projectB)
+        let matches = try await store.search(
+            projectIDs: [projectA, projectB], query: "release", category: .workflow
+        )
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.0, projectA)
+        XCTAssertEqual(matches.first?.1.id, entry.id)
+        let context = try await store.approvedForContext(projectID: projectA, query: "release")
+        XCTAssertEqual(context.map(\.id), [entry.id])
+        let otherContext = try await store.approvedForContext(projectID: projectB)
+        XCTAssertTrue(otherContext.allSatisfy {
+            $0.id != entry.id
+        })
+    }
+
+    func testCategoryBudgetAndManualClassification() async throws {
+        let (base, root) = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let projectID = UUID()
+        let store = AgentLocalMemoryStore(storageRoot: root)
+        _ = try await store.setEnabled(true, projectID: projectID)
+        for index in 0..<10 {
+            let entry = try await store.propose(
+                "Workflow \(index)", category: .workflow, projectID: projectID
+            )
+            _ = try await store.approve(id: entry.id, projectID: projectID)
+        }
+        let preference = try await store.propose(
+            "Prefer short answers", category: .preference, projectID: projectID
+        )
+        _ = try await store.approve(id: preference.id, projectID: projectID)
+        let selected = try await store.approvedForContext(projectID: projectID)
+        XCTAssertEqual(selected.filter { $0.category == .workflow }.count, 6)
+        XCTAssertEqual(selected.filter { $0.category == .preference }.count, 1)
+        XCTAssertLessThanOrEqual(
+            selected.reduce(0) { $0 + $1.text.utf8.count },
+            AgentLocalMemoryStore.maximumContextBytes
+        )
+    }
+
     private func makeRoot() throws -> (URL, URL) {
         let base = AppPaths.projectTemporaryRoot.appendingPathComponent(
             "local-memory-tests-\(UUID().uuidString)", isDirectory: true

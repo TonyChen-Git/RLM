@@ -1,6 +1,234 @@
-# Luma Chat — Unreleased development notes
+# Luma Chat — Development integration history
 
-Checkpoint date: 2026-09-30
+The Phase I–Q work below is integrated into the
+[1.4.6 build 13 release](RELEASE_NOTES_1.4.6.md), prepared for a regular GitHub
+Release from `main`. Its full release gate and limited native UI smoke pass:
+886 Swift tests (one skip), 48 Python contracts (one Linux-only skip), VS Code
+17/17 and GitHub Action 14/14, all with zero failures. Ad-hoc arm64 packaging,
+archive/security checks, the extracted CLI version and About 1.4.6 (13) pass;
+the App exits cleanly. Publication, new-version soak, external acceptance and
+Apple production signing/notarization remain pending. This UI run did not
+exercise Browser operations. Exact receipts and ZIP hash are in the version's
+release notes; historical 1.4.5 receipts below keep their original scope.
+
+## Browser lifecycle fix and development gate — 2026-10-14
+
+- Fixed the persistent CDP WebSocket being ended by a 30-second URLSession
+  resource timeout during approval waits. Removed that resource-timeout
+  override while keeping bounded 30-second command deadlines; completed sockets
+  fail immediately and unexpected receive cancellation cleans up pending work.
+- Five real loopback lifecycle tests cover cancellation, peer closure and
+  32-second idle reuse. The cancellation regression failed two assertions
+  before the fix. All five pass in the final gate (32.139 seconds), and the
+  Browser soak filter includes them. Temporary DEBUG tracing was removed
+  before freezing the 340 source/test/script/config files.
+- A debug App with real Chrome passes open, snapshot, find (four matches),
+  screenshot and close after a 53.18-second gap between Browser commands.
+  The actual PNG and annotation pane were checked; App exit was 0 and owned
+  Chrome processes were cleaned up
+  (`tmp/phase-iq-oct14-browser-fixed/acceptance.json`). This used local model
+  and page fixtures and a debug binary with temporary metadata tracing.
+- The final optimized arm64 package also passes all five real Chrome operations
+  using local model/page fixtures. The observed wait before snapshot approval
+  exceeded 68.38 seconds, persisted execution gap was 79.31 seconds and the
+  snapshot completed in 0.059 seconds. The actual 1280×657 PNG and native
+  Browser annotation pane were verified, including a CUA screenshot of the UI.
+  App exit was 0; owned Chrome and fixture server processes were cleaned up
+  (`tmp/phase-iq-oct14-browser-package/acceptance.json`). This is local integration
+  acceptance; live model and external-provider acceptance remain pending.
+- The October 14 development gate passes **886 Swift tests, one environment
+  skip, zero failures** (258.252 seconds) and **48 Python contracts, one
+  Linux-only skip, zero failures**: archive 7, soak 28, security 3 and worker 10.
+  The optimized arm64 build, ad-hoc signing, plist and ZIP/extracted-archive
+  verification, and security audit pass; the runner exited 0
+  (`tmp/phase-iq-oct14-release.log`, `tmp/phase-iq-oct14-release-result.json`).
+- Development ZIP SHA-256:
+  `7c5c0716e30becfbb600f06db6f37516cc5560cca88783701aa5019b7a4de3b0`.
+  Frozen receipt: `tmp/phase-iq-oct14-source-receipt.json` (340 files).
+  The `c332...` package and 881-test gate below remain historical evidence.
+- The background **2h → 8h → 24h → 72h multi-day** soak sequence launched
+  on October 14 at **15:24 Asia/Taipei**. Its 2h run **completed and qualifies**
+  at 17:29:56: **7,207.592 measured seconds, 48 complete cycles, 389 completed
+  shards, zero failures** (`tmp/soak/19124a61-51f3-4eec-8bd6-e2679e8327e2/`).
+  The subsequent 8h run was interrupted after 669.134 measured seconds and
+  does not qualify (`tmp/soak/f1c364d4-1834-455e-b29b-01082173cd9d/`). The
+  sequence is stopped; 24h and 72h never started. Controller receipt:
+  `tmp/phase-iq-oct14-soak-suite/state.json`. The two older October 4 runs
+  remain non-qualifying. These results precede the 1.4.6 version bump and are
+  not credited to a new version's soak. External live acceptance, executed
+  Linux CI and production signing/notarization/feed/rollback remain pending.
+
+## Phase I–Q recovery and replay follow-up — 2026-10-12 (historical checkpoint)
+
+- Accepted Steer now atomically saves bounded redacted text and a stable message
+  ID. Exact transcript reconciliation and per-record recovery let the user
+  inspect, copy to the originating idle Task's draft, or dismiss an uncertain
+  message. Recovery never sends it automatically.
+- Saved instruction/configuration imports now retain one bounded, redacted undo
+  slot. Restore previews the change, rejects stale imported fields, and preserves
+  unrelated settings and Keychain references. Schema 2 and nonblocking file locks
+  protect the transaction across app versions and concurrent instances.
+- Automation producer claims now use a separate non-evicting ledger. Ordinary
+  history pruning cannot make an accepted signed event replayable; a full ledger
+  rejects new events. Schema 3 migrates retained legacy claims. Previously evicted
+  claims cannot be reconstructed and require operator reconciliation and webhook
+  credential rotation before accepting previously exposed signatures.
+- Soak recovery preserves old evidence and always starts fresh measurement.
+  Owner locks, input fingerprints, bounded child output and clock checks reject
+  interruptions, including short sleeps hidden by a pausing monotonic clock.
+  The October 12 Python contract run passes **48 tests, one Linux-only skip, zero
+  failures**, including 28 soak harness tests (`tmp/phase-iq-oct12-python.log`).
+- The October 12 development gate passes **881 Swift tests, one environment skip,
+  zero failures**, 209.124 seconds. Optimized arm64 build, ad-hoc signing, plist,
+  ZIP/extracted-archive verification and security audit passed. The release
+  runner exited 0 (`tmp/phase-iq-oct12-release-result.json`); all **339** frozen
+  source/test/script/config files matched its receipt at packaging. VS Code **17/17** and
+  GitHub Action **14/14** also pass.
+- October 12 development ZIP SHA-256:
+  `c332aa0d10afae62054a38fc21d60f3d8c4f0d7a2f06314e75a3c12997e3c68d`.
+  Packaged native accessibility checks pass Steer inspect/copy/dismiss/restart
+  and instruction import/save/restart/restore/repeated-restore rejection.
+  Durable evidence preserves one remaining Steer receipt, the restored prompt
+  and zero session messages. The first app exited 0; the second exit is not
+  established. These isolated synthetic-Task checks do not validate live model
+  delivery or pixel layout (`tmp/phase-iq-oct12-recovery-ui/acceptance.json`).
+- Fixture-driven real Chromium/CDP acceptance passes open, DOM snapshot and
+  search (four matches). Browser Screenshot timed out after 30 seconds; screenshot
+  and close were not established by that attempt; the subsequent fix and debug
+  rerun are recorded above. No external-provider acceptance is claimed
+  (`tmp/phase-iq-oct12-browser-retry/receipt.json`).
+- The 852-test package below is historical and does not include these changes.
+  No new soak had started at this October 12 checkpoint; the October 14 sequence
+  is recorded above. Neither prior 2h run qualifies. 8h/24h/multi-day,
+  external live acceptance and production signing/notarization/feed/rollback
+  remain pending. This is a development package. Full evidence:
+  [parity audit](CODEX_FULL_PARITY_AUDIT.md).
+
+## Phase I–Q integrated bug review — 2026-10-03–05 (historical gate)
+
+- Fixed Queue secret redaction and unsafe persistence paths, bounded Session
+  recovery, memory suggestion starvation/stale search results, import context
+  budgeting and Side chat image retention.
+- Fixed voice callback/navigation races, remote worker permission/workspace
+  binding and cleanup, signed-webhook replay identity, OAuth expiry handling
+  and MCP connection replacement races.
+- Fixed native Queue editor initial text, failed-save draft retention and
+  stale error banners after retry. Updated Side chat's snapshot picker wording.
+- The historical development gate passed **852 Swift tests** (one environment skip,
+  zero failures, 218.382 seconds), Python contracts **24 tests** (one Linux-only
+  skip), VS Code **17/17** and GitHub Action **14/14**. Optimized arm64 build,
+  ad-hoc signing, ZIP/archive verification and security audit passed. All 338
+  recorded source files matched the frozen receipt after packaging.
+- Final packaged native accessibility replay passed Queue save-failure/retry,
+  error clearing and restart persistence without replaying an uncertain entry.
+  Earlier replay covered Queue reorder/remove and Side chat file/image snapshot
+  lifetime. These synthetic-Task checks do not cover live model delivery.
+- Development ZIP SHA-256 for the 852-test gate:
+  `e8696c66291824adaa6a0840bf37e9cf78da240095c6dfdae690bef48e7f6d76`.
+  Full evidence: [parity audit](CODEX_FULL_PARITY_AUDIT.md).
+- A real SIGKILL/relaunch check on that package preserved durable Queue/Session
+  data and the uncertain claim while discarding an unsaved draft. It covered one
+  synthetic paused Task, not all crash points or the new recovery UI. The first
+  fixture-driven real Chromium attempt completed only open and DOM snapshot;
+  search, screenshot and close remain pending. No live model acceptance is
+  implied by either check.
+- Actual 2h local integration soak run
+  `a56eab72-1c1d-4701-8417-d32b17eaf82e` **failed in the first Agent shard**
+  on a streaming-test startup synchronization assumption. Replaced scheduler
+  yield counting with bounded receive/stop/completion events and failure cleanup.
+  The streaming suite and 10 separate cancellation repeats pass; the full Swift
+  suite again passes **852 tests, one skip, zero failures** (205.019 seconds).
+  Phase I–Q soak coverage now uses complete selector matching; Python contracts
+  pass **26 tests, one Linux-only skip**. Only test/harness files changed after
+  that packaging checkpoint. Subsequent recovery/replay fixes require a new
+  integrated gate and package.
+  Failed evidence is retained. Fresh 2h run
+  `ef4a66ac-99ac-4057-81d3-343c28f906e2` stopped before finalization and is
+  **abandoned, non-qualifying**. Its historical state/logs remain unchanged.
+  It recorded 60 complete cycles and 481 shards; the last persisted update was
+  `2026-10-04T16:28:14Z`. Its earlier first-cycle checkpoint passed 413 test
+  executions (one environment skip, zero failures). No full-duration qualifying
+  result exists, even though the abandoned state file still says `running`.
+  8h/24h/multi-day soak, external live acceptance, Linux CI execution and
+  production signing/notarization/feed/rollback remain pending. The minimal
+  worker runs command jobs and textual patch takeover; a full remote Agent
+  runtime and binary takeover are outside that v1 scope. This is not a
+  formal production release. No commit or push was made.
+
+## Phase L–Q combined development gate — 2026-10-01 (historical)
+
+- Added durable Steer acceptance receipts, image-capable Queue editing, and
+  explicit read-only file/image Side chat snapshots.
+- Added a GitLab merge-request provider and signed GitHub webhook ingress into
+  Automation's durable event path.
+- Added on-device macOS voice input and interruptible spoken Task replies.
+- Added an installable Linux SSH command worker with separate worktrees,
+  heartbeat, reconnect, cancellation, bounded logs/diff and a desktop job pane.
+- Added registry package-digest verification and update permission previews,
+  OAuth refresh/revoke, and explicit MCP protocol compatibility diagnosis.
+- Added macOS development and Linux worker CI definitions. The combined
+  development gate passed 830 Swift tests (one environment skip, zero failures),
+  optimized arm64 build, ad-hoc signing and ZIP/archive verification. A limited
+  isolated-profile packaged UI smoke passed. Development ZIP SHA-256:
+  `3e9bae3364eae6c725d229ac22d6e8d5b0c7ec55dd9dd127326a52b05828723a`.
+  Real external acceptance, Linux CI execution, production signing and
+  qualifying soak remain pending; this is not a formal production release.
+
+
+Checkpoint date: 2026-10-01
+
+## Phase K development follow-up — Claude Code / Cursor import
+
+Project Settings now previews bounded relative `CLAUDE.md` references, Cursor
+`.mdc` front matter and glob scope, and safe summaries of Claude/Cursor Project
+configuration. Reviewed `.mdc` rules persist with activation metadata; rules
+are projected to a model only when their scope applies. A user-selected Claude
+Code JSONL or Cursor Markdown chat export can become a completed text-only
+Task after preview. Re-read verification, source digests, secret redaction,
+atomic save and fail-closed duplicate detection guard import and recovery.
+Hooks, scripts, commands, permissions, MCP credentials, tool events, reasoning
+and images do not transfer. The Phase K development gate passed 816 Swift tests
+(one environment skip, zero failures), optimized arm64 build, ad-hoc signing,
+ZIP and archive verification. Development ZIP SHA-256:
+`b5dfd65fe0f292b13377be1b3a3815e7731cba938d11f35239b6a8b11532a5b0`.
+Isolated-profile packaged UI smokes verified first instruction/chat previews,
+Project Settings save/reopen, completed Task display, duplicate blocking and
+clean exit. Real Claude Code/Cursor export acceptance remains pending. See
+[`CODEX_FULL_PARITY_AUDIT.md`](CODEX_FULL_PARITY_AUDIT.md).
+
+## Phase J development follow-up — local memory suggestions
+
+A separate default-off switch now enables local background suggestions from
+durably completed, idle Tasks whose Project and Task contribution settings
+allow memory. Explicit user statements become source-backed, categorized
+proposals with secret filtering and restart-safe duplicate suppression. Users
+can search across Projects, sort and filter by category, inspect the source,
+edit and approve. Only approved entries from the current Project can enter a
+Task's bounded transient context when all read controls allow it. The 14
+focused memory tests pass. The frozen-source development release gate passed
+806 Swift tests (one environment skip, zero failures), optimized packaging,
+ad-hoc signature, ZIP and archive checks. The development ZIP SHA-256 is
+`3dedf990b3d062cf80e91b3561a72733e439b30619776bfac7ec19ce9a1eda30`.
+An isolated-profile packaged native UI smoke verified opt-in, proposal search,
+approval status refresh and clean exit. Live model and longer soak acceptance
+remain pending; extraction currently recognizes explicit statements rather
+than arbitrary conversational facts.
+
+## Phase I development follow-up — SSH Task Terminal
+
+SSH Tasks can now open a Task-owned interactive Terminal in the desktop pane.
+The system OpenSSH client runs inside the bounded Darwin PTY, with streamed
+input/output, resize, terminal control signals, Task navigation, explicit
+Reconnect and metadata-only relaunch recovery. Host receipt, runner authority
+and Task permission fingerprints prevent an old tab from reconnecting after
+the host, credential, trust file or permissions change. A local surrogate
+suite covers input/output/resize, disconnect, duplicate reconnect, revoked
+authority and host replacement. Real SSH host, packaged UI and long soak
+acceptance remain pending; `remote_pty_run` is still a one-shot model tool.
+The final development release gate passed 800 Swift tests (one environment
+skip), optimized desktop packaging and archive/signature/ZIP checks. The
+development ZIP SHA-256 is
+`5c26015d6c7546ba27f99c11a79ca8fae11160470ff969094fd4faf97c7a8e0e`.
 
 The 1.4.5 development prerelease fixes the OpenAI-compatible Agent system
 message order and the Plan/Agent bottom Composer layout. Its validation and

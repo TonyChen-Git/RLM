@@ -283,10 +283,12 @@ enum AgentComposerError: LocalizedError, Equatable, Sendable {
 
 @MainActor
 enum AgentComposerFilePicker {
-    static func chooseWorkspaceFiles(workspace: AgentWorkspace) throws -> [String] {
+    static func chooseWorkspaceFiles(workspace: AgentWorkspace, snapshotOnly: Bool = false) throws -> [String] {
         let panel = NSOpenPanel()
         panel.title = "Attach Workspace Files"
-        panel.message = "只可加入目前 Project 內的檔案；Agent 會透過安全的 Workspace 工具讀取。"
+        panel.message = snapshotOnly
+            ? "選取目前 Project 內的文字檔案作唯讀快照；快照只保留在這次 Side chat，關閉後清除。"
+            : "只可加入目前 Project 內的檔案；Agent 會透過安全的 Workspace 工具讀取。"
         panel.prompt = "Attach"
         panel.directoryURL = URL(fileURLWithPath: workspace.rootPath, isDirectory: true)
         panel.canChooseFiles = true
@@ -302,10 +304,12 @@ enum AgentComposerFilePicker {
         )
     }
 
-    static func chooseWorkspaceImage(workspace: AgentWorkspace) throws -> String? {
+    static func chooseWorkspaceImage(workspace: AgentWorkspace, snapshotOnly: Bool = false) throws -> String? {
         let panel = NSOpenPanel()
         panel.title = "Attach Workspace Image"
-        panel.message = "選擇目前 Project 內的 PNG、JPEG 或 WebP；影像會複製到這個 Agent Task 的私有附件目錄。"
+        panel.message = snapshotOnly
+            ? "選取目前 Project 內的 PNG、JPEG 或 WebP 作唯讀快照；影像只保留在這次 Side chat，關閉後清除。"
+            : "選擇目前 Project 內的 PNG、JPEG 或 WebP；影像會複製到這個 Agent Task 的私有附件目錄。"
         panel.prompt = "Attach"
         panel.directoryURL = URL(fileURLWithPath: workspace.rootPath, isDirectory: true)
         panel.canChooseFiles = true

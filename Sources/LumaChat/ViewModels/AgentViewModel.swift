@@ -1,4 +1,5 @@
 import Combine
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -103,6 +104,7 @@ final class AgentViewModel: ObservableObject {
         /// Accepted Steer texts are retained until preflight succeeds, so a
         /// failed or cancelled preflight can put them back in the composer.
         var acceptedSteers: [String] = []
+        var submittedImageAttachmentIDs: Set<UUID> = []
         /// Once natural completion starts freezing Last Agent Turn it owns the
         /// terminal transaction. Stop/pause must not revoke event acceptance in
         /// the middle of that transaction or the frozen snapshot can be lost.
@@ -146,7 +148,13 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var isMutatingProject = false
     @Published private(set) var projectSettings = AgentProjectSettings()
     @Published private(set) var selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+    @Published private(set) var localMemorySearchResults: [AgentLocalMemorySearchResult] = []
+    private var memorySearchRequest: (
+        query: String, category: AgentLocalMemoryCategory?, sort: AgentLocalMemorySort
+    )?
+    private var memorySearchGeneration = 0
     @Published private(set) var memoryPolicyMutationSessionIDs: Set<UUID> = []
+    private var processingMemoryTaskIDs: Set<UUID> = []
     @Published private var projectDisplayNamesByCanonicalRoot: [String: String] = [:]
     @Published private(set) var isLoadingProjectSettings = false
     @Published private(set) var runningSessionIDs: Set<UUID> = []
@@ -162,6 +170,7 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var lifecycleHookHistory: [LifecycleHookResult] = []
     @Published private(set) var isAttachingImage = false
     @Published private(set) var queuedFollowUpsBySession: [UUID: [AgentQueuedFollowUp]] = [:]
+    @Published private(set) var uncertainSteersBySession: [UUID: [AgentSteerReceipt]] = [:]
     private var queueSnapshotRevisionBySession: [UUID: UInt64] = [:]
     private var resolvingQueueClaims: Set<UUID> = []
     @Published private(set) var goalMutationSessionIDs: Set<UUID> = []
@@ -179,6 +188,11 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var automationSchedulerIsReady = false
     @Published private(set) var automationBusyIDs: Set<UUID> = []
     @Published private(set) var remoteRunnerSummaries: [RemoteRunnerSummary] = []
+    @Published private(set) var workerBindingsBySession: [UUID: AgentWorkerJobBinding] = [:]
+    @Published private(set) var workerJobsBySession: [UUID: SelfManagedWorkerJob] = [:]
+    @Published private(set) var workerLogsBySession: [UUID: String] = [:]
+    @Published private(set) var workerDiffsBySession: [UUID: String] = [:]
+    @Published private(set) var workerBusySessionIDs: Set<UUID> = []
     @Published private(set) var remoteRunnerBusyIDs: Set<UUID> = []
     @Published private(set) var recoveryBlockedRemoteRunnerIDs: Set<UUID> = []
     @Published private(set) var remoteHandoffRecoveryUnavailable = false
@@ -189,6 +203,7 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var managedWorktreeMaintenanceError: String?
 
     private let sessionStore: any AgentSessionPersisting
+    private var inFlightExternalChatImports: Set<String> = []
     private let projectCatalogStore: any AgentProjectCatalogPersisting
     private let settingsStore: any AgentSettingsPersisting
     private let workspaceManager: WorkspaceManager
@@ -198,6 +213,8 @@ final class AgentViewModel: ObservableObject {
     private let checkpointManager: AgentCheckpointManager
     private let imageAttachmentStore: AgentImageAttachmentStore
     private let queuedFollowUpStore: any AgentQueuedFollowUpPersisting
+    private let steerReceiptStore: AgentSteerReceiptStore
+    private let workerJobStore = AgentWorkerJobStore()
     private let mcpSettingsStore: MCPSettingsStore
     private let mcpManager: MCPManager
     private let keychainStore: KeychainStore
@@ -251,6 +268,7 @@ final class AgentViewModel: ObservableObject {
         checkpointManager: AgentCheckpointManager = AgentCheckpointManager(),
         imageAttachmentStore: AgentImageAttachmentStore = AgentImageAttachmentStore(),
         queuedFollowUpStore: any AgentQueuedFollowUpPersisting = AgentQueuedFollowUpStore(),
+        steerReceiptStore: AgentSteerReceiptStore = AgentSteerReceiptStore(),
         mcpSettingsStore: MCPSettingsStore = MCPSettingsStore(),
         mcpManager: MCPManager? = nil,
         keychainStore: KeychainStore = KeychainStore(),
@@ -282,6 +300,7 @@ final class AgentViewModel: ObservableObject {
         self.checkpointManager = checkpointManager
         self.imageAttachmentStore = imageAttachmentStore
         self.queuedFollowUpStore = queuedFollowUpStore
+        self.steerReceiptStore = steerReceiptStore
         self.mcpSettingsStore = mcpSettingsStore
         self.mcpManager = mcpManager ?? MCPManager(registry: registry)
         self.keychainStore = keychainStore
@@ -342,9 +361,17 @@ final class AgentViewModel: ObservableObject {
             let snapshot = try await localMemoryStore.load(projectID: projectID)
             guard selectedSession?.projectID == projectID else { return }
             selectedLocalMemorySnapshot = snapshot
+            if let memorySearchRequest {
+                await searchLocalMemories(
+                    query: memorySearchRequest.query,
+                    category: memorySearchRequest.category,
+                    sort: memorySearchRequest.sort
+                )
+            }
         } catch {
             guard selectedSession?.projectID == projectID else { return }
             selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+            localMemorySearchResults = []
             errorMessage = "本機記憶無法讀取：\(redactor.redact(error.localizedDescription))"
         }
     }
@@ -359,12 +386,21 @@ final class AgentViewModel: ObservableObject {
             let snapshot = try await localMemoryStore.setEnabled(enabled, projectID: projectID)
             if selectedSession?.projectID == projectID {
                 selectedLocalMemorySnapshot = snapshot
+                if let memorySearchRequest {
+                    await searchLocalMemories(
+                        query: memorySearchRequest.query,
+                        category: memorySearchRequest.category,
+                        sort: memorySearchRequest.sort
+                    )
+                }
             }
             if !enabled {
                 for session in sessions where session.projectID == projectID
                     && session.memoryUseEnabled == true && isRunning(sessionID: session.id) {
                     pause(sessionID: session.id)
                 }
+            } else {
+                Task { [weak self] in await self?.scanFinishedTasksForMemorySuggestions() }
             }
         } catch {
             errorMessage = "無法更新 Project 記憶設定：\(redactor.redact(error.localizedDescription))"
@@ -406,12 +442,17 @@ final class AgentViewModel: ObservableObject {
             guard let currentIndex = sessions.firstIndex(where: { $0.id == sessionID }),
                   !isRunning(sessionID: sessionID) else { return }
             sessions[currentIndex] = updated
+            if contributionEnabled == true {
+                Task { [weak self] in await self?.suggestMemories(from: sessionID) }
+            }
         } catch {
             exposeSessionPersistenceFailure(error)
         }
     }
 
-    func proposeSelectedLocalMemory(_ text: String) async -> Bool {
+    func proposeSelectedLocalMemory(
+        _ text: String, category: AgentLocalMemoryCategory = .other
+    ) async -> Bool {
         guard settings.memoriesEnabled,
               let session = selectedSession,
               session.memoryContributionEnabled == true,
@@ -420,7 +461,9 @@ final class AgentViewModel: ObservableObject {
             return false
         }
         do {
-            _ = try await localMemoryStore.propose(text, projectID: projectID)
+            _ = try await localMemoryStore.propose(
+                text, category: category, projectID: projectID
+            )
             await refreshSelectedLocalMemories()
             return true
         } catch {
@@ -439,10 +482,14 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
-    func updateSelectedLocalMemory(id: UUID, text: String) async -> Bool {
+    func updateSelectedLocalMemory(
+        id: UUID, text: String, category: AgentLocalMemoryCategory? = nil
+    ) async -> Bool {
         guard let projectID = selectedSession?.projectID else { return false }
         do {
-            _ = try await localMemoryStore.update(id: id, text: text, projectID: projectID)
+            _ = try await localMemoryStore.update(
+                id: id, text: text, category: category, projectID: projectID
+            )
             await refreshSelectedLocalMemories()
             return true
         } catch {
@@ -468,6 +515,87 @@ final class AgentViewModel: ObservableObject {
             await refreshSelectedLocalMemories()
         } catch {
             errorMessage = "無法清除記憶：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func searchLocalMemories(
+        query: String, category: AgentLocalMemoryCategory? = nil,
+        sort: AgentLocalMemorySort = .relevance
+    ) async {
+        memorySearchGeneration &+= 1
+        let generation = memorySearchGeneration
+        guard settings.memoriesEnabled, query.utf8.count <= 256 else {
+            memorySearchRequest = nil
+            localMemorySearchResults = []
+            return
+        }
+        memorySearchRequest = (query, category, sort)
+        do {
+            let matches = try await localMemoryStore.search(
+                projectIDs: projects.map(\.id), query: query, category: category,
+                sort: sort
+            )
+            guard generation == memorySearchGeneration, settings.memoriesEnabled else { return }
+            localMemorySearchResults = matches.prefix(200).map { projectID, entry in
+                AgentLocalMemorySearchResult(
+                    projectID: projectID,
+                    projectName: projects.first(where: { $0.id == projectID })?.name ?? "Project",
+                    entry: entry
+                )
+            }
+        } catch {
+            guard generation == memorySearchGeneration, settings.memoriesEnabled else { return }
+            localMemorySearchResults = []
+            errorMessage = "記憶搜尋失敗：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func openMemorySource(_ source: AgentLocalMemorySource) {
+        guard let session = sessions.first(where: { $0.id == source.taskID }) else { return }
+        selectedProjectID = session.projectID
+        selectedSessionID = session.id
+    }
+
+    private func scanFinishedTasksForMemorySuggestions() async {
+        guard settings.memoriesEnabled, settings.automaticMemorySuggestionsEnabled else { return }
+        for session in sessions where session.state == .completed {
+            await suggestMemories(from: session.id)
+        }
+    }
+
+    private func suggestMemories(from sessionID: UUID) async {
+        guard settings.memoriesEnabled,
+              settings.automaticMemorySuggestionsEnabled,
+              !processingMemoryTaskIDs.contains(sessionID),
+              !isRunning(sessionID: sessionID),
+              let session = sessions.first(where: { $0.id == sessionID }),
+              session.state == .completed,
+              session.memoryContributionEnabled == true,
+              let projectID = session.projectID else { return }
+        processingMemoryTaskIDs.insert(sessionID)
+        defer { processingMemoryTaskIDs.remove(sessionID) }
+        do {
+            let memorySnapshot = try await localMemoryStore.load(projectID: projectID)
+            guard memorySnapshot.enabled else { return }
+            for candidate in AgentLocalMemorySuggestionPlanner.candidates(
+                in: session, excludingProcessedSourceIDs: Set(memorySnapshot.processedSourceIDs)
+            ) {
+                guard settings.memoriesEnabled,
+                      settings.automaticMemorySuggestionsEnabled,
+                      !isRunning(sessionID: sessionID),
+                      sessions.first(where: { $0.id == sessionID })?.state == .completed,
+                      sessions.first(where: { $0.id == sessionID })?.memoryContributionEnabled == true
+                else { return }
+                _ = try await localMemoryStore.suggest(
+                    candidate.text, category: candidate.category,
+                    source: candidate.source, projectID: projectID
+                )
+            }
+            if selectedSession?.projectID == projectID {
+                await refreshSelectedLocalMemories()
+            }
+        } catch {
+            statusMessage = "背景記憶建議未完成：\(redactor.redact(error.localizedDescription))"
         }
     }
 
@@ -612,22 +740,91 @@ final class AgentViewModel: ObservableObject {
         return queuedFollowUpsBySession[selectedSessionID] ?? []
     }
 
+    var selectedUncertainSteerCount: Int {
+        guard let selectedSessionID else { return 0 }
+        return uncertainSteersBySession[selectedSessionID]?.count ?? 0
+    }
+
+    @discardableResult
+    func refreshUncertainSteers(sessionID: UUID) -> Bool {
+        do {
+            uncertainSteersBySession[sessionID] = try steerReceiptStore.unresolved(sessionID: sessionID)
+            return true
+        } catch {
+            errorMessage = "Steer 復原狀態無法讀取：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    /// Inspect/recover only. Copying never queues or sends an uncertain message,
+    /// and its durable record remains until the user explicitly dismisses it.
+    @discardableResult
+    func copyUncertainSteerToDraft(id: UUID, sessionID: UUID) -> Bool {
+        guard selectedSessionID == sessionID,
+              sessions.contains(where: { $0.id == sessionID }),
+              !isRunning(sessionID: sessionID) else {
+            errorMessage = "Task 已切換或開始執行；請回到原 Task，待執行結束後再復原 Steer。"
+            return false
+        }
+        errorMessage = nil
+        do {
+            let receipts = try steerReceiptStore.unresolved(sessionID: sessionID)
+            uncertainSteersBySession[sessionID] = receipts
+            guard let receipt = receipts.first(where: { $0.id == id }),
+                  let text = receipt.redactedText else {
+                errorMessage = "此筆 Steer 已變更，或舊版未保存可復原的文字。"
+                return false
+            }
+            let current = draftText(for: sessionID)
+            let combined = current.isEmpty ? text : current + "\n\n" + text
+            guard combined.utf8.count <= AgentSteerMailbox.maximumPromptBytes else {
+                errorMessage = "合併後草稿超過 16 KiB；請先整理目前草稿，再複製 Steer。"
+                return false
+            }
+            setDraft(combined, for: sessionID)
+            statusMessage = "Steer 文字已複製到草稿；請核對對話並自行送出。復原記錄仍保留。"
+            return true
+        } catch {
+            errorMessage = "Steer 文字無法復原：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    @discardableResult
+    func dismissUncertainSteer(id: UUID, sessionID: UUID) -> Bool {
+        guard selectedSessionID == sessionID,
+              sessions.contains(where: { $0.id == sessionID }),
+              !isRunning(sessionID: sessionID) else {
+            errorMessage = "Task 已切換或開始執行；請回到原 Task，待執行結束後再移除 Steer 復原記錄。"
+            return false
+        }
+        errorMessage = nil
+        do {
+            uncertainSteersBySession[sessionID] = try steerReceiptStore.dismissUncertain(
+                id: id, sessionID: sessionID
+            )
+            return true
+        } catch {
+            errorMessage = "Steer 復原狀態無法清除：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
     var canQueueFollowUp: Bool {
         let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let session = selectedSession,
               selectedSessionIsRunning,
               session.resolvedTaskType == .coding,
-              !request.isEmpty,
+              (!request.isEmpty || !pendingImageAttachments.isEmpty),
               !Self.isGoalCommand(request),
-              // A just-started run can still own these image references until
-              // its first user message is saved. Do not queue the same files
-              // into a second turn under the same attachment IDs.
-              pendingImageAttachments.isEmpty,
+              pendingImageAttachments.allSatisfy({
+                  activeRunsBySession[session.id]?.submittedImageAttachmentIDs.contains($0.id) != true
+              }),
               request.utf8.count <= AgentQueuedFollowUpStore.maximumPromptBytes,
               selectedQueuedFollowUps.count < AgentQueuedFollowUpStore.maximumEntries else {
             return false
         }
-        return true
+        return (try? AgentImageAttachmentLimits.validate(pendingImageAttachments)) != nil
     }
 
     var canSteerCurrentRun: Bool {
@@ -762,6 +959,18 @@ final class AgentViewModel: ObservableObject {
             try await restoreProjectCatalogState()
             for session in sessions {
                 await refreshQueuedFollowUps(sessionID: session.id)
+                do {
+                    uncertainSteersBySession[session.id] = try steerReceiptStore.reconcile(
+                        session: session
+                    )
+                } catch {
+                    errorMessage = "Steer 復原狀態無法讀取：\(redactor.redact(error.localizedDescription))"
+                }
+                do {
+                    workerBindingsBySession[session.id] = try workerJobStore.load(sessionID: session.id)
+                } catch {
+                    errorMessage = "遠端 worker 復原資料無法讀取：\(redactor.redact(error.localizedDescription))"
+                }
             }
             activeMode = settings.defaultMode
             let initialSessionID = Self.initialSessionID(
@@ -902,6 +1111,7 @@ final class AgentViewModel: ObservableObject {
             }
         }
         isStarting = false
+        Task { [weak self] in await self?.scanFinishedTasksForMemorySuggestions() }
         if activeMode.usesAgentRuntime {
             scheduleAgentLifecycleTransition()
         }
@@ -1789,20 +1999,84 @@ final class AgentViewModel: ObservableObject {
               let session = sessions.first(where: { $0.id == sessionID }),
               session.resolvedTaskType == .coding,
               session.archivedAt == nil,
-              (session.resolvedExecutionLocation.kind == .local
-                || session.resolvedExecutionLocation.kind == .worktree),
               let workspace = session.workspace else {
             throw TaskTerminalLifecycleError(
-                detail: "Task 不存在、已封存、缺少 Workspace、位於 SSH，或正在切換執行位置；SSH v1 請使用有 execution receipt 的 Remote PTY tool"
+                detail: "Task 不存在、已封存、缺少 Workspace，或正在切換執行位置"
             )
         }
         try await validateExecutionLocationBinding(session)
-        let context = Self.toolContext(
-            session: session,
-            workspace: workspace,
-            settings: settings
-        )
-        let service = try await toolEnvironment.taskTerminalService(for: context)
+        let service: TaskTerminalService
+        switch session.resolvedExecutionLocation.kind {
+        case .local, .worktree:
+            let context = Self.toolContext(
+                session: session,
+                workspace: workspace,
+                settings: settings
+            )
+            service = try await toolEnvironment.taskTerminalService(for: context)
+        case .ssh:
+            guard let runnerID = session.resolvedExecutionLocation.remoteRunnerID,
+                  let remoteRunnerService else {
+                throw ExecutionLocationBindingError(detail: "SSH runner binding 遺失")
+            }
+            let identity = try await remoteRunnerService.executionIdentity(for: runnerID)
+            let remoteBackend = try await remoteRunnerService.backend(
+                for: runnerID,
+                matching: identity
+            )
+            let verified = try await remoteBackend.verifiedTaskTerminalBackend()
+            let host = RemoteTaskTerminalHostIdentity(verified.host)
+            guard host.configuredWorkspaceRoot == identity.workspaceRoot,
+                  host.runnerID == runnerID else {
+                throw ExecutionLocationBindingError(detail: "SSH Terminal host 與 Task 不一致")
+            }
+            let permissionFingerprint = try Self.taskTerminalPermissionFingerprint(
+                mode: settings.permissionMode,
+                networkAccess: settings.networkAccess,
+                allowances: session.permissionAllowances
+            )
+            let validateAuthority: @Sendable () async throws -> Void = { [weak self] in
+                guard let self else {
+                    throw TaskTerminalLifecycleError(detail: "Task authority 已結束")
+                }
+                let current = try await remoteRunnerService.executionIdentity(for: runnerID)
+                guard current == identity,
+                      try await self.currentTaskTerminalPermissionFingerprint(
+                        for: sessionID,
+                        matching: session
+                      ) == permissionFingerprint else {
+                    throw RemoteExecutionError.invalidRequest(
+                        "SSH runner or Task permission authority changed while terminal was open."
+                    )
+                }
+            }
+            let binding = RemoteTaskTerminalBinding(
+                workspaceID: workspace.id,
+                host: host,
+                authorityFingerprint: identity.configurationFingerprint,
+                permissionFingerprint: permissionFingerprint,
+                validateCurrentAuthority: validateAuthority,
+                verifyFreshHost: {
+                    try await validateAuthority()
+                    let currentBackend = try await remoteRunnerService.backend(
+                        for: runnerID,
+                        matching: identity
+                    )
+                    let receipt = try await currentBackend.verifyConnection()
+                    guard RemoteTaskTerminalHostIdentity(receipt) == host else {
+                        throw RemoteExecutionError.hostVerificationFailed
+                    }
+                    try await validateAuthority()
+                }
+            )
+            service = try await toolEnvironment.remoteTaskTerminalService(
+                sessionID: sessionID,
+                binding: binding,
+                backend: verified.backend
+            )
+        case .futureCloud:
+            throw RemoteExecutionError.unsupported("Cloud execution backend 尚未提供")
+        }
         guard !locationMutationSessionIDs.contains(sessionID),
               !taskTerminalMutationSessionIDs.contains(sessionID),
               let current = sessions.first(where: { $0.id == sessionID }),
@@ -1813,6 +2087,43 @@ final class AgentViewModel: ObservableObject {
             )
         }
         return service
+    }
+
+    private func currentTaskTerminalPermissionFingerprint(
+        for sessionID: UUID,
+        matching expected: AgentSession
+    ) throws -> String {
+        guard let session = sessions.first(where: { $0.id == sessionID }),
+              session.archivedAt == nil,
+              Self.hasSameTaskTerminalBinding(session, expected),
+              session.resolvedExecutionLocation.kind == .ssh else {
+            throw TaskTerminalLifecycleError(detail: "SSH Task authority 已變更")
+        }
+        return try Self.taskTerminalPermissionFingerprint(
+            mode: settings.permissionMode,
+            networkAccess: settings.networkAccess,
+            allowances: session.permissionAllowances
+        )
+    }
+
+    nonisolated private static func taskTerminalPermissionFingerprint(
+        mode: AgentPermissionMode,
+        networkAccess: Bool,
+        allowances: [AgentPermissionAllowance]?
+    ) throws -> String {
+        struct Snapshot: Encodable {
+            var mode: AgentPermissionMode
+            var networkAccess: Bool
+            var allowances: [AgentPermissionAllowance]?
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(Snapshot(
+            mode: mode,
+            networkAccess: networkAccess,
+            allowances: allowances
+        ))
+        return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
     func hasLiveTaskTerminals(for sessionID: UUID) async throws -> Bool {
@@ -2371,21 +2682,24 @@ final class AgentViewModel: ObservableObject {
         // `taskTerminalService(for:)`.
         guard let workspace = session.workspace else { return }
         try await validateExecutionLocationBinding(session)
-        // SSH/future-cloud Tasks never own a host TaskTerminalService. Asking
-        // the local environment for one here would manufacture a Mac PTY
-        // service around a remote path merely to prove that no PTY is live.
-        guard session.resolvedExecutionLocation.kind == .local
-                || session.resolvedExecutionLocation.kind == .worktree else {
+        let hasLiveTerminal: Bool
+        switch session.resolvedExecutionLocation.kind {
+        case .ssh:
+            hasLiveTerminal = try await toolEnvironment.hasLiveRemoteTaskTerminals(
+                sessionID: session.id
+            )
+        case .local, .worktree:
+            let context = Self.toolContext(
+                session: session,
+                workspace: workspace,
+                settings: settings
+            )
+            hasLiveTerminal = try await toolEnvironment.hasLiveTaskTerminals(
+                context: context
+            )
+        case .futureCloud:
             return
         }
-        let context = Self.toolContext(
-            session: session,
-            workspace: workspace,
-            settings: settings
-        )
-        let hasLiveTerminal = try await toolEnvironment.hasLiveTaskTerminals(
-            context: context
-        )
         guard let current = sessions.first(where: { $0.id == session.id }),
               Self.hasSameTaskTerminalBinding(current, session) else {
             throw TaskTerminalLifecycleError(
@@ -2475,6 +2789,52 @@ final class AgentViewModel: ObservableObject {
         selectedSessionID = session.id
         activeMode = mode
         Task { try? await sessionStore.save(session) }
+        return session.id
+    }
+
+    @discardableResult
+    func importExternalChat(
+        _ preview: ExternalAssistantChatImportPreview,
+        route: AppSettings,
+        expectedProjectID: UUID? = nil
+    ) async throws -> UUID {
+        guard didStart,
+              let project = selectedProject,
+              !project.isArchived,
+              let folder = project.primaryFolder else {
+            throw ExternalAssistantChatImportError.unsafeFile
+        }
+        guard expectedProjectID == nil || expectedProjectID == project.id else {
+            throw ExternalAssistantChatImportError.targetChanged
+        }
+        try ExternalAssistantChatImporter().verifyUnchanged(preview)
+        guard !sessions.contains(where: {
+            $0.projectID == project.id && $0.importSourceDigest == preview.sourceDigest
+        }), !inFlightExternalChatImports.contains("\(project.id):\(preview.sourceDigest)") else {
+            throw ExternalAssistantChatImportError.duplicateImport
+        }
+        let importKey = "\(project.id):\(preview.sourceDigest)"
+        inFlightExternalChatImports.insert(importKey)
+        defer { inFlightExternalChatImports.remove(importKey) }
+        var session = AgentSession(
+            mode: .agent,
+            model: preferredModel(for: .agent, fallback: route.selectedModel),
+            provider: route.provider,
+            profileID: route.activeProfileID
+        )
+        session.title = preview.proposedTitle
+        session.state = .completed
+        session.projectID = project.id
+        session.projectFolderID = folder.id
+        session.workspace = folder.workspace
+        session.connection = AgentConnectionSnapshot(settings: route)
+        session.messages = preview.messages
+        session.importSourceDigest = preview.sourceDigest
+        try await sessionStore.save(session)
+        sessions.insert(session, at: 0)
+        selectedSessionID = session.id
+        activeMode = .agent
+        scheduleAgentLifecycleTransition()
         return session.id
     }
 
@@ -4695,7 +5055,7 @@ final class AgentViewModel: ObservableObject {
     }
 
     func chooseWorkspace(route: AppSettings) async {
-        guard activeMode.usesAgentRuntime, !selectedSessionIsRunning, !selectedGoalIsMutating,
+        guard activeMode.usesAgentRuntime, !selectedGoalIsMutating,
               let selectedSessionID,
               !locationMutationSessionIDs.contains(selectedSessionID),
               !taskTerminalMutationSessionIDs.contains(selectedSessionID),
@@ -4906,7 +5266,7 @@ final class AgentViewModel: ObservableObject {
                 )
             }.value
             importedReference = reference
-            guard selectedSessionID == sessionID, !isRunning(sessionID: sessionID),
+            guard selectedSessionID == sessionID,
                   selectedSession?.workspace?.id == workspace.id,
                   selectedSession?.workspace?.rootPath == workspace.rootPath else {
                 throw AgentComposerError.staleSelection
@@ -4923,7 +5283,8 @@ final class AgentViewModel: ObservableObject {
     }
 
     func removePendingImageAttachment(id: UUID) {
-        guard let sessionID = selectedSessionID, !isRunning(sessionID: sessionID),
+        guard let sessionID = selectedSessionID,
+              activeRunsBySession[sessionID]?.submittedImageAttachmentIDs.contains(id) != true,
               !goalMutationSessionIDs.contains(sessionID),
               var attachments = pendingImagesBySession[sessionID],
               let index = attachments.firstIndex(where: { $0.id == id }) else { return }
@@ -4938,6 +5299,11 @@ final class AgentViewModel: ObservableObject {
         } catch {
             errorMessage = "影像附件無法移除：\(redactor.redact(error.localizedDescription))"
         }
+    }
+
+    func canRemovePendingImageAttachment(id: UUID) -> Bool {
+        guard let sessionID = selectedSessionID else { return false }
+        return activeRunsBySession[sessionID]?.submittedImageAttachmentIDs.contains(id) != true
     }
 
     func selectModel(_ model: String, route: AppSettings) {
@@ -4985,18 +5351,23 @@ final class AgentViewModel: ObservableObject {
     @discardableResult
     func queueFollowUp(route: AppSettings, apiKey: String) async -> Bool {
         guard canQueueFollowUp, let sessionID = selectedSessionID else {
-            errorMessage = "執行中的 Task 需要純文字、非空且最多 16 KiB 的訊息才能排隊；/goal 請在完成後使用。"
+            errorMessage = "執行中的 Task 需要文字或影像才能排隊；文字最多 16 KiB。"
             return false
         }
         let request = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entry = AgentQueuedFollowUp(text: request)
+        let attachments = pendingImageAttachments
+        let entry = AgentQueuedFollowUp(text: request, imageAttachments: attachments)
         do {
+            _ = try imageAttachmentStore.loadPayloads(for: attachments, sessionID: sessionID)
             _ = try await queuedFollowUpStore.enqueue(entry, sessionID: sessionID)
             await refreshQueuedFollowUps(sessionID: sessionID)
+            if pendingImagesBySession[sessionID] == attachments {
+                pendingImagesBySession.removeValue(forKey: sessionID)
+            }
             if draftText(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines) == request {
                 setDraft("", for: sessionID)
             }
-            statusMessage = "訊息已排隊；目前執行完成後會依序送出。"
+            statusMessage = "訊息與影像已排隊；目前執行完成後會依序送出。"
             if !isRunning(sessionID: sessionID) {
                 await sendNextQueuedFollowUp(sessionID: sessionID, route: route, apiKey: apiKey)
             }
@@ -5031,6 +5402,7 @@ final class AgentViewModel: ObservableObject {
                   !control.isStopping else { return false }
             control.acceptedSteers.append(request)
         }
+        refreshUncertainSteers(sessionID: sessionID)
         if draftText(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines) == request {
             setDraft("", for: sessionID)
         }
@@ -5055,7 +5427,9 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
-    func updateQueuedFollowUp(id: UUID, sessionID: UUID, text: String) async {
+    @discardableResult
+    func updateQueuedFollowUp(id: UUID, sessionID: UUID, text: String) async -> Bool {
+        errorMessage = nil
         do {
             _ = try await queuedFollowUpStore.updateQueued(
                 id: id,
@@ -5063,8 +5437,26 @@ final class AgentViewModel: ObservableObject {
                 sessionID: sessionID
             )
             await refreshQueuedFollowUps(sessionID: sessionID)
+            return true
         } catch {
             errorMessage = "排隊訊息無法更新：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    func removeQueuedImageAttachment(id: UUID, entryID: UUID, sessionID: UUID) async {
+        guard let entry = queuedFollowUpsBySession[sessionID]?.first(where: { $0.id == entryID }),
+              entry.claimID == nil,
+              let reference = entry.imageAttachments.first(where: { $0.id == id }) else { return }
+        do {
+            let remaining = entry.imageAttachments.filter { $0.id != id }
+            _ = try await queuedFollowUpStore.updateQueued(
+                id: entryID, text: entry.text, imageAttachments: remaining, sessionID: sessionID
+            )
+            await refreshQueuedFollowUps(sessionID: sessionID)
+            try imageAttachmentStore.remove(reference, sessionID: sessionID)
+        } catch {
+            errorMessage = "排隊影像無法移除：\(redactor.redact(error.localizedDescription))"
         }
     }
 
@@ -5707,6 +6099,287 @@ final class AgentViewModel: ObservableObject {
             return true
         } catch {
             errorMessage = "Automation event 無法處理：\(redactor.redact(error.localizedDescription))"
+            return false
+        }
+    }
+
+    nonisolated static func remoteWorkerPermissionFingerprint(
+        session: AgentSession, settings: AgentSettings
+    ) throws -> String {
+        struct Scope: Encodable {
+            let mode: AppMode
+            let allowedPaths: [String]
+            let permissions: String
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(Scope(
+            mode: session.mode,
+            allowedPaths: session.workspace?.allowedPaths ?? [],
+            permissions: try taskTerminalPermissionFingerprint(
+                mode: settings.permissionMode,
+                networkAccess: settings.networkAccess,
+                allowances: session.permissionAllowances
+            )
+        ))
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func remoteWorkerAuthorityMatches(
+        _ binding: AgentWorkerJobBinding, session: AgentSession, settings: AgentSettings
+    ) -> Bool {
+        guard session.id == binding.sessionID,
+              session.mode == .agent, session.archivedAt == nil,
+              session.resolvedTaskType == .coding,
+              session.resolvedExecutionLocation.kind == .ssh,
+              session.resolvedExecutionLocation.remoteRunnerID == binding.identity.runnerID,
+              let workspace = session.workspace, workspace.gitRepository,
+              binding.workspaceID == workspace.id,
+              binding.identity.workspaceRoot == workspace.rootPath,
+              let fingerprint = binding.permissionFingerprint else { return false }
+        return (try? remoteWorkerPermissionFingerprint(session: session, settings: settings)) == fingerprint
+    }
+
+    private func validateRemoteWorkerAuthority(_ binding: AgentWorkerJobBinding) throws {
+        guard !recoveryBlockedSessionIDs.contains(binding.sessionID),
+              let session = sessions.first(where: { $0.id == binding.sessionID }),
+              Self.remoteWorkerAuthorityMatches(binding, session: session, settings: settings) else {
+            throw SelfManagedWorkerError.authorityChanged
+        }
+    }
+
+    private func remoteWorkerService(for binding: AgentWorkerJobBinding) throws -> SelfManagedRemoteWorkerService {
+        try validateRemoteWorkerAuthority(binding)
+        guard let remoteRunnerService else { throw SelfManagedWorkerError.authorityChanged }
+        return SelfManagedRemoteWorkerService(
+            runnerService: remoteRunnerService,
+            validateTaskAuthority: { [weak self] in
+                guard let self else { throw SelfManagedWorkerError.authorityChanged }
+                try await self.validateRemoteWorkerAuthority(binding)
+            }
+        )
+    }
+
+    /// A user-started command job in a separate worktree on the Task's pinned
+    /// SSH host. The binding is saved before any remote side effect; a lost SSH
+    /// response leaves an explicit reconnect path instead of a duplicate job.
+    @discardableResult
+    func startRemoteWorkerJob(sessionID: UUID, argv: [String],
+                              network: String = "deny") async -> Bool {
+        guard !workerBusySessionIDs.contains(sessionID),
+              !locationMutationSessionIDs.contains(sessionID),
+              !taskTerminalMutationSessionIDs.contains(sessionID),
+              !recoveryBlockedSessionIDs.contains(sessionID),
+              workerBindingsBySession[sessionID] == nil,
+              let session = sessions.first(where: { $0.id == sessionID }),
+              session.mode == .agent,
+              session.archivedAt == nil,
+              session.resolvedTaskType == .coding,
+              session.resolvedExecutionLocation.kind == .ssh,
+              let workspace = session.workspace, workspace.gitRepository,
+              !isRunning(sessionID: sessionID),
+              let runnerID = session.resolvedExecutionLocation.remoteRunnerID,
+              let remoteRunnerService,
+              (1...128).contains(argv.count),
+              argv.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }),
+              network == "deny" || (network == "allow" && settings.networkAccess) else {
+            errorMessage = "Worker 只能從閒置、已綁定 SSH 的 Git Task 啟動，且每個 Task 只保留一個 job。"
+            return false
+        }
+        workerBusySessionIDs.insert(sessionID)
+        beginLocationMutation(sessionID: sessionID, roots: [workspace.rootPath])
+        defer {
+            workerBusySessionIDs.remove(sessionID)
+            endLocationMutation(sessionID: sessionID)
+        }
+        do {
+            let fingerprint = try Self.remoteWorkerPermissionFingerprint(session: session, settings: settings)
+            let identity = try await remoteRunnerService.executionIdentity(for: runnerID)
+            let jobID = UUID()
+            let binding = AgentWorkerJobBinding(
+                sessionID: sessionID, jobID: jobID,
+                identity: identity, submittedAt: Date(),
+                workspaceID: workspace.id, permissionFingerprint: fingerprint
+            )
+            try validateRemoteWorkerAuthority(binding)
+            try workerJobStore.save(binding)
+            workerBindingsBySession[sessionID] = binding
+            let service = try remoteWorkerService(for: binding)
+            let job = try await service.start(
+                identity: identity, jobID: jobID, argv: argv, network: network
+            )
+            workerJobsBySession[sessionID] = job
+            statusMessage = "自管 worker job 已在獨立遠端 worktree 啟動。"
+            return true
+        } catch {
+            errorMessage = "Worker 啟動結果無法確認：\(redactor.redact(error.localizedDescription))；請使用重新連線核對，勿重複啟動。"
+            return false
+        }
+    }
+
+    func refreshRemoteWorkerJob(sessionID: UUID) async {
+        guard !workerBusySessionIDs.contains(sessionID),
+              let binding = workerBindingsBySession[sessionID] else { return }
+        workerBusySessionIDs.insert(sessionID)
+        defer { workerBusySessionIDs.remove(sessionID) }
+        do {
+            let service = try remoteWorkerService(for: binding)
+            let job = try await service.status(identity: binding.identity, jobID: binding.jobID)
+            workerJobsBySession[sessionID] = job
+            let logs = try await service.logs(identity: binding.identity, jobID: binding.jobID)
+            workerLogsBySession[sessionID] = redactor.redact(logs.text)
+            if ["completed", "failed", "cancelled", "interrupted"].contains(job.status) {
+                let diff = try await service.diff(identity: binding.identity, jobID: binding.jobID)
+                workerDiffsBySession[sessionID] = redactor.redact(diff.diff)
+            }
+        } catch {
+            errorMessage = "Worker 重新連線失敗：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func cancelRemoteWorkerJob(sessionID: UUID) async {
+        guard !workerBusySessionIDs.contains(sessionID),
+              let binding = workerBindingsBySession[sessionID] else { return }
+        workerBusySessionIDs.insert(sessionID)
+        defer { workerBusySessionIDs.remove(sessionID) }
+        do {
+            workerJobsBySession[sessionID] = try await remoteWorkerService(for: binding)
+                .cancel(identity: binding.identity, jobID: binding.jobID)
+        } catch {
+            errorMessage = "Worker 取消結果無法確認：\(redactor.redact(error.localizedDescription))；請重新連線核對。"
+        }
+    }
+
+    /// Creates an independently leased local Task from a completed worker
+    /// patch. The source Task and checkout remain untouched. The fork journal
+    /// owns recovery until the new Task session is durably committed.
+    @discardableResult
+    func takeOverRemoteWorkerJob(sessionID: UUID) async -> Bool {
+        guard !workerBusySessionIDs.contains(sessionID),
+              !locationMutationSessionIDs.contains(sessionID),
+              let source = sessions.first(where: { $0.id == sessionID }),
+              !isRunning(sessionID: sessionID),
+              source.resolvedExecutionLocation.kind == .ssh,
+              let localWorkspace = source.localWorkspace,
+              localWorkspace.gitRepository,
+              let binding = workerBindingsBySession[sessionID],
+              let displayed = workerDiffsBySession[sessionID] else {
+            errorMessage = "本機接手需要已停止的 SSH Task、原本機 Git 工作區及已檢視的 worker diff。"
+            return false
+        }
+        workerBusySessionIDs.insert(sessionID)
+        beginLocationMutation(sessionID: sessionID, roots: [localWorkspace.rootPath])
+        defer {
+            workerBusySessionIDs.remove(sessionID)
+            endLocationMutation(sessionID: sessionID)
+        }
+        let forkID = UUID()
+        let plannedWorktreeID = UUID()
+        var journalEntry: AgentTaskHandoffJournalEntry?
+        var createdRecord: ManagedWorktreeRecord?
+        var didCommit = false
+        do {
+            let worker = try remoteWorkerService(for: binding)
+            let job = try await worker.status(identity: binding.identity, jobID: binding.jobID)
+            guard ["completed", "failed", "cancelled", "interrupted"].contains(job.status),
+                  job.commit.range(of: #"^[a-fA-F0-9]{40,64}$"#, options: .regularExpression) != nil else {
+                throw TaskReviewIntegrationError(detail: "Worker 尚未停止或 commit 無效")
+            }
+            let remoteDiff = try await worker.diff(identity: binding.identity, jobID: binding.jobID)
+            guard remoteDiff.commit == job.commit,
+                  redactor.redact(remoteDiff.diff) == remoteDiff.diff,
+                  remoteDiff.diff == displayed else {
+                throw TaskReviewIntegrationError(detail: "Worker diff 已變更或含有遮蔽內容；請重新檢視")
+            }
+            let document = try ReviewDiffParser().parse(
+                remoteDiff.diff, source: .commit(revision: job.commit)
+            )
+            guard document.files.allSatisfy({ $0.fallback == nil }) else {
+                throw TaskReviewIntegrationError(detail: "Worker diff 含有無法安全套用的檔案")
+            }
+            try validateRemoteWorkerAuthority(binding)
+            let localRoot = URL(fileURLWithPath: localWorkspace.rootPath, isDirectory: true)
+            var entry = try await handoffJournal.beginFork(
+                source: source, forkSessionID: forkID,
+                plannedWorktreeID: plannedWorktreeID
+            )
+            journalEntry = entry
+            let record = try await worktreeService.create(
+                repositoryRoot: localRoot, taskID: forkID,
+                options: ManagedWorktreeCreateOptions(
+                    baseReference: job.commit,
+                    preferredBranchName: "lumachat/worker-\(binding.jobID.uuidString.lowercased().prefix(12))",
+                    detached: false,
+                    plannedWorktreeID: plannedWorktreeID
+                )
+            )
+            createdRecord = record
+            try validateRemoteWorkerAuthority(binding)
+            let workspace = Self.workspace(for: record)
+            let location = AgentExecutionLocation.worktree(
+                id: record.id, label: record.branchName ?? "worker-takeover"
+            )
+            entry = try await handoffJournal.markDestinationAllocated(
+                entry,
+                binding: AgentTaskBindingSnapshot(
+                    workspace: workspace, location: location,
+                    projectFolderID: nil, localWorkspace: nil,
+                    localProjectFolderID: nil
+                ),
+                createdWorktreeID: record.id
+            )
+            journalEntry = entry
+            var fork = try taskForkBuilder.makeFork(
+                from: source, workspace: workspace,
+                executionLocation: location,
+                localWorkspace: nil, localProjectFolderID: nil,
+                forkSessionID: forkID
+            )
+            let context = Self.toolContext(
+                session: fork, workspace: workspace, settings: settings
+            )
+            let git = try await toolEnvironment.gitService(for: context)
+            for file in document.files {
+                try validateRemoteWorkerAuthority(binding)
+                let payload = try ReviewPatchBuilder().make(
+                    file: file, expectedFileFingerprint: file.fingerprint,
+                    direction: .forward
+                )
+                _ = try await git.applyReviewPatch(
+                    payload, target: .worktree, taskID: forkID
+                )
+            }
+            entry = try await handoffJournal.markDestinationReady(entry)
+            journalEntry = entry
+            try validateRemoteWorkerAuthority(binding)
+            fork.title = String("\(source.title) · Worker takeover".prefix(256))
+            fork.messages.append(AgentMessage(
+                role: .system,
+                content: "Local takeover from self-managed worker job \(binding.jobID.uuidString), commit \(job.commit). Re-inspect the imported patch before continuing.",
+                name: "luma-worker-takeover"
+            ))
+            try await sessionStore.save(fork)
+            didCommit = true
+            sessions.insert(fork, at: 0)
+            selectedSessionID = fork.id
+            selectedProjectID = fork.projectID
+            activeMode = fork.mode
+            entry = try await handoffJournal.markSessionCommitted(entry)
+            journalEntry = entry
+            try await handoffJournal.remove(id: entry.id)
+            statusMessage = "Worker diff 已匯入新的本機 Managed Worktree Task；請檢視 Review。"
+            return true
+        } catch {
+            if !didCommit, let journalEntry {
+                if await compensateUncommittedWorktree(
+                    journalEntry: journalEntry, knownRecord: createdRecord
+                ) {
+                    try? await handoffJournal.remove(id: journalEntry.id)
+                }
+            } else if didCommit {
+                recoveryBlockedSessionIDs.insert(forkID)
+            }
+            errorMessage = "Worker 本機接手未完成：\(redactor.redact(error.localizedDescription))"
             return false
         }
     }
@@ -6464,9 +7137,21 @@ final class AgentViewModel: ObservableObject {
                     != normalized.browserExistingDebugEndpoint
         )
         let revokesMemoryAuthority = settings.memoriesEnabled && !normalized.memoriesEnabled
+        let enablesSuggestions = normalized.memoriesEnabled
+            && normalized.automaticMemorySuggestionsEnabled
+            && (!settings.memoriesEnabled || !settings.automaticMemorySuggestionsEnabled)
         do {
             try await settingsStore.save(normalized)
             settings = normalized
+            if revokesMemoryAuthority {
+                memorySearchGeneration &+= 1
+                memorySearchRequest = nil
+                localMemorySearchResults = []
+                selectedLocalMemorySnapshot = AgentLocalMemorySnapshot()
+            }
+            if enablesSuggestions {
+                Task { [weak self] in await self?.scanFinishedTasksForMemorySuggestions() }
+            }
             // Most settings remain immutable per run. Computer Use is an
             // exception: narrowing its live authority must revoke suspended
             // approvals and old allow-list snapshots immediately. Pause keeps
@@ -6658,6 +7343,25 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
+    func refreshOAuthConnector(id: UUID) async {
+        do {
+            _ = try await oauthConnectorStore.refresh(id)
+            statusMessage = "OAuth token 已更新，並儲存在 Keychain。"
+        } catch {
+            oauthConnectors = (try? await oauthConnectorStore.load()) ?? oauthConnectors
+            errorMessage = "OAuth token 更新失敗：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
+    func revokeOAuthConnector(id: UUID) async {
+        do {
+            oauthConnectors = try await oauthConnectorStore.revoke(id)
+            statusMessage = "遠端 token 已撤銷，並已清除本機憑證。"
+        } catch {
+            errorMessage = "OAuth 遠端撤銷失敗：\(redactor.redact(error.localizedDescription))"
+        }
+    }
+
     func deleteOAuthConnector(id: UUID) async {
         do {
             oauthConnectors = try await oauthConnectorStore.delete(id)
@@ -6832,7 +7536,11 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
-    func saveProjectSettings(_ newSettings: AgentProjectSettings) async -> Bool {
+    func saveProjectSettings(
+        _ newSettings: AgentProjectSettings,
+        importRequest: AgentProjectImportSaveRequest? = nil,
+        restoringImportID: UUID? = nil
+    ) async -> Bool {
         guard let sessionID = selectedSessionID,
               let selectedSession,
               let workspace = settingsWorkspace(for: selectedSession) else {
@@ -6860,7 +7568,11 @@ final class AgentViewModel: ObservableObject {
             } else {
                 store = try AgentProjectSettingsStore(workspaceRootPath: workspace.rootPath)
             }
-            try await store.save(normalized)
+            if let restoringImportID {
+                normalized = try await store.restoreImport(id: restoringImportID)
+            } else {
+                try await store.save(normalized, importRequest: importRequest)
+            }
             guard selectedSessionID == sessionID,
                   self.selectedSession.flatMap({ settingsWorkspace(for: $0) })?.rootPath
                     == workspace.rootPath else {
@@ -7739,11 +8451,14 @@ final class AgentViewModel: ObservableObject {
             registry: registry,
             executor: executor,
             todoManager: todoManager,
-            imageAttachmentStore: imageAttachmentStore
+            imageAttachmentStore: imageAttachmentStore,
+            sessionID: snapshot.id,
+            steerReceiptStore: steerReceiptStore
         )
         let runID = UUID()
         beginRunTracking(runID: runID, session: snapshot, userRequest: userRequest)
         guard let control = runControl(runID: runID) else { return nil }
+        control.submittedImageAttachmentIDs = Set(userImageAttachments.map(\.id))
         control.runtime = runtime
         control.followUpRoute = route
         control.followUpAPIKey = apiKey
@@ -7808,7 +8523,7 @@ final class AgentViewModel: ObservableObject {
                 }
                 do {
                     let approved = try await self.localMemoryStore.approvedForContext(
-                        projectID: projectID
+                        projectID: projectID, query: userRequest ?? ""
                     )
                     approvedMemoryContext = AgentLocalMemoryPrompt.render(approved)
                 } catch {
@@ -8269,6 +8984,9 @@ final class AgentViewModel: ObservableObject {
         let followUpRoute = control.followUpRoute
         let followUpAPIKey = control.followUpAPIKey
         completeRun(control)
+        if persisted, finalized.state == .completed {
+            Task { [weak self] in await self?.suggestMemories(from: finalized.id) }
+        }
         if persisted, finalized.state == .completed, let followUpRoute {
             await sendNextQueuedFollowUp(
                 sessionID: finalized.id,
@@ -9054,6 +9772,13 @@ final class AgentViewModel: ObservableObject {
         // while disk I/O is suspended, so disposition must revalidate identity.
         guard runControl(runID: runID) === control, control.acceptsRuntimeEvents else { return false }
         control.persistedSnapshot = PersistedRunSnapshot(runID: runID, session: session)
+        do {
+            uncertainSteersBySession[session.id] = try steerReceiptStore.reconcile(
+                session: session
+            )
+        } catch {
+            errorMessage = "Steer 狀態無法核對：\(redactor.redact(error.localizedDescription))"
+        }
         apply(session, synchronizeMode: true)
         let queuedBaseline = control.submittedDraft?.baselineUserMessageCount
         clearSubmittedDraftIfPersisted(in: session, runID: runID)
@@ -9163,9 +9888,9 @@ final class AgentViewModel: ObservableObject {
         runControl(runID: runID)?.acceptsRuntimeEvents == true
     }
 
-    /// Steer is process-memory state until Runtime saves it in the Task. If a
-    /// preflight fails or is cancelled before Runtime starts, return accepted
-    /// text to the composer in this process so the user can retry it.
+    /// A cancelled preflight can return text directly to its composer. The
+    /// durable, redacted acceptance record separately survives a process crash
+    /// and remains uncertain until the user resolves it.
     private func restoreSteersIfRuntimeNeverStarted(_ control: ActiveRun) async {
         guard !control.acceptedSteers.isEmpty,
               let runtime = control.runtime,

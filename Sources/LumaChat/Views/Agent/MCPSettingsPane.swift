@@ -17,6 +17,9 @@ struct MCPSettingsPane: View {
                     Text("連接後會 initialize 並探索 Tools、Resources 與 Prompts；Tools 會動態加入 Agent registry。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("相容協定：\(MCPClient.protocolVersion) initialize。若 Server 回傳其他版本，診斷會顯示版本不符。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { isImporting = true } label: {

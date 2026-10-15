@@ -11,7 +11,8 @@ Phase F adds three connected but separate capabilities:
    Review Tasks;
 2. bounded macOS notifications whose clicks route back to the owning Task; and
 3. a user-controlled SSH Remote Runner for Task-scoped filesystem, Git, shell,
-   one-shot PTY, build, and test operations.
+   one-shot PTY, build, and test operations, plus a later Phase I Task Terminal
+   development path with a persistent interactive SSH connection.
 
 The implementation and focused tests pass in the complete development
 regression/build/package gate. This is development evidence, not a live-host or
@@ -254,10 +255,14 @@ the configured workspace root. Build/test supports Swift Package Manager or
 an explicit Xcode scheme. Arbitrary shell text is a separately dangerous,
 bounded stdin script rather than an argument interpolated into host code.
 
-`remote_pty_run` asks SSH for a PTY for one bounded command. It is not a
-persistent Task Terminal: it cannot reconnect, stream later input, resize, or
-restore scrollback. The native Terminal pane is disabled for SSH Tasks, and the
-remote PTY backend fails explicitly instead of opening a local shell.
+`remote_pty_run` remains a bounded one-shot model tool. Separately, Phase I
+adds a Task-owned interactive SSH Terminal to the native pane. It reuses the
+Darwin PTY's bounded in-memory output, ordered input, resize and cleanup, while
+OpenSSH enforces the captured `known_hosts` and Keychain authority. A fresh
+host receipt is required for each new shell/reconnect. The Terminal's metadata
+pins host, runner and Task permission identities; after App relaunch a previous
+running connection appears as disconnected and Reconnect starts a new shell.
+The old remote process and raw scrollback cannot be reattached.
 
 ## Explicit workspace migration
 
@@ -332,7 +337,7 @@ that such a service exists.
 | GitHub/Slack/Gmail/filesystem/webhook events | SEAM | Typed ingress only; producer adapters/listeners are absent |
 | Six notification kinds and Task routing | DEVELOPMENT-GATED | Explicit authorization, bounded payload, typed click route |
 | SSH shell/filesystem/Git/build/test | DEVELOPMENT-GATED / LIVE HOST PENDING | Host-bound backend and 16 structured tools |
-| Remote PTY | MVP / DEVELOPMENT-GATED | One-shot SSH PTY only; no persistent interactive Task Terminal |
+| Remote PTY | DEVELOPMENT-GATED / LIVE HOST PENDING | One-shot model tool plus Phase I Task-owned interactive SSH Terminal; local surrogate tests pass, live host and packaged UI pending |
 | Execution-location safety | PARTIAL / DEVELOPMENT-GATED | SSH identity is propagated and local capabilities are disabled; a fully generic cross-platform backend for every tool does not yet exist |
 | Local approval with remote identity | DEVELOPMENT-GATED | Backend/host/port/user/root shown in approval card |
 | Mac/Worktree to SSH and SSH to Mac | DEVELOPMENT-GATED / LIVE HOST PENDING | Bounded same-HEAD migration, verification, rollback/CAS, durable journal recovery and Task handoff orchestration |
@@ -353,9 +358,10 @@ that such a service exists.
   Settings CRUD/test connection, and all three supported remote-handoff routes.
 - Add real producers if GitHub, Slack, Gmail, filesystem, or webhook-triggered
   execution is required. The current seam must not be described as connected.
-- Persistent remote PTY transport, richer remote Git, remote Browser/Computer
-  Use/plugins/subagents, cross-platform backends, SSH-to-SSH migration, a secure
-  relay, and mobile control remain future work.
+- Phase I's interactive SSH Terminal still needs live host, packaged UI,
+  disconnect/restart/credential-revocation and long-soak acceptance. Richer
+  remote Git, Browser/Computer Use/plugins/subagents, cross-platform backends,
+  SSH-to-SSH migration, a secure relay, and mobile control remain future work.
 - The remote directory flock coordinates Luma Chat operations; an unrelated
   same-account process can ignore it, replace the path after an identity check,
   or deliberately daemonize into a new session. One-shot shell must therefore

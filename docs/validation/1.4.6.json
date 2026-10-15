@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "version": "1.4.6",
+  "build": "13",
+  "branch": "main",
+  "tag": "v1.4.6",
+  "publicationChannel": "regular release (not prerelease)",
+  "packagingMode": "development",
+  "signing": "ad-hoc",
+  "appleNotarized": false,
+  "sourceFingerprint": "32aed45fe29a36a81ff163a893b9204ac9e678e581b90ecc8162a60903b72d99",
+  "sourceFileCount": 340,
+  "gate": {
+    "exitCode": 0,
+    "swift": {
+      "tests": 886,
+      "skipped": 1,
+      "failures": 0,
+      "seconds": 273.489
+    },
+    "python": {
+      "tests": 48,
+      "skipped": 1,
+      "failures": 0,
+      "suites": {
+        "archive": 7,
+        "soak": 28,
+        "security": 3,
+        "worker": 10
+      }
+    },
+    "vscode": {
+      "tests": 17,
+      "failures": 0
+    },
+    "githubAction": {
+      "tests": 14,
+      "failures": 0
+    },
+    "optimizedBuildSeconds": 205.32,
+    "archiveAndExtractedAppVerified": true,
+    "securityAuditPassed": true,
+    "extractedCLIVersion": "LumaChat 1.4.6"
+  },
+  "artifacts": [
+    {
+      "path": "dist/LumaChat-1.4.6-arm64.archive-manifest.json",
+      "bytes": 5073,
+      "sha256": "43e8745f1fb56e9a429bc073fcab31dcb047295dae17a13e30c14759f8a169cf"
+    },
+    {
+      "path": "dist/LumaChat-1.4.6-arm64.provenance.json",
+      "bytes": 886,
+      "sha256": "2647af349f99bf7a81b3441ef7b72913daa515d7a7d56ccaf193ae89c0d4b5bd"
+    },
+    {
+      "path": "dist/LumaChat-1.4.6-arm64.sbom.spdx.json",
+      "bytes": 786,
+      "sha256": "dff4d5c7df5a69c8eb88cdcf74cdf561eab806044422043bb09ee09bc59f94d7"
+    },
+    {
+      "path": "dist/LumaChat-1.4.6-arm64.sha256",
+      "bytes": 91,
+      "sha256": "3f212bb569cb0154766e380e5a8e99290f41065a15017ca43b016443c99ed88e"
+    },
+    {
+      "path": "dist/LumaChat-1.4.6-arm64.zip",
+      "bytes": 11426946,
+      "sha256": "0d5112022bee7d3c266a32cd0ef25692d1a34cc112411387805da39a5cdb026a"
+    }
+  ],
+  "nativeSmoke": {
+    "scope": "1.4.6 optimized packaged native launch, isolated idle Task AX, About version AX and visual screenshot, clean quit; no new Browser/model or microphone acceptance",
+    "packageSHA256": "0d5112022bee7d3c266a32cd0ef25692d1a34cc112411387805da39a5cdb026a",
+    "appVersion": "1.4.6",
+    "appBuild": "13",
+    "idleTaskAXVerified": true,
+    "aboutAXVerified": true,
+    "aboutScreenshotVisuallyVerified": true,
+    "appExitCode": 0,
+    "taskMessagesCreated": 0,
+    "browserOperationsExecuted": 0,
+    "externalLiveAcceptance": false,
+    "finishedAtUnix": 1792030176.460533
+  },
+  "historicalSoak": {
+    "version": "1.4.5 integration source before version bump",
+    "runID": "19124a61-51f3-4eec-8bd6-e2679e8327e2",
+    "qualified": true,
+    "seconds": 7207.592,
+    "cycles": 48,
+    "shards": 389,
+    "failures": 0,
+    "countsAs146Qualification": false
+  },
+  "pending": [
+    "Fresh1.4.6 full-duration soak",
+    "External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance",
+    "Executed Linux CI result",
+    "Developer ID signing, notarization, stapling, production update feed and rollback acceptance"
+  ],
+  "localEvidenceOnly": [
+    {
+      "path": "tmp/release-1.4.6-retry.log",
+      "sha256": "c9da9deabad6dc8fec06e23e7cbbc8d09b1e05cba25c25bd1e0f6eaabfe494fb"
+    },
+    {
+      "path": "tmp/release-1.4.6-retry-result.json",
+      "sha256": "c2a33bd63e8d767f067098928c69ba197d86bf85e0d7ac5ce05874b8bcc711d8"
+    },
+    {
+      "path": "tmp/release-1.4.6-vscode.log",
+      "sha256": "9555851566d3ab885a5c1ac1bdce0d6eab7740d6132f518763d9076ab9a1f5e8"
+    },
+    {
+      "path": "tmp/release-1.4.6-action.log",
+      "sha256": "544a6242fe0c0c279bc73849ccabbbe802a5ddacafbf7c534c9f4bb11a4cce71"
+    },
+    {
+      "path": "tmp/release-1.4.6-browser/acceptance.json",
+      "sha256": "7b87091dc6e0c7a3dccc9dfb1ded7097f70e1f810bfeffd12420cc849db7ba70"
+    }
+  ]
+}

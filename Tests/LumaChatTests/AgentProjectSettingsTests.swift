@@ -42,7 +42,13 @@ final class AgentProjectSettingsTests: XCTestCase {
                 "API_TOKEN": "project-super-secret-token",
                 "EMPTY_VALUE": ""
             ],
-            systemPrompt: "Follow this project's release checklist."
+            systemPrompt: "Follow this project's release checklist.",
+            importedRules: [ProjectInstructionImportComponent(
+                relativePath: ".cursor/rules/swift.mdc",
+                redactedContent: "Use focused tests.",
+                sourceByteCount: 42,
+                scope: .files(["Sources/**/*.swift"])
+            )]
         )
 
         try await store.save(expected)
@@ -222,6 +228,25 @@ final class AgentProjectSettingsTests: XCTestCase {
         XCTAssertEqual(secrets.valuesSnapshot(), [:])
         let loaded = try await store.load()
         XCTAssertEqual(loaded, AgentProjectSettings())
+    }
+
+    func testStorageParentSymlinkIsRejectedBeforeCreatingDescendants() async throws {
+        let fixture = try makeFixture("storage-parent-symlink")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let outside = fixture.root.appendingPathComponent("outside", isDirectory: true)
+        let link = fixture.root.appendingPathComponent("parent-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        let store = try AgentProjectSettingsStore(
+            workspaceRootPath: fixture.workspace.path,
+            storageRoot: link.appendingPathComponent("new-storage", isDirectory: true),
+            secretStore: InMemoryAgentProjectSecretStore()
+        )
+        do {
+            try await store.save(AgentProjectSettings(preferredModel: "model"))
+            XCTFail("Expected parent symlink rejection")
+        } catch AgentProjectSettingsError.unsafeStorage {}
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
     }
 
     func testValidationRejectsAmbiguousCommandsUnsafeEnvironmentAndOversizedPrompt() {

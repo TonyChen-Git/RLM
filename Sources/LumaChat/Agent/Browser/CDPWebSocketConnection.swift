@@ -42,6 +42,7 @@ actor CDPWebSocketConnection {
 
     private let urlSession: URLSession
     private let webSocket: URLSessionWebSocketTask
+    private let receiveMessage: @Sendable () async throws -> URLSessionWebSocketTask.Message
     private var receiveTask: Task<Void, Never>?
     private var timeoutTasks: [Int64: Task<Void, Never>] = [:]
     private var pending: [Int64: BrowserCDPPendingRequest] = [:]
@@ -51,7 +52,10 @@ actor CDPWebSocketConnection {
     private var nextEventSequence: UInt64 = 0
     private var running = false
 
-    init(endpoint: URL) throws {
+    init(
+        endpoint: URL,
+        receiveMessage: (@Sendable () async throws -> URLSessionWebSocketTask.Message)? = nil
+    ) throws {
         guard endpoint.scheme?.lowercased() == "ws",
               AgentHTTPOrigin.isLoopback(endpoint.host),
               let port = endpoint.port,
@@ -69,7 +73,9 @@ actor CDPWebSocketConnection {
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = BrowserBounds.maximumCommandTimeout
-        configuration.timeoutIntervalForResource = BrowserBounds.maximumCommandTimeout
+        // The WebSocket outlives individual commands, including time spent
+        // waiting for user approval. Keep URLSession's resource lifetime rather
+        // than ending this persistent connection after one command deadline.
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         let session = URLSession(
@@ -83,16 +89,19 @@ actor CDPWebSocketConnection {
         socket.maximumMessageSize = BrowserBounds.maximumCDPMessageBytes
         urlSession = session
         webSocket = socket
+        // Fault injection covers transport cancellation independently from
+        // caller Task cancellation. Production always receives from this socket.
+        self.receiveMessage = receiveMessage ?? { try await socket.receive() }
     }
 
     func start() throws {
         guard !running else { return }
         running = true
         webSocket.resume()
-        receiveTask = Task { [weak self, webSocket] in
+        receiveTask = Task { [weak self, webSocket, receiveMessage] in
             while !Task.isCancelled {
                 do {
-                    let message = try await webSocket.receive()
+                    let message = try await receiveMessage()
                     guard let self else {
                         webSocket.cancel(with: .goingAway, reason: nil)
                         return
@@ -107,6 +116,10 @@ actor CDPWebSocketConnection {
                         return
                     }
                 } catch is CancellationError {
+                    // URLSession can terminate a receive independently of a
+                    // caller canceling its command. No consumer remains, so
+                    // fail every pending request and forbid reusing this socket.
+                    await self?.connectionFailed(with: BrowserError.websocketClosed)
                     return
                 } catch {
                     await self?.connectionFailed(with: BrowserError.websocketClosed)
@@ -122,7 +135,10 @@ actor CDPWebSocketConnection {
         timeout: TimeInterval
     ) async throws -> JSONValue {
         try Task.checkCancellation()
-        guard running else { throw BrowserError.websocketClosed }
+        guard running, webSocket.state == .running else {
+            connectionFailed(with: BrowserError.websocketClosed)
+            throw BrowserError.websocketClosed
+        }
         guard !method.isEmpty,
               method.utf8.count <= 128,
               method.unicodeScalars.allSatisfy({ scalar in
@@ -238,6 +254,10 @@ actor CDPWebSocketConnection {
 
     private func transmit(_ payload: String, commandID: Int64) async {
         guard running, pending[commandID] != nil else { return }
+        guard webSocket.state == .running else {
+            connectionFailed(with: BrowserError.websocketClosed)
+            return
+        }
         do {
             try await webSocket.send(.string(payload))
         } catch is CancellationError {
