@@ -31,7 +31,7 @@ final class ReviewToolStructuredDataLimitTests: XCTestCase {
         let result = try await executor.execute(
             AgentToolCall(
                 name: ReviewWorkflowToolFactory.sourceToolName,
-                arguments: .object(["max_bytes": .number(192 * 1_024)])
+                arguments: .object(["max_bytes": .number(Double(192 * 1_024))])
             ),
             context: context,
             permissionMode: .fullAccess,

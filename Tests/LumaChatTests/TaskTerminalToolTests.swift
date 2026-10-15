@@ -577,7 +577,7 @@ final class TaskTerminalToolTests: XCTestCase {
                 arguments: .object([
                     "terminal_id": .string(terminalID.uuidString),
                     "offset": .number(Double(largeOffset)),
-                    "max_bytes": .number(64 * 1_024),
+                    "max_bytes": .number(Double(64 * 1_024)),
                 ]),
                 executor: executor,
                 context: context
@@ -759,7 +759,7 @@ final class TaskTerminalToolTests: XCTestCase {
                 arguments: .object([
                     "terminal_id": .string(terminalID.uuidString),
                     "offset": .number(Double(offset)),
-                    "max_bytes": .number(64 * 1_024),
+                    "max_bytes": .number(Double(64 * 1_024)),
                 ]),
                 executor: executor,
                 context: context
