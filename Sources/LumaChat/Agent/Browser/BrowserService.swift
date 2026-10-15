@@ -619,9 +619,9 @@ actor BrowserService: BrowserServicing {
             _ = try await connection.command(
                 "Network.enable",
                 params: .object([
-                    "maxTotalBufferSize": .number(2 * 1_024 * 1_024),
-                    "maxResourceBufferSize": .number(512 * 1_024),
-                    "maxPostDataSize": .number(64 * 1_024)
+                    "maxTotalBufferSize": .number(Double(2 * 1_024 * 1_024)),
+                    "maxResourceBufferSize": .number(Double(512 * 1_024)),
+                    "maxPostDataSize": .number(Double(64 * 1_024))
                 ]),
                 timeout: runtime.commandTimeout
             )

@@ -385,16 +385,18 @@ struct ContextManager: Sendable {
     }
 
     private func estimatedTokens(_ message: AgentMessage) -> Int {
+        let toolCallCharacters = message.toolCalls.reduce(0) {
+            $0 + $1.id.count + $1.name.count + String(describing: $1.arguments).count
+        }
+        let imageAttachmentCharacters = message.imageAttachments.reduce(0) {
+            $0 + $1.name.count + $1.relativePath.count + $1.mimeType.count + $1.sha256.count
+        }
         let characters = message.content.count
             + (message.reasoningSummary?.count ?? 0)
             + (message.name?.count ?? 0)
             + (message.toolCallID?.count ?? 0)
-            + message.toolCalls.reduce(0) {
-                $0 + $1.id.count + $1.name.count + String(describing: $1.arguments).count
-            }
-            + message.imageAttachments.reduce(0) {
-                $0 + $1.name.count + $1.relativePath.count + $1.mimeType.count + $1.sha256.count
-            }
+            + toolCallCharacters
+            + imageAttachmentCharacters
         let bytes = message.content.utf8.count
             + (message.reasoningSummary?.utf8.count ?? 0)
             + (message.name?.utf8.count ?? 0)
