@@ -693,8 +693,8 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
     }
 
     /// This is a conservative simple-command scanner, not a shell interpreter.
-    /// Quoted arguments and comments are opaque. Here-documents and unquoted
-    /// expansions are left untouched rather than risking changes to their data.
+    /// Quoted arguments, simple variables and comments are opaque. Here-documents
+    /// and nested expansions are left untouched rather than guessing their syntax.
     private static func developerCommandTokens(_ command: String) -> [DeveloperCommandToken]? {
         var tokens: [DeveloperCommandToken] = []
         var index = command.startIndex
@@ -733,7 +733,7 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
                 let current = command[index]
                 if let activeQuote = quote {
                     if current == activeQuote { quote = nil }
-                    else if activeQuote == "\"", current == "$" || current == "`" { return nil }
+                    else if activeQuote == "\"", startsNestedExpansion(at: index, in: command) { return nil }
                     else if current == "\\", activeQuote == "\"" {
                         index = command.index(after: index)
                         if index == command.endIndex { return nil }
@@ -743,7 +743,7 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
                 } else if current == "\\" {
                     index = command.index(after: index)
                     if index == command.endIndex { return nil }
-                } else if current == "$" || current == "`" {
+                } else if startsNestedExpansion(at: index, in: command) {
                     return nil
                 } else if current.isWhitespace || ";&|()<>".contains(current) {
                     break
@@ -754,6 +754,13 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
             tokens.append(.init(range: start..<index, text: String(command[start..<index]), isOperator: false))
         }
         return tokens
+    }
+
+    private static func startsNestedExpansion(at index: String.Index, in command: String) -> Bool {
+        if command[index] == "`" { return true }
+        guard command[index] == "$" else { return false }
+        let next = command.index(after: index)
+        return next < command.endIndex && (command[next] == "(" || command[next] == "{")
     }
 
     /// Prefer the host-selected Xcode when multiple versions are installed.

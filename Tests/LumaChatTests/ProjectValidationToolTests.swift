@@ -646,6 +646,9 @@ final class ProjectValidationToolTests: XCTestCase {
             ("env FLAG=1 /usr/bin/python3 --version", "env FLAG=1 " + quotedShim + " --version"),
             ("2>/dev/null /usr/bin/python3 --version", "2>/dev/null " + quotedShim + " --version"),
             ("2>&1 /usr/bin/python3 --version", "2>&1 " + quotedShim + " --version"),
+            ("/usr/bin/python3 --version\n__luma_status=$?\npwd -P > '/tmp/cwd'\nexit $__luma_status",
+             quotedShim + " --version\n__luma_status=$?\npwd -P > '/tmp/cwd'\nexit $__luma_status"),
+            (#"/usr/bin/python3 "$SCRIPT_PATH" $ARGUMENT"#, quotedShim + #" "$SCRIPT_PATH" $ARGUMENT"#),
             ("/usr/bin/xcrun --sdk macosx python3 --version", quotedShim + " --version")
         ] {
             XCTAssertEqual(
