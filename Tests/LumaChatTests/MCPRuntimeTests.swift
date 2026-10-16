@@ -42,7 +42,7 @@ final class MCPRuntimeTests: XCTestCase {
         let projectScoped = MCPServerConfiguration(
             name: "Project",
             scope: .projectOnly,
-            projectPath: "/Volumes/SD/Code/RLM",
+            projectPath: "/workspace/rlm",
             transport: .stdio(MCPStdioConfiguration(command: "/usr/bin/example-mcp"))
         )
         let restored = try JSONDecoder().decode(
@@ -50,7 +50,7 @@ final class MCPRuntimeTests: XCTestCase {
             from: JSONEncoder().encode(projectScoped)
         )
         XCTAssertEqual(restored.scope, .projectOnly)
-        XCTAssertEqual(restored.projectPath, "/Volumes/SD/Code/RLM")
+        XCTAssertEqual(restored.projectPath, "/workspace/rlm")
     }
 
     func testNewlineFramerAndSSEParserHandleChunkedMessages() throws {
@@ -146,8 +146,8 @@ final class MCPRuntimeTests: XCTestCase {
 
         let workspace = AgentWorkspace(
             name: "RLM",
-            rootPath: "/Volumes/SD/Code/RLM",
-            allowedPaths: ["/Volumes/SD/Code/RLM"],
+            rootPath: "/workspace/rlm",
+            allowedPaths: ["/workspace/rlm"],
             bookmarkData: nil,
             gitRepository: false,
             branch: nil
@@ -221,7 +221,7 @@ final class MCPRuntimeTests: XCTestCase {
             registry: registry,
             transportFactory: MockMCPTransportFactory(transport: transport)
         )
-        let projectRoot = "/Volumes/SD/Code/RLM"
+        let projectRoot = "/workspace/rlm"
         let configuration = MCPServerConfiguration(
             name: "Project Tools",
             permissionLevel: .read,
@@ -249,7 +249,7 @@ final class MCPRuntimeTests: XCTestCase {
             mode: .agent,
             workspace: AgentWorkspace(
                 name: "Other",
-                rootPath: "/Volumes/SD/Code/Other",
+                rootPath: "/workspace/other",
                 allowedPaths: [],
                 bookmarkData: nil,
                 gitRepository: false,
@@ -408,8 +408,8 @@ final class MCPRuntimeTests: XCTestCase {
     }
 
     func testSettingsPersistenceKeepsSecretsOutOfJSON() async throws {
-        let directory = URL(
-            fileURLWithPath: "/Volumes/SD/Code/RLM/tmp/mcp-settings-\(UUID().uuidString)",
+        let directory = AppPaths.projectTemporaryRoot.appendingPathComponent(
+            "mcp-settings-\(UUID().uuidString)",
             isDirectory: true
         )
         defer { try? FileManager.default.removeItem(at: directory) }

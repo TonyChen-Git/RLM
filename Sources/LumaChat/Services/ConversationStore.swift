@@ -3,20 +3,25 @@ import Foundation
 /// Serializes all conversation disk access so saves and deletes cannot race each other.
 actor ConversationStore {
     private let fileManager: FileManager
+    private let conversationsDirectory: URL
     private var deletedConversationIDs: Set<UUID> = []
     private var isDeletingAll = false
 
-    init(fileManager: FileManager = .default) {
+    init(
+        fileManager: FileManager = .default,
+        conversationsDirectory: URL = AppPaths.conversations
+    ) {
         self.fileManager = fileManager
+        self.conversationsDirectory = conversationsDirectory.standardizedFileURL
     }
 
     /// Loads all valid conversations, newest first. Startup cleanup is performed first.
     func loadConversations() throws -> [Conversation] {
-        try AppPaths.ensureDirectories()
+        try ensureDirectories()
         try cleanupOrphansImpl()
 
         let directoryURLs = try fileManager.contentsOfDirectory(
-            at: AppPaths.conversations,
+            at: conversationsDirectory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsPackageDescendants]
         )
@@ -62,9 +67,9 @@ actor ConversationStore {
     /// Atomically writes `Conversations/<UUID>/conversation.json`.
     func save(_ conversation: Conversation) throws {
         guard !isDeletingAll, !deletedConversationIDs.contains(conversation.id) else { return }
-        try AppPaths.ensureDirectories()
+        try ensureDirectories()
 
-        let directoryURL = AppPaths.conversationDirectory(conversation.id)
+        let directoryURL = conversationDirectory(conversation.id)
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let encoder = JSONEncoder()
@@ -76,7 +81,7 @@ actor ConversationStore {
     /// Permanently removes the JSON and every attachment for this conversation.
     func delete(id: UUID) throws {
         deletedConversationIDs.insert(id)
-        let directoryURL = AppPaths.conversationDirectory(id)
+        let directoryURL = conversationDirectory(id)
         guard fileManager.fileExists(atPath: directoryURL.path) else { return }
         do {
             try fileManager.removeItem(at: directoryURL)
@@ -98,8 +103,8 @@ actor ConversationStore {
     func deleteAll() throws {
         isDeletingAll = true
         defer { isDeletingAll = false }
-        try AppPaths.ensureDirectories()
-        let root = AppPaths.conversations.standardizedFileURL
+        try ensureDirectories()
+        let root = conversationsDirectory
         let entries = try fileManager.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: nil,
@@ -126,12 +131,20 @@ actor ConversationStore {
     /// Intended to run at launch. Removes interrupted temp artifacts, orphan
     /// conversation directories and files no longer referenced by persisted messages.
     func cleanupOrphans() throws {
-        try AppPaths.ensureDirectories()
+        try ensureDirectories()
         try cleanupOrphansImpl()
     }
 
+    private func ensureDirectories() throws {
+        try fileManager.createDirectory(at: conversationsDirectory, withIntermediateDirectories: true)
+    }
+
+    private func conversationDirectory(_ id: UUID) -> URL {
+        conversationsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
     private func conversationFileURL(for id: UUID) -> URL {
-        AppPaths.conversationDirectory(id)
+        conversationDirectory(id)
             .appendingPathComponent("conversation.json", isDirectory: false)
     }
 
@@ -142,7 +155,7 @@ actor ConversationStore {
 
     private func cleanupOrphansImpl() throws {
         let rootItems = try fileManager.contentsOfDirectory(
-            at: AppPaths.conversations,
+            at: conversationsDirectory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsPackageDescendants]
         )
@@ -156,7 +169,7 @@ actor ConversationStore {
             }
 
             guard let conversationID = UUID(uuidString: name) else {
-                // AppPaths reserves this directory exclusively for UUID conversations.
+                // The store reserves this directory exclusively for UUID conversations.
                 try removeIfPresent(itemURL)
                 continue
             }
@@ -189,7 +202,8 @@ actor ConversationStore {
     }
 
     private func removeUnreferencedAttachments(for conversation: Conversation) throws {
-        let directoryURL = AppPaths.attachmentsDirectory(conversation.id)
+        let directoryURL = conversationDirectory(conversation.id)
+            .appendingPathComponent("Attachments", isDirectory: true)
         var isDirectory: ObjCBool = false
         guard
             fileManager.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),

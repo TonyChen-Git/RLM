@@ -244,7 +244,13 @@ final class PseudoTerminalSessionTests: XCTestCase {
         }
 
         let root = try makeWorkspaceRoot("python-repl")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = try makeWorkspaceRoot("python-repl-outside")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let privateFile = outside.appendingPathComponent("private.txt")
+        try Data("PTY_PRIVATE_CONTENT_MUST_NOT_LEAK".utf8).write(to: privateFile)
         let session = try makeSession(root: root)
         do {
             _ = try await session.start(
@@ -261,6 +267,48 @@ final class PseudoTerminalSessionTests: XCTestCase {
                 offset: interactionBounds.nextOffset,
                 containingAny: ["PTY_PYTHON_INTERACTIVE"],
                 timeout: .seconds(5)
+            )
+
+            // The system binary is an xcrun dispatcher. Verify the real Python
+            // runs from the selected developer tree without granting reads of
+            // host Xcode metadata, system caches or unrelated workspace files.
+            let executableBounds = try await session.outputBounds()
+            _ = try await session.write(
+                text: "import os, sys; print('PTY_' + 'PYTHON_EXECUTABLE=' + os.path.realpath(sys.executable))\r"
+            )
+            let executableOutput = try await waitForOutput(
+                session,
+                offset: executableBounds.nextOffset,
+                containingAny: ["PTY_PYTHON_EXECUTABLE="],
+                timeout: .seconds(5)
+            )
+            let developerDirectory = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
+                ?? "/Applications/Xcode.app/Contents/Developer"
+            let developerPython = URL(fileURLWithPath: developerDirectory)
+                .appendingPathComponent("usr/bin/python3").resolvingSymlinksInPath()
+            if FileManager.default.isExecutableFile(atPath: developerPython.path) {
+                XCTAssertTrue(
+                    String(decoding: executableOutput.data, as: UTF8.self)
+                        .contains("PTY_PYTHON_EXECUTABLE=" + developerPython.path)
+                )
+            }
+
+            let deniedBounds = try await session.outputBounds()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .withoutEscapingSlashes
+            let quotedPrivatePath = String(
+                decoding: try encoder.encode(privateFile.path), as: UTF8.self
+            )
+            _ = try await session.write(text: "print(open(\(quotedPrivatePath)).read())\r")
+            let deniedOutput = try await waitForOutput(
+                session,
+                offset: deniedBounds.nextOffset,
+                containingAny: ["PermissionError"],
+                timeout: .seconds(5)
+            )
+            XCTAssertFalse(
+                String(decoding: deniedOutput.data, as: UTF8.self)
+                    .contains("PTY_PRIVATE_CONTENT_MUST_NOT_LEAK")
             )
 
             _ = try await session.write(text: "exit()\r")

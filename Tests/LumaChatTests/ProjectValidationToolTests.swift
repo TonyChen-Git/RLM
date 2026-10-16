@@ -381,7 +381,7 @@ final class ProjectValidationToolTests: XCTestCase {
         let root = try makeWorkspaceRoot(name: "node-build-fallback")
         defer { try? FileManager.default.removeItem(at: root) }
         try write(
-            #"{"scripts":{"build":"/usr/bin/printf real-build-fallback"}}"#,
+            #"{"scripts":{"build":"/usr/bin/printf validation-build-executed"}}"#,
             to: root.appendingPathComponent("package.json")
         )
         let bin = root.appendingPathComponent("tool-bin", isDirectory: true)
@@ -390,7 +390,7 @@ final class ProjectValidationToolTests: XCTestCase {
             """
             #!/bin/sh
             if [ "$1" = "run" ] && [ "$2" = "build" ]; then
-              /usr/bin/printf fake-build-fallback
+              /usr/bin/printf validation-build-executed
               exit 0
             fi
             exit 91
@@ -430,6 +430,7 @@ final class ProjectValidationToolTests: XCTestCase {
             XCTAssertTrue(result.content.contains("Requested Action: test"))
             XCTAssertTrue(result.content.contains("Actual Action: build"))
             XCTAssertTrue(result.content.contains("Fallback: yes"))
+            XCTAssertTrue(result.content.contains("validation-build-executed"), result.content)
         } catch {
             await environment.stopAllProcesses()
             throw error
@@ -441,7 +442,7 @@ final class ProjectValidationToolTests: XCTestCase {
         let root = try makeWorkspaceRoot(name: "node-test-failure")
         defer { try? FileManager.default.removeItem(at: root) }
         try write(
-            #"{"scripts":{"build":"/usr/bin/true","test":"/usr/bin/false"}}"#,
+            #"{"scripts":{"build":"/usr/bin/printf build-must-not-run","test":"/usr/bin/printf validation-test-failed; /usr/bin/false"}}"#,
             to: root.appendingPathComponent("package.json")
         )
         let bin = root.appendingPathComponent("tool-bin", isDirectory: true)
@@ -450,7 +451,7 @@ final class ProjectValidationToolTests: XCTestCase {
             """
             #!/bin/sh
             if [ "$1" = "run" ] && [ "$2" = "test" ]; then
-              /usr/bin/printf test-failed >&2
+              /usr/bin/printf validation-test-failed >&2
               exit 7
             fi
             if [ "$1" = "run" ] && [ "$2" = "build" ]; then
@@ -492,12 +493,111 @@ final class ProjectValidationToolTests: XCTestCase {
             XCTAssertEqual(result.data?["fallback_used"]?.boolValue, false)
             XCTAssertTrue(result.content.contains("Actual Action: test"))
             XCTAssertTrue(result.content.contains("Fallback: no"))
+            XCTAssertTrue(result.content.contains("validation-test-failed"), result.content)
             XCTAssertFalse(result.content.contains("build-must-not-run"))
         } catch {
             await environment.stopAllProcesses()
             throw error
         }
         await environment.stopAllProcesses()
+    }
+
+    func testSandboxIsolatesOpenSSLConfigurationAndRejectsHostConfigRead() async throws {
+        let root = try makeWorkspaceRoot(name: "openssl-workspace")
+        let outside = try makeWorkspaceRoot(name: "openssl-outside")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let hostConfig = outside.appendingPathComponent("openssl.cnf")
+        try write("host-configuration-must-stay-private", to: hostConfig)
+        let validator = try WorkspaceSecurityValidator(workspace: workspace(root: root))
+        let sandbox = try TerminalSandbox(validator: validator)
+        defer { try? FileManager.default.removeItem(at: sandbox.runtimeEnvironment.root) }
+        let scoped = sandbox.environment(
+            session: ["OPENSSL_CONF": hostConfig.path],
+            command: ["OPENSSL_CONF": hostConfig.path]
+        )
+        let config = try XCTUnwrap(scoped["OPENSSL_CONF"])
+        XCTAssertTrue(config.hasPrefix(sandbox.runtimeEnvironment.root.path + "/"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: config)).count, 0)
+
+        let terminal = try TerminalSession(validator: validator)
+        let result = try await terminal.run(
+            command: """
+            /usr/bin/test -f "$OPENSSL_CONF" && /usr/bin/test ! -s "$OPENSSL_CONF" && \
+            /usr/bin/printf isolated-openssl-config
+            /bin/cat "$HOST_CONFIG_PATH"
+            """,
+            timeout: 5,
+            environment: [
+                "OPENSSL_CONF": hostConfig.path,
+                "HOST_CONFIG_PATH": hostConfig.path
+            ]
+        )
+        XCTAssertNotEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("isolated-openssl-config"), result.stderr)
+        XCTAssertFalse(result.stdout.contains("host-configuration-must-stay-private"))
+        XCTAssertTrue(result.stderr.localizedCaseInsensitiveContains("not permitted"), result.stderr)
+    }
+
+    func testSandboxDeveloperShimRewritePreservesVersionedAndForeignPaths() throws {
+        let root = try makeWorkspaceRoot(name: "developer-shim-boundaries")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let validator = try WorkspaceSecurityValidator(workspace: workspace(root: root))
+        let sandbox = try TerminalSandbox(validator: validator)
+        defer { try? FileManager.default.removeItem(at: sandbox.runtimeEnvironment.root) }
+        XCTAssertTrue(FileManager.default.isExecutableFile(
+            atPath: sandbox.runtimeEnvironment.root.appendingPathComponent("bin/python3").path
+        ))
+
+        for command in [
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3.9 --version",
+            "/Library/Developer/CommandLineTools/usr/bin/python3.9 --version",
+            "/some/foreign/usr/bin/python3 --version",
+            "\"/some/foreign/usr/bin/python3\" --version",
+            "'/usr/bin/python3.9' --version",
+            "/usr/bin/python3-config --version",
+            "prefix\"/usr/bin/python3\" --version",
+            "/usr/bin/python3\"suffix\" --version"
+        ] {
+            XCTAssertEqual(
+                sandbox.launcherArguments(command: command, shell: "/bin/zsh", allowsNetwork: false).last,
+                command
+            )
+        }
+    }
+
+    func testSandboxDeveloperShimRewriteHandlesQuotedKnownPaths() throws {
+        let root = try makeWorkspaceRoot(name: "developer-shim-known-paths")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let validator = try WorkspaceSecurityValidator(workspace: workspace(root: root))
+        let sandbox = try TerminalSandbox(validator: validator)
+        defer { try? FileManager.default.removeItem(at: sandbox.runtimeEnvironment.root) }
+        let shim = sandbox.runtimeEnvironment.root.appendingPathComponent("bin/python3").path
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: shim))
+        let quotedShim = "'" + shim.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let defaultDeveloper = FileManager.default.isExecutableFile(
+            atPath: "/Applications/Xcode.app/Contents/Developer/usr/bin/python3"
+        ) ? "/Applications/Xcode.app/Contents/Developer" : "/Library/Developer/CommandLineTools"
+        let developerDirectory = URL(fileURLWithPath:
+            ProcessInfo.processInfo.environment["DEVELOPER_DIR"] ?? defaultDeveloper
+        ).standardizedFileURL.resolvingSymlinksInPath()
+        let paths = [
+            "/usr/bin/python3",
+            developerDirectory.appendingPathComponent("usr/bin/python3").path,
+            "/Library/Developer/CommandLineTools/usr/bin/python3"
+        ]
+        for path in paths {
+            for token in [path, "'\(path)'", "\"\(path)\""] {
+                XCTAssertEqual(
+                    sandbox.pseudoTerminalLauncherArguments(
+                        command: "true;\(token) --version", shell: "/bin/zsh", allowsNetwork: false
+                    ).last,
+                    "true;\(quotedShim) --version"
+                )
+            }
+        }
     }
 
     private func withWorkspace(

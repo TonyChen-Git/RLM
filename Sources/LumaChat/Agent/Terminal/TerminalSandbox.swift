@@ -462,14 +462,13 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
 
     private func installDeveloperToolShims() throws {
         try FileManager.default.createDirectory(at: shimDirectory, withIntermediateDirectories: true)
-        guard let developerRoot = readOnlyToolchainRoots.first(where: {
-            $0.path.hasSuffix("/Contents/Developer")
-        }) else { return }
+        guard let developerRoot = developerToolRoot else { return }
         let toolchainBin = developerRoot
             .appendingPathComponent("Toolchains/XcodeDefault.xctoolchain/usr/bin", isDirectory: true)
         let developerBin = developerRoot.appendingPathComponent("usr/bin", isDirectory: true)
         let candidates: [(String, URL, String?)] = [
             ("git", developerBin.appendingPathComponent("git"), nil),
+            ("python3", developerBin.appendingPathComponent("python3"), nil),
             ("swift", toolchainBin.appendingPathComponent("swift-driver"), "swift"),
             ("swiftc", toolchainBin.appendingPathComponent("swift-driver"), "swiftc"),
             ("clang", toolchainBin.appendingPathComponent("clang"), nil),
@@ -562,14 +561,31 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
 
     private func rewriteKnownDeveloperShims(in command: String) -> String {
         var result = command
-        for name in ["git", "swift", "swiftc", "clang", "clang++", "xcodebuild"] {
+        var developerRoots = readOnlyToolchainRoots.filter {
+            $0.path.hasSuffix("Contents/Developer")
+        }
+        let commandLineTools = URL(fileURLWithPath: "/Library/Developer/CommandLineTools")
+        if readOnlyToolchainRoots.contains(where: {
+            commandLineTools.path == $0.path || commandLineTools.path.hasPrefix($0.path + "/")
+        }) {
+            developerRoots.append(commandLineTools)
+        }
+        for name in ["git", "python3", "swift", "swiftc", "clang", "clang++", "xcodebuild"] {
             let shim = shimDirectory.appendingPathComponent(name)
             guard FileManager.default.isExecutableFile(atPath: shim.path) else { continue }
-            result = result.replacingOccurrences(
-                of: "/usr/bin/\(name)",
-                with: shim.path
-            )
-            for developerRoot in readOnlyToolchainRoots where developerRoot.path.hasSuffix("Contents/Developer") {
+            let replacement = NSRegularExpression.escapedTemplate(for: Self.shellQuote(shim.path))
+            func replacingExecutablePath(_ path: String, in command: String) -> String {
+                let escaped = NSRegularExpression.escapedPattern(for: path)
+                // Match a whole shell word, including an optional matching pair
+                // of quotes. Prefix/suffix matches would corrupt python3.9,
+                // swift-driver or an unrelated path ending in /usr/bin/python3.
+                let pattern = #"(?<![^\s;&|()<>])(?:'"# + escaped + #"'|""#
+                    + escaped + #""|"# + escaped + #")(?=$|[\s;&|()<>])"#
+                return command.replacingOccurrences(
+                    of: pattern, with: replacement, options: .regularExpression
+                )
+            }
+            for developerRoot in developerRoots {
                 let candidates = [
                     developerRoot.appendingPathComponent("usr/bin/\(name)").path,
                     developerRoot.appendingPathComponent(
@@ -577,26 +593,59 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
                     ).path
                 ]
                 for candidate in candidates {
-                    result = result.replacingOccurrences(of: candidate, with: shim.path)
+                    result = replacingExecutablePath(candidate, in: result)
                 }
                 if name == "swift" {
                     let driver = developerRoot.appendingPathComponent(
                         "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-driver"
                     ).path
-                    result = result.replacingOccurrences(of: driver, with: shim.path)
+                    result = replacingExecutablePath(driver, in: result)
                 }
             }
-            if name == "swift" || name == "xcodebuild" {
+            // Match full developer paths before their /usr/bin suffix. Doing
+            // the suffix first would splice a shim into an absolute Xcode path.
+            result = replacingExecutablePath("/usr/bin/\(name)", in: result)
+            if name == "swift" || name == "xcodebuild" || name == "python3" {
                 result = result.replacingOccurrences(
                     of: #"(?:[^\s;&|()<>]+/)?xcrun(?:\s+--(?:sdk|toolchain)\s+[^\s;&|()<>]+|\s+-[^\s;&|()<>]+)*\s+"#
                         + NSRegularExpression.escapedPattern(for: name)
                         + #"(?=\s|$)"#,
-                    with: shim.path,
+                    with: replacement,
                     options: .regularExpression
                 )
             }
         }
         return result
+    }
+
+    /// Prefer the host-selected Xcode when multiple versions are installed.
+    /// In particular, /usr/bin/python3 is an xcrun dispatcher that needs host
+    /// caches and Xcode metadata outside this policy; the direct interpreter
+    /// lives in the already-readable Developer directory.
+    private var developerToolRoot: URL? {
+        if let selected = ProcessInfo.processInfo.environment["DEVELOPER_DIR"] {
+            let root = URL(fileURLWithPath: selected, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            if (root.path.hasSuffix("/Contents/Developer")
+                || root.path == "/Library/Developer/CommandLineTools"),
+               readOnlyToolchainRoots.contains(where: {
+                   root.path == $0.path || root.path.hasPrefix($0.path + "/")
+               }) {
+                return root
+            }
+        }
+        if let xcodeRoot = readOnlyToolchainRoots.first(where: {
+            $0.path.hasSuffix("/Contents/Developer")
+        }) {
+            return xcodeRoot
+        }
+        let commandLineTools = URL(fileURLWithPath: "/Library/Developer/CommandLineTools")
+        var isDirectory: ObjCBool = false
+        guard readOnlyToolchainRoots.contains(where: {
+            commandLineTools.path == $0.path || commandLineTools.path.hasPrefix($0.path + "/")
+        }), FileManager.default.fileExists(atPath: commandLineTools.path, isDirectory: &isDirectory),
+           isDirectory.boolValue else { return nil }
+        return commandLineTools
     }
 
     private static func workspaceRoots(for workspace: AgentWorkspace) -> [URL] {

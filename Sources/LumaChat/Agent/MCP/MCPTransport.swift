@@ -125,26 +125,34 @@ enum MCPWireCodec {
 /// arbitrary pipe chunking and deliberately caps an unterminated line.
 struct MCPNewlineFramer: Sendable {
     private(set) var buffer = Data()
+    private var scannedByteCount = 0
     var maximumFrameBytes = 16 * 1_024 * 1_024
 
     mutating func append(_ chunk: Data) throws -> [Data] {
         buffer.append(chunk)
-        guard buffer.count <= maximumFrameBytes || buffer.contains(0x0A) else {
-            buffer.removeAll(keepingCapacity: false)
-            throw MCPError.invalidResponse("STDIO JSON frame exceeds the 16 MiB limit.")
-        }
 
         var frames: [Data] = []
-        while let newline = buffer.firstIndex(of: 0x0A) {
+        // Pipe reads may split a large response into thousands of chunks. The
+        // retained prefix has already been checked, so scanning it again on
+        // every read makes frame assembly quadratic and can time out requests.
+        while let newline = buffer.dropFirst(scannedByteCount).firstIndex(of: 0x0A) {
             var frame = buffer[..<newline]
             buffer.removeSubrange(...newline)
+            scannedByteCount = 0
             if frame.last == 0x0D { frame = frame.dropLast() }
             guard !frame.isEmpty else { continue }
             guard frame.count <= maximumFrameBytes else {
+                buffer.removeAll(keepingCapacity: false)
                 throw MCPError.invalidResponse("STDIO JSON frame exceeds the 16 MiB limit.")
             }
             frames.append(Data(frame))
         }
+        guard buffer.count <= maximumFrameBytes else {
+            buffer.removeAll(keepingCapacity: false)
+            scannedByteCount = 0
+            throw MCPError.invalidResponse("STDIO JSON frame exceeds the 16 MiB limit.")
+        }
+        scannedByteCount = buffer.count
         return frames
     }
 }

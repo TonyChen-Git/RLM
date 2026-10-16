@@ -83,6 +83,12 @@ enum AgentTemporaryStorage {
             throw CocoaError(.fileWriteUnknown)
         }
         let temporaryPath = temporary.path.hasSuffix("/") ? temporary.path : temporary.path + "/"
+        // OpenSSL-linked tools (including Homebrew Node) otherwise read the
+        // installation's host-wide configuration under /opt/homebrew/etc.
+        // Keep configuration isolated like HOME; an empty configuration uses
+        // the library's default provider and does not disable TLS verification.
+        let opensslConfiguration = xdgConfig.appendingPathComponent("openssl.cnf")
+        try Data().write(to: opensslConfiguration, options: .atomic)
         return AgentExecutionEnvironment(
             root: executionRoot,
             variables: [
@@ -95,6 +101,7 @@ enum AgentTemporaryStorage {
                 "XDG_CONFIG_HOME": xdgConfig.path,
                 "XDG_DATA_HOME": xdgData.path,
                 "XDG_STATE_HOME": xdgState.path,
+                "OPENSSL_CONF": opensslConfiguration.path,
                 "SWIFTPM_MODULECACHE_OVERRIDE": swiftCache.path,
                 "CLANG_MODULE_CACHE_PATH": clangCache.path,
                 "SWIFTPM_CACHE_PATH": packageCache.path,

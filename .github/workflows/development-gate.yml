@@ -41,7 +41,11 @@ jobs:
           xcodebuild -version
           swift --version
       - name: Swift tests and desktop build
+        env:
+          LUMACHAT_APP_SUPPORT_PATH: ${{ github.workspace }}/tmp/ci-app-support
+          LUMACHAT_RUNTIME_TMP_PATH: ${{ github.workspace }}/tmp
         run: |
+          mkdir -p "$LUMACHAT_APP_SUPPORT_PATH" "$LUMACHAT_RUNTIME_TMP_PATH"
           swift test
           swift build --configuration release --product LumaChatDesktop
       - name: Release metadata and archive contract tests
