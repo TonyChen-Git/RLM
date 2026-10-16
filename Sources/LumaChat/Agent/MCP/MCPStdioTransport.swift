@@ -663,6 +663,7 @@ private final class MCPTransportArtifactLog: @unchecked Sendable {
     private let configuredSecrets: [String]
     private var stderrBuffer = Data()
     private var isClosed = false
+    private let maximumSanitizedStdoutFrameBytes = 64 * 1_024
     private let maximumBytesPerStream = 64 * 1_024 * 1_024
     private var stdoutBytes = 0
     private var stderrBytes = 0
@@ -701,8 +702,22 @@ private final class MCPTransportArtifactLog: @unchecked Sendable {
         guard !isClosed else { return }
         switch stream {
         case .stdout:
+            guard !stdoutTruncated else { return }
+            // Diagnostics must not spend the request deadline repeatedly
+            // searching a multi-megabyte response for configured secrets and
+            // redaction patterns. Omit the whole payload, rather than a prefix
+            // that could split a secret. Wire decoding and response validation
+            // still receive the original complete frame and retain their limits.
+            let artifact: Data
+            if data.count > maximumSanitizedStdoutFrameBytes {
+                let marker = "{\"lumachatArtifact\":\"stdout-frame-omitted\",\"frameBytes\":\(data.count),"
+                    + "\"reason\":\"sanitization-limit\"}\n"
+                artifact = Data(marker.utf8)
+            } else {
+                artifact = sanitized(data)
+            }
             writeBounded(
-                sanitized(data),
+                artifact,
                 to: stdout,
                 count: &stdoutBytes,
                 didTruncate: &stdoutTruncated

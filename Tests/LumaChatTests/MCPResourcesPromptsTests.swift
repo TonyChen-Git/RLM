@@ -132,6 +132,40 @@ final class MCPResourcesPromptsTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testLargeResourceReachesClientWhileDiagnosticArtifactOmitsWholePayload() async throws {
+        let serverID = UUID()
+        let client = makeClient(script: Self.integrationServerScript, serverID: serverID)
+        _ = try await client.connect()
+        do {
+            let resource = try await client.readResource(uri: "file:///large-valid")
+            XCTAssertEqual(resource.contents.count, 1)
+            let content = try XCTUnwrap(resource.contents.first)
+            guard case .text(let text) = content else {
+                await client.disconnect()
+                return XCTFail("Expected the complete large text resource")
+            }
+            XCTAssertEqual(text.text.utf8.count, 4 * 1_024 * 1_024)
+            XCTAssertTrue(text.text.hasPrefix("large-resource-private-marker-"))
+        } catch {
+            await client.disconnect()
+            throw error
+        }
+        await client.disconnect()
+
+        let artifactRoot = AppPaths.agentArtifacts.appendingPathComponent("mcp", isDirectory: true)
+        let artifacts = try FileManager.default.contentsOfDirectory(
+            at: artifactRoot, includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix(serverID.uuidString.lowercased() + "-") }
+        defer { for artifact in artifacts { try? FileManager.default.removeItem(at: artifact) } }
+        let stdout = try XCTUnwrap(artifacts.first { $0.lastPathComponent.hasSuffix("-stdout.jsonl") })
+        let log = try Data(contentsOf: stdout)
+        XCTAssertLessThan(log.count, 64 * 1_024)
+        let text = String(decoding: log, as: UTF8.self)
+        XCTAssertTrue(text.contains("\"lumachatArtifact\":\"stdout-frame-omitted\""))
+        XCTAssertTrue(text.contains("\"reason\":\"sanitization-limit\""))
+        XCTAssertFalse(text.contains("large-resource-private-marker-"))
+    }
+
     func testManagerSnapshotDiscoversTemplatesAndRedactsPromptErrors() async throws {
         let registry = ToolRegistry()
         let manager = MCPManager(registry: registry)
@@ -164,8 +198,9 @@ final class MCPResourcesPromptsTests: XCTestCase {
         await manager.disconnect(serverID: configuration.id)
     }
 
-    private func makeClient(script: String) -> MCPClient {
+    private func makeClient(script: String, serverID: UUID = UUID()) -> MCPClient {
         let configuration = MCPServerConfiguration(
+            id: serverID,
             name: "STDIO fixture",
             permissionLevel: .read,
             transport: .stdio(
@@ -267,6 +302,9 @@ final class MCPResourcesPromptsTests: XCTestCase {
                 contents = [{"uri": uri, "text": "ambiguous", "blob": "AQID"}]
             elif uri == "file:///oversize":
                 contents = [{"uri": uri, "text": "x" * (4 * 1024 * 1024 + 1)}]
+            elif uri == "file:///large-valid":
+                marker = "large-resource-private-marker-"
+                contents = [{"uri": uri, "text": marker + "x" * (4 * 1024 * 1024 - len(marker))}]
             else:
                 contents = [
                     {"uri": uri, "mimeType": "text/plain", "text": "fixture text"},
@@ -322,7 +360,7 @@ final class MCPResourcesPromptsTests: XCTestCase {
             response = failure(ident, -32601, "Method not found")
         encoded = json.dumps(response, separators=(",", ":"))
         streams_large_response = (
-            method == "resources/read" and params.get("uri") == "file:///oversize"
+            method == "resources/read" and params.get("uri") in ("file:///oversize", "file:///large-valid")
         ) or (
             method == "prompts/get" and params.get("name") == "oversize-unknown"
         )

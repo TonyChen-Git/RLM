@@ -525,7 +525,7 @@ final class ProjectValidationToolTests: XCTestCase {
         let terminal = try TerminalSession(validator: validator)
         let result = try await terminal.run(
             command: """
-            /usr/bin/test -f "$OPENSSL_CONF" && /usr/bin/test ! -s "$OPENSSL_CONF" && \
+            /bin/test -f "$OPENSSL_CONF" && /bin/test ! -s "$OPENSSL_CONF" && \
             /usr/bin/printf isolated-openssl-config
             /bin/cat "$HOST_CONFIG_PATH"
             """,
@@ -597,6 +597,61 @@ final class ProjectValidationToolTests: XCTestCase {
                     "true;\(quotedShim) --version"
                 )
             }
+        }
+    }
+
+    func testSandboxDeveloperShimPreservesEmbeddedScriptAndArgumentData() async throws {
+        let root = try makeWorkspaceRoot(name: "developer-shim-script-data")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let validator = try WorkspaceSecurityValidator(workspace: workspace(root: root))
+        let sandbox = try TerminalSandbox(validator: validator)
+        defer { try? FileManager.default.removeItem(at: sandbox.runtimeEnvironment.root) }
+        let shim = sandbox.runtimeEnvironment.root.appendingPathComponent("bin/python3").path
+        let quotedShim = "'" + shim.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = #" -c 'print("/usr/bin/python3"); print("xcrun python3")'"#
+        XCTAssertEqual(
+            sandbox.launcherArguments(
+                command: "/usr/bin/python3" + script, shell: "/bin/zsh", allowsNetwork: false
+            ).last,
+            quotedShim + script
+        )
+        let terminal = try TerminalSession(validator: validator)
+        let result = try await terminal.run(command: "/usr/bin/python3" + script, timeout: 10)
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                       "/usr/bin/python3\nxcrun python3")
+
+        for command in [
+            #"printf '%s\n' '/usr/bin/python3' "/usr/bin/git""#,
+            #"echo "xcrun python3"; printf '%s' '/usr/bin/swift'"#,
+            "# /usr/bin/python3 --version\nprintf unchanged",
+            #"printf '%s' ignored > '/usr/bin/python3'"#,
+            #"printf '%s' ignored >& '/usr/bin/python3'"#,
+            "/some/foreign/xcrun python3 --version",
+            "xcrun --find python3",
+            "command -v /usr/bin/python3",
+            "env -S '/usr/bin/python3'",
+            "cat <(printf unchanged) /usr/bin/python3",
+            "cat <<'PY'\n/usr/bin/python3\nPY",
+            #"printf '%s' $(printf '/usr/bin/python3')"#,
+            #"printf '%s' "$(printf '/usr/bin/python3')""#
+        ] {
+            XCTAssertEqual(
+                sandbox.launcherArguments(command: command, shell: "/bin/zsh", allowsNetwork: false).last,
+                command
+            )
+        }
+        for (command, expected) in [
+            ("exec '/usr/bin/python3' --version", "exec " + quotedShim + " --version"),
+            ("env FLAG=1 /usr/bin/python3 --version", "env FLAG=1 " + quotedShim + " --version"),
+            ("2>/dev/null /usr/bin/python3 --version", "2>/dev/null " + quotedShim + " --version"),
+            ("2>&1 /usr/bin/python3 --version", "2>&1 " + quotedShim + " --version"),
+            ("/usr/bin/xcrun --sdk macosx python3 --version", quotedShim + " --version")
+        ] {
+            XCTAssertEqual(
+                sandbox.launcherArguments(command: command, shell: "/bin/zsh", allowsNetwork: false).last,
+                expected
+            )
         }
     }
 

@@ -560,7 +560,6 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
     }
 
     private func rewriteKnownDeveloperShims(in command: String) -> String {
-        var result = command
         var developerRoots = readOnlyToolchainRoots.filter {
             $0.path.hasSuffix("Contents/Developer")
         }
@@ -570,52 +569,191 @@ struct TerminalSandbox: AgentSandboxPolicy, Sendable {
         }) {
             developerRoots.append(commandLineTools)
         }
+        var replacements: [String: String] = [:]
+        var xcrunTools: [String: String] = [:]
         for name in ["git", "python3", "swift", "swiftc", "clang", "clang++", "xcodebuild"] {
             let shim = shimDirectory.appendingPathComponent(name)
             guard FileManager.default.isExecutableFile(atPath: shim.path) else { continue }
-            let replacement = NSRegularExpression.escapedTemplate(for: Self.shellQuote(shim.path))
-            func replacingExecutablePath(_ path: String, in command: String) -> String {
-                let escaped = NSRegularExpression.escapedPattern(for: path)
-                // Match a whole shell word, including an optional matching pair
-                // of quotes. Prefix/suffix matches would corrupt python3.9,
-                // swift-driver or an unrelated path ending in /usr/bin/python3.
-                let pattern = #"(?<![^\s;&|()<>])(?:'"# + escaped + #"'|""#
-                    + escaped + #""|"# + escaped + #")(?=$|[\s;&|()<>])"#
-                return command.replacingOccurrences(
-                    of: pattern, with: replacement, options: .regularExpression
-                )
-            }
-            for developerRoot in developerRoots {
-                let candidates = [
-                    developerRoot.appendingPathComponent("usr/bin/\(name)").path,
-                    developerRoot.appendingPathComponent(
-                        "Toolchains/XcodeDefault.xctoolchain/usr/bin/\(name)"
-                    ).path
-                ]
-                for candidate in candidates {
-                    result = replacingExecutablePath(candidate, in: result)
-                }
+            let replacement = Self.shellQuote(shim.path)
+            replacements["/usr/bin/\(name)"] = replacement
+            for root in developerRoots {
+                replacements[root.appendingPathComponent("usr/bin/\(name)").path] = replacement
+                replacements[root.appendingPathComponent(
+                    "Toolchains/XcodeDefault.xctoolchain/usr/bin/\(name)"
+                ).path] = replacement
                 if name == "swift" {
-                    let driver = developerRoot.appendingPathComponent(
+                    replacements[root.appendingPathComponent(
                         "Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-driver"
-                    ).path
-                    result = replacingExecutablePath(driver, in: result)
+                    ).path] = replacement
                 }
             }
-            // Match full developer paths before their /usr/bin suffix. Doing
-            // the suffix first would splice a shim into an absolute Xcode path.
-            result = replacingExecutablePath("/usr/bin/\(name)", in: result)
-            if name == "swift" || name == "xcodebuild" || name == "python3" {
-                result = result.replacingOccurrences(
-                    of: #"(?:[^\s;&|()<>]+/)?xcrun(?:\s+--(?:sdk|toolchain)\s+[^\s;&|()<>]+|\s+-[^\s;&|()<>]+)*\s+"#
-                        + NSRegularExpression.escapedPattern(for: name)
-                        + #"(?=\s|$)"#,
-                    with: replacement,
-                    options: .regularExpression
-                )
+            if ["swift", "xcodebuild", "python3"].contains(name) {
+                xcrunTools[name] = replacement
             }
         }
+        let xcrunPaths = Set(["xcrun", "/usr/bin/xcrun"] + developerRoots.map {
+            $0.appendingPathComponent("usr/bin/xcrun").path
+        })
+        guard let tokens = Self.developerCommandTokens(command) else { return command }
+        var edits: [(Range<String.Index>, String)] = []
+        var expectsExecutable = true
+        var skipsWord = false
+        var wrapper: String?
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            defer { index += 1 }
+            if token.isOperator {
+                if token.isRedirect {
+                    skipsWord = true
+                } else {
+                    expectsExecutable = true
+                    skipsWord = false
+                    wrapper = nil
+                }
+                continue
+            }
+            if skipsWord { skipsWord = false; continue }
+            guard expectsExecutable else { continue }
+            // An IO number belongs to its following redirect, not the command.
+            if token.text.allSatisfy({ $0.isNumber }), index + 1 < tokens.count,
+               tokens[index + 1].isRedirect { continue }
+            if token.text.range(of: #"^[A-Za-z_][A-Za-z0-9_]*="#,
+                                options: .regularExpression) != nil { continue }
+            guard let word = token.literal else { expectsExecutable = false; continue }
+            // Do not reinterpret compound shell grammar as a simple command.
+            if ["for", "select", "case", "function", "if", "while", "until"].contains(word) {
+                return command
+            }
+            if ["exec", "command", "env", "/usr/bin/env", "!"].contains(word) {
+                wrapper = word
+                continue
+            }
+            if word.hasPrefix("-") {
+                // Lookup/data options such as command -v and env -S must not
+                // turn their operand into an executable replacement.
+                if word == "--" { continue }
+                if wrapper == "exec", ["-l", "-c", "-a"].contains(word) {
+                    skipsWord = word == "-a"
+                    continue
+                }
+                if ["env", "/usr/bin/env"].contains(wrapper ?? ""),
+                   ["-i", "--ignore-environment", "-u", "--unset", "-C", "--chdir"].contains(word) {
+                    skipsWord = !["-i", "--ignore-environment"].contains(word)
+                    continue
+                }
+                return command
+            }
+            expectsExecutable = false
+            if let replacement = replacements[word] {
+                edits.append((token.range, replacement))
+            } else if xcrunPaths.contains(word) {
+                var toolIndex = index + 1
+                while toolIndex < tokens.count, !tokens[toolIndex].isOperator,
+                      let option = tokens[toolIndex].literal {
+                    if ["--sdk", "-sdk", "--toolchain", "-toolchain"].contains(option) {
+                        guard toolIndex + 1 < tokens.count,
+                              !tokens[toolIndex + 1].isOperator else { break }
+                        toolIndex += 2
+                    } else if ["--run", "-r", "--no-cache", "-n", "--verbose", "-v", "--log", "-l"].contains(option) {
+                        toolIndex += 1
+                    } else { break }
+                }
+                if toolIndex < tokens.count, !tokens[toolIndex].isOperator,
+                   let tool = tokens[toolIndex].literal, let replacement = xcrunTools[tool] {
+                    edits.append((token.range.lowerBound..<tokens[toolIndex].range.upperBound, replacement))
+                    index = toolIndex
+                }
+            }
+        }
+        var result = command
+        for (range, replacement) in edits.reversed() {
+            result.replaceSubrange(range, with: replacement)
+        }
         return result
+    }
+
+    private struct DeveloperCommandToken {
+        var range: Range<String.Index>
+        var text: String
+        var isOperator: Bool
+        var isRedirect: Bool { isOperator && (text.contains("<") || text.contains(">")) }
+
+        var literal: String? {
+            if text.first == "'", text.last == "'" {
+                let inner = String(text.dropFirst().dropLast())
+                return inner.contains("'") ? nil : inner
+            }
+            if text.first == "\"", text.last == "\"" {
+                let inner = String(text.dropFirst().dropLast())
+                return inner.contains(where: { "\"\\$`".contains($0) }) ? nil : inner
+            }
+            return text.contains(where: { "'\"\\$`".contains($0) }) ? nil : text
+        }
+    }
+
+    /// This is a conservative simple-command scanner, not a shell interpreter.
+    /// Quoted arguments and comments are opaque. Here-documents and unquoted
+    /// expansions are left untouched rather than risking changes to their data.
+    private static func developerCommandTokens(_ command: String) -> [DeveloperCommandToken]? {
+        var tokens: [DeveloperCommandToken] = []
+        var index = command.startIndex
+        while index < command.endIndex {
+            let character = command[index]
+            if character.isWhitespace && character != "\n" {
+                index = command.index(after: index)
+                continue
+            }
+            if character == "#" {
+                while index < command.endIndex, command[index] != "\n" {
+                    index = command.index(after: index)
+                }
+                continue
+            }
+            let start = index
+            if character == "(" || character == ")" { return nil }
+            if ";&|()<>\n".contains(character) {
+                index = command.index(after: index)
+                if index < command.endIndex {
+                    let pair = String(command[start...index])
+                    if ["&&", "||", "<<", ">>", "<&", ">&", "<>", ">|", "&>"].contains(pair) {
+                        index = command.index(after: index)
+                        if pair == "&>", index < command.endIndex, command[index] == ">" {
+                            index = command.index(after: index)
+                        }
+                    }
+                }
+                let text = String(command[start..<index])
+                if text == "<<" { return nil }
+                tokens.append(.init(range: start..<index, text: text, isOperator: true))
+                continue
+            }
+            var quote: Character?
+            while index < command.endIndex {
+                let current = command[index]
+                if let activeQuote = quote {
+                    if current == activeQuote { quote = nil }
+                    else if activeQuote == "\"", current == "$" || current == "`" { return nil }
+                    else if current == "\\", activeQuote == "\"" {
+                        index = command.index(after: index)
+                        if index == command.endIndex { return nil }
+                    }
+                } else if current == "'" || current == "\"" {
+                    quote = current
+                } else if current == "\\" {
+                    index = command.index(after: index)
+                    if index == command.endIndex { return nil }
+                } else if current == "$" || current == "`" {
+                    return nil
+                } else if current.isWhitespace || ";&|()<>".contains(current) {
+                    break
+                }
+                index = command.index(after: index)
+            }
+            guard quote == nil else { return nil }
+            tokens.append(.init(range: start..<index, text: String(command[start..<index]), isOperator: false))
+        }
+        return tokens
     }
 
     /// Prefer the host-selected Xcode when multiple versions are installed.
