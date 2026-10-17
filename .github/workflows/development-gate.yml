@@ -44,7 +44,6 @@ jobs:
         env:
           LUMACHAT_APP_SUPPORT_PATH: ${{ github.workspace }}/tmp/ci-app-support
           LUMACHAT_RUNTIME_TMP_PATH: ${{ github.workspace }}/tmp
-          LUMACHAT_MCP_TIMING: "1"
         run: |
           mkdir -p "$LUMACHAT_APP_SUPPORT_PATH" "$LUMACHAT_RUNTIME_TMP_PATH"
           swift test

@@ -365,10 +365,25 @@ final class MCPResourcesPromptsTests: XCTestCase {
             method == "prompts/get" and params.get("name") == "oversize-unknown"
         )
         if streams_large_response:
+            # Keep the intended rate when background timer coalescing delays a
+            # sleep. Relative sleeps accumulate that delay across 257 chunks
+            # and can expire the request before the fixture finishes sending.
+            next_chunk_at = time.monotonic()
+            catchup_chunks = 0
             for offset in range(0, len(encoded), 16384):
                 sys.stdout.write(encoded[offset:offset + 16384])
                 sys.stdout.flush()
-                time.sleep(0.01)
+                next_chunk_at += 0.01
+                remaining = next_chunk_at - time.monotonic()
+                if remaining > 0:
+                    time.sleep(remaining)
+                    catchup_chunks = 0
+                else:
+                    catchup_chunks += 1
+                    if catchup_chunks >= 8:
+                        # Yield during catch-up without another timer delay.
+                        time.sleep(0)
+                        catchup_chunks = 0
             sys.stdout.write("\n")
             sys.stdout.flush()
         else:
