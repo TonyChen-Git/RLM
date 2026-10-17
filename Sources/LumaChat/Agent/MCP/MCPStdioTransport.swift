@@ -22,6 +22,14 @@ actor MCPStdioTransport: MCPTransport {
     private var ownsDedicatedProcessGroup = false
     private var processEnvironmentRoot: URL?
     private var sandboxRuntimeRoot: URL?
+#if DEBUG
+    private var diagnosticReceivedBytes = 0
+    private let diagnosticStart = ProcessInfo.processInfo.systemUptime
+    private func traceTiming(_ stage: String, bytes: Int) {
+        guard ProcessInfo.processInfo.environment["LUMACHAT_MCP_TIMING"] == "1" else { return }
+        print("MCP_TIMING \(serverID) \(stage) bytes=\(bytes) elapsed=\(ProcessInfo.processInfo.systemUptime - diagnosticStart)")
+    }
+#endif
 
     init(
         serverID: UUID,
@@ -247,12 +255,29 @@ actor MCPStdioTransport: MCPTransport {
     }
 
     private func consumeStandardOutput(_ data: Data) {
+#if DEBUG
+        let previousMiB = diagnosticReceivedBytes / 1_048_576
+        diagnosticReceivedBytes += data.count
+        if diagnosticReceivedBytes / 1_048_576 != previousMiB {
+            traceTiming("received", bytes: diagnosticReceivedBytes)
+        }
+#endif
         do {
             for frame in try framer.append(data) {
+#if DEBUG
+                if frame.count > 1_048_576 { traceTiming("framed", bytes: frame.count) }
+#endif
                 var loggedFrame = frame
                 loggedFrame.append(0x0A)
                 artifactLog?.appendSanitized(loggedFrame, stream: .stdout)
-                guard let response = try? MCPWireCodec.decode(MCPJSONRPCResponse.self, from: frame),
+#if DEBUG
+                if frame.count > 1_048_576 { traceTiming("logged", bytes: frame.count) }
+#endif
+                let decoded = try? MCPWireCodec.decode(MCPJSONRPCResponse.self, from: frame)
+#if DEBUG
+                if frame.count > 1_048_576 { traceTiming("decoded", bytes: frame.count) }
+#endif
+                guard let response = decoded,
                       response.result != nil || response.error != nil,
                       let id = response.id,
                       let request = pending.removeValue(forKey: id) else { continue }
