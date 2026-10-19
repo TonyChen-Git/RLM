@@ -9,6 +9,7 @@ private final class MCPHTTPStubURLProtocol: URLProtocol, @unchecked Sendable {
         var headers: [String: String]
         var responseURL: URL? = nil
         /// Delays are relative to the response headers, not cumulative.
+        /// The array defines byte order even when delayed work becomes runnable together.
         var chunks: [(delay: TimeInterval, body: Data)]
         /// `nil` deliberately leaves the response stream open.
         var finishDelay: TimeInterval?
@@ -19,7 +20,10 @@ private final class MCPHTTPStubURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requests: [URLRequest] = []
     nonisolated(unsafe) static var methodRequests: [(String, URLRequest)] = []
     nonisolated(unsafe) static var stoppedRequests: [URLRequest] = []
-    private var scheduledWork: [DispatchWorkItem] = []
+    private let deliveryQueue = DispatchQueue(label: "LumaChatTests.MCPHTTPStub.delivery")
+    private let lifecycleLock = NSRecursiveLock()
+    private var scheduledWork: DispatchWorkItem?
+    private var stopped = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -39,26 +43,7 @@ private final class MCPHTTPStubURLProtocol: URLProtocol, @unchecked Sendable {
                 headerFields: result.headers
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            for chunk in result.chunks {
-                if chunk.delay <= 0 {
-                    client?.urlProtocol(self, didLoad: chunk.body)
-                } else {
-                    schedule(after: chunk.delay) { [weak self] in
-                        guard let self else { return }
-                        self.client?.urlProtocol(self, didLoad: chunk.body)
-                    }
-                }
-            }
-            if let finishDelay = result.finishDelay {
-                if finishDelay <= 0 {
-                    client?.urlProtocolDidFinishLoading(self)
-                } else {
-                    schedule(after: finishDelay) { [weak self] in
-                        guard let self else { return }
-                        self.client?.urlProtocolDidFinishLoading(self)
-                    }
-                }
-            }
+            deliver(result, chunkIndex: 0, started: .now())
             return
         }
         let result = Self.handler?(request, json) ?? (
@@ -78,18 +63,47 @@ private final class MCPHTTPStubURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {
-        scheduledWork.forEach { $0.cancel() }
-        scheduledWork.removeAll()
+        lifecycleLock.withLock {
+            stopped = true
+            scheduledWork?.cancel()
+            scheduledWork = nil
+        }
         Self.stoppedRequests.append(request)
     }
 
-    private func schedule(after delay: TimeInterval, action: @escaping @Sendable () -> Void) {
-        let work = DispatchWorkItem(block: action)
-        scheduledWork.append(work)
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(
-            deadline: .now() + max(0, delay),
-            execute: work
-        )
+    private func deliver(_ result: StreamResult, chunkIndex: Int, started: DispatchTime) {
+        if chunkIndex < result.chunks.count {
+            let chunk = result.chunks[chunkIndex]
+            schedule(at: started + max(0, chunk.delay)) { [weak self] in
+                guard let self else { return }
+                self.client?.urlProtocol(self, didLoad: chunk.body)
+                // Queue the next chunk only after this callback completed. Independent
+                // global asyncAfter jobs can reorder or race stream termination when
+                // the hosted runner is busy, unlike an ordered HTTP byte stream.
+                self.deliver(result, chunkIndex: chunkIndex + 1, started: started)
+            }
+        } else if let finishDelay = result.finishDelay {
+            schedule(at: started + max(0, finishDelay)) { [weak self] in
+                guard let self else { return }
+                self.client?.urlProtocolDidFinishLoading(self)
+            }
+        }
+    }
+
+    private func schedule(at deadline: DispatchTime, action: @escaping @Sendable () -> Void) {
+        lifecycleLock.withLock {
+            guard !stopped else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.lifecycleLock.withLock {
+                    guard !self.stopped else { return }
+                    self.scheduledWork = nil
+                    action()
+                }
+            }
+            scheduledWork = work
+            deliveryQueue.asyncAfter(deadline: deadline, execute: work)
+        }
     }
 
     private static func bodyData(from request: URLRequest) -> Data {
@@ -259,9 +273,12 @@ final class MCPStreamableHTTPTests: XCTestCase {
                 return .init(
                     status: 200,
                     headers: ["Content-Type": "text/event-stream; charset=utf-8"],
-                    chunks: [(0.01, prefix), (0.05, matching)],
-                    // A buffering implementation would take this full second.
-                    finishDelay: 1.0
+                    // The suffix deadline is already due when the prefix arrives.
+                    // A busy scheduler must still preserve the array's byte order.
+                    chunks: [(0.05, prefix), (0.01, matching)],
+                    // A buffering implementation cannot complete: the server keeps
+                    // this response open until the test cancels/stops the transport.
+                    finishDelay: nil
                 )
             }
             return .init(status: 202, headers: [:], chunks: [], finishDelay: 0)
@@ -274,13 +291,13 @@ final class MCPStreamableHTTPTests: XCTestCase {
         try await transport.start()
         _ = try await transport.send(.init(id: .integer(1), method: "initialize"))
 
-        let started = Date()
-        let response = try await transport.send(.init(id: .integer(2), method: "tools/list"))
-        let elapsed = Date().timeIntervalSince(started)
+        let response = try await sendBeforeStreamCloses(
+            .init(id: .integer(2), method: "tools/list"),
+            using: transport
+        )
 
         XCTAssertEqual(response?.id, .integer(2))
         XCTAssertEqual(response?.result?["async"]?.boolValue, true)
-        XCTAssertLessThan(elapsed, 0.5, "SSE should return at the matching event, before stream close.")
 
         let get = try XCTUnwrap(MCPHTTPStubURLProtocol.requests.first { $0.httpMethod == "GET" })
         XCTAssertEqual(get.value(forHTTPHeaderField: "Accept"), "text/event-stream")
@@ -298,7 +315,7 @@ final class MCPStreamableHTTPTests: XCTestCase {
                     (0.01, Data("data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n".utf8)),
                     (0.05, Data("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ready\":true}}\n\n".utf8)),
                 ],
-                finishDelay: 1.0
+                finishDelay: nil
             )
         }
         let transport = MCPStreamableHTTPTransport(
@@ -307,14 +324,11 @@ final class MCPStreamableHTTPTests: XCTestCase {
         )
         try await transport.start()
 
-        let started = Date()
-        let response = try await transport.send(.init(id: .integer(1), method: "initialize"))
-        XCTAssertEqual(response?.result?["ready"]?.boolValue, true)
-        XCTAssertLessThan(
-            Date().timeIntervalSince(started),
-            0.5,
-            "The POST SSE response must not be buffered until connection close."
+        let response = try await sendBeforeStreamCloses(
+            .init(id: .integer(1), method: "initialize"),
+            using: transport
         )
+        XCTAssertEqual(response?.result?["ready"]?.boolValue, true)
         await transport.stop()
     }
 
@@ -518,6 +532,29 @@ final class MCPStreamableHTTPTests: XCTestCase {
             MCPHTTPStubURLProtocol.stoppedRequests.contains { $0.httpMethod == "GET" }
         }
         await client.disconnect()
+    }
+
+    private func sendBeforeStreamCloses(
+        _ request: MCPJSONRPCRequest,
+        using transport: MCPStreamableHTTPTransport
+    ) async throws -> MCPJSONRPCResponse? {
+        let completed = expectation(description: "Matching SSE response arrives while the stream remains open")
+        let sendTask = Task {
+            defer { completed.fulfill() }
+            return try await transport.send(request)
+        }
+        // The fixture never closes the stream. The timeout only bounds a broken
+        // implementation; successful streaming is established by the response,
+        // independent of runner scheduling latency. Always cancel and await the
+        // operation so a failing test cannot leave a receive stream behind.
+        await fulfillment(of: [completed], timeout: 5)
+        sendTask.cancel()
+        do {
+            return try await sendTask.value
+        } catch {
+            await transport.stop()
+            throw error
+        }
     }
 
     private func stubSession() -> URLSession {
