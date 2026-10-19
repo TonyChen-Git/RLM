@@ -6,7 +6,7 @@
 - Published: 2026-10-15 10:13:10 Asia/Taipei (`2026-10-15T02:13:10Z`)
 - Release: [v1.4.6](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6) — regular release, latest at publication
 - Release commit: `828c913fdcde4fdc7448f3881319e3b20f1d23a3`
-- Status: published; local release gate and packaged smoke passed; post-publication hosted failures are being corrected in 1.4.7
+- Status: published; local release gate and packaged smoke passed; post-publication hosted failures are corrected in the separately verified 1.4.7 patch
 - Artifact signing: ad-hoc; Developer ID signing and Apple notarization pending
 
 This release integrates Phase I–Q and the subsequent persistence, authority,

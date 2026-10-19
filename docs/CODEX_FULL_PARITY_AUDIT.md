@@ -5,7 +5,7 @@ Formal score and release evidence last audited: 2026-09-25, after the LumaChat
 2026-09-29 against official OpenAI documentation; the 1.4.2 candidate evidence
 and subsequent source changes are recorded separately below.
 
-## 1.4.7 corrective patch preparation — 2026-10-19
+## 1.4.7 integrated corrective release — 2026-10-19
 
 Version `1.4.7`, build `14`, includes Swift 6.2.4 compatibility, isolated test/store
 paths, Python shims within existing authorized tool roots, isolated OpenSSL
@@ -13,7 +13,7 @@ configuration, bounded incremental MCP framing and bounded diagnostic logging.
 The shim scanner preserves embedded scripts, arguments and TerminalSession's
 status/cwd wrapper without adding filesystem grants.
 
-Final candidate `eeddc7508348fe236c51d46b4cab55b914f2ff13` passes
+Verified source `eeddc7508348fe236c51d46b4cab55b914f2ff13` passes
 [hosted macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39190608251):
 **896 Swift tests, two skips, zero failures, 219.665 seconds** on Xcode 26.3 /
 Swift 6.2.4, debug compilation in 186.12 seconds, and the optimized build step.
@@ -30,7 +30,10 @@ skip, zero failures**. Debug/optimized arm64 compilation takes 404.04/184.48
 seconds. Ad-hoc signing, plist/archive/extracted-App checks, security audit and
 CLI version 1.4.7 pass. Logs and result: `tmp/release-1.4.7-ready.log` and
 `tmp/release-1.4.7-ready-result.json`. All five artifact hashes match the earlier
-candidates. The package is ready for publication, which remains pending.
+candidates. The regular [v1.4.7 Release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
+was published at `2026-10-19T15:05:13Z`, from commit
+`890574e29000f009c8b7c69f6f3df53d2449deaf`. All five uploaded sizes/digests match;
+receipt: `tmp/release-1.4.7-publication.json`.
 
 The final commit corrects only HTTP fixture ordering/liveness: serial delivery
 preserves byte order despite reversed deadlines, cancellation stops scheduled
@@ -64,10 +67,18 @@ run. The final binary SHA-256 is
 Earlier failed and intentionally interrupted attempts, the previous `744fb73`
 local pass and hosted failure, focused checks, Node 17/17 and 14/14 results,
 and timing experiment details are retained in [1.4.7 notes](RELEASE_NOTES_1.4.7.md)
-and [validation/1.4.7.json](validation/1.4.7.json). Publication and version-bound
-soak remain pending. The immutable 1.4.6 tag/artifacts and its
+and [validation/1.4.7.json](validation/1.4.7.json). Version-bound soak
+qualification remains pending. The immutable 1.4.6 tag/artifacts and its
 qualifying 2h soak retain their separate scope. Apple production signing,
 notarization/stapling/feed and unexecuted external acceptance remain pending.
+
+The exact v1.4.7 tag's fresh 2h → 8h → 24h → 72h soak sequence launched at
+`2026-10-19T15:07:46Z`. Its isolated archive verifies all 464 tracked files and
+the same 341-input/source/toolchain receipt. The first 2h run is in preparation
+at the recorded checkpoint, with **no qualifying result yet**. Live state:
+`tmp/release-1.4.7-soak-suite/state.json`; immutable launch evidence:
+`tmp/release-1.4.7-soak-start-checkpoint.json`. This is local integration and
+failure-injection evidence only; old versions' soak time is not reused.
 
 ## 1.4.6 integrated release — 2026-10-15
 

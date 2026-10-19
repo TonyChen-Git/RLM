@@ -406,15 +406,81 @@
     "artifactIdentityReceipt": "tmp/release-1.4.7-native-artifact-equivalence.json"
   },
   "publication": {
-    "status": "pending"
+    "status": "published",
+    "releaseCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+    "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+    "sourceFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
+    "url": "https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7",
+    "tag": "v1.4.7",
+    "draft": false,
+    "prerelease": false,
+    "latestAtVerification": true,
+    "publishedAt": "2026-10-19T15:05:13Z",
+    "verifiedAt": "2026-10-19T15:05:46.187833+00:00",
+    "assets": [
+      {
+        "name": "LumaChat-1.4.7-arm64.archive-manifest.json",
+        "bytes": 5073,
+        "sha256": "cb8797978d80d82ff7c225c31491bb02eddfa1423002963587b598eaf1121d3f",
+        "downloadURL": "https://github.com/TonyChen-Git/RLM/releases/download/v1.4.7/LumaChat-1.4.7-arm64.archive-manifest.json",
+        "verified": true
+      },
+      {
+        "name": "LumaChat-1.4.7-arm64.provenance.json",
+        "bytes": 886,
+        "sha256": "30b73e0ebc29d1fc4dd7ab8749a330e4fae12f75d18ecbb85e2a1a1312eb1b9d",
+        "downloadURL": "https://github.com/TonyChen-Git/RLM/releases/download/v1.4.7/LumaChat-1.4.7-arm64.provenance.json",
+        "verified": true
+      },
+      {
+        "name": "LumaChat-1.4.7-arm64.sbom.spdx.json",
+        "bytes": 786,
+        "sha256": "60b46f26ea328395eb90a91e0f24fd474b96015edf945f4a1d81bd9156e733fd",
+        "downloadURL": "https://github.com/TonyChen-Git/RLM/releases/download/v1.4.7/LumaChat-1.4.7-arm64.sbom.spdx.json",
+        "verified": true
+      },
+      {
+        "name": "LumaChat-1.4.7-arm64.sha256",
+        "bytes": 91,
+        "sha256": "ab7214878b23fa5bcac50cfddd181c5888c682f3a5c4dbeeecd1165826971059",
+        "downloadURL": "https://github.com/TonyChen-Git/RLM/releases/download/v1.4.7/LumaChat-1.4.7-arm64.sha256",
+        "verified": true
+      },
+      {
+        "name": "LumaChat-1.4.7-arm64.zip",
+        "bytes": 11441071,
+        "sha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856",
+        "downloadURL": "https://github.com/TonyChen-Git/RLM/releases/download/v1.4.7/LumaChat-1.4.7-arm64.zip",
+        "verified": true
+      }
+    ],
+    "receipt": "tmp/release-1.4.7-publication.json"
   },
   "releaseSoak": {
-    "status": "not_started",
+    "status": "preparing",
     "qualified": false,
-    "previousVersionEvidenceReused": false
+    "previousVersionEvidenceReused": false,
+    "sourceTag": "v1.4.7",
+    "sourceCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+    "sourceFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
+    "trackedSnapshotFilesVerified": 464,
+    "sourceFileCount": 341,
+    "controllerStartedAt": "2026-10-19T15:07:46Z",
+    "profiles": [
+      "2h",
+      "8h",
+      "24h",
+      "multi-day"
+    ],
+    "activeProfile": "2h",
+    "activeRunID": "9e7bfc70-4fe5-411c-af72-c89055c0f18d",
+    "controllerState": "tmp/release-1.4.7-soak-suite/state.json",
+    "runState": "tmp/release-1.4.7-tag-source/tmp/soak/9e7bfc70-4fe5-411c-af72-c89055c0f18d/state.json",
+    "startCheckpoint": "tmp/release-1.4.7-soak-start-checkpoint.json",
+    "scope": "Version-bound local integration/failure-injection soak; no external-provider acceptance; qualification requires full uninterrupted duration after preparation",
+    "statusAsOf": "2026-10-19T15:08:58.623118+00:00"
   },
   "pending": [
-    "Publication and uploaded asset verification",
     "Version-bound 2h/8h/24h/multi-day soak",
     "External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance",
     "Developer ID signing, notarization, stapling, production update feed and rollback acceptance"
@@ -547,6 +613,22 @@
     {
       "path": "tmp/release-1.4.7-cleanup.json",
       "sha256": "7dc600776d928068b995033692e238a9a3895d9644398a64b9c2076c71394da1"
+    },
+    {
+      "path": "tmp/release-1.4.7-publication.json",
+      "sha256": "82b3580beab9cd62ad3d97db8647bed5a0333637263ada477f88871a23437541"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-source-verification.json",
+      "sha256": "c26be9b9802029e0b9b9411761e394d2f82b216a4a4dbfddf5d3bedef03504a5"
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-suite-owner.json",
+      "sha256": "b6ccde4a53e7b5aa9db0cba46c5e0e4fbe9c79995702937a510eaab791ba70bb"
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-start-checkpoint.json",
+      "sha256": "ce6250efce2abb5c1507abd587b08c68722f2d815fdbdcb3e7a8441b8fa7b6a5"
     }
   ],
   "wrapperFocused": {
@@ -599,5 +681,6 @@
     "removedBytes": 3805715145,
     "scope": "Rebuildable caches only; release archives, source snapshots, logs and receipts preserved",
     "completedAt": "2026-10-19T09:14:56.841135+00:00"
-  }
+  },
+  "releaseCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf"
 }

@@ -1,15 +1,18 @@
-# Luma Chat 1.4.7 — Patch Release Preparation
+# Luma Chat 1.4.7 — Integrated Patch Release
 
 - Status updated: 2026-10-19
 - Source version/build: `1.4.7` / `14`
-- Intended channel: regular GitHub Release from `main` (prerelease disabled)
-- Status: ready for publication; final local gate/package, hosted macOS/Linux CI and limited native smoke evidence pass
+- Release channel: regular GitHub Release from `main` (prerelease disabled)
+- Status: published; final local gate/package, hosted macOS/Linux CI and limited native smoke evidence pass
+- Published: 2026-10-19 23:05:13 Asia/Taipei (`2026-10-19T15:05:13Z`)
+- Release commit: `890574e29000f009c8b7c69f6f3df53d2449deaf`
+- Release: [v1.4.7](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7) — regular release, latest at publication
 - Signing boundary: verified ad-hoc package; Apple Developer ID,
   notarization/stapling and production update-feed acceptance remain pending
 
 This patch follows the immutable [1.4.6 release](RELEASE_NOTES_1.4.6.md).
-The published 1.4.6 tag and artifacts remain unchanged. The 1.4.7 candidate
-archive below is unpublished and scoped to its exact source. Temporary DEBUG
+The published 1.4.6 tag and artifacts remain unchanged. The 1.4.7 archive
+below is published and scoped to its exact verified source. Temporary DEBUG
 timing instrumentation was removed in `bb26729`. Final source `eeddc75` adds only
 HTTP fixture ordering/liveness corrections; its production source and workflow
 match the previously verified candidates.
@@ -49,9 +52,9 @@ match the previously verified candidates.
   GET and POST SSE tests keep the response stream open and assert completion
   after the matching event, instead of relying on a narrow elapsed-time window.
 
-## Final candidate verification
+## Release verification
 
-Candidate source: `eeddc7508348fe236c51d46b4cab55b914f2ff13`.
+Verified source before the packaging commit: `eeddc7508348fe236c51d46b4cab55b914f2ff13`.
 The frozen receipt `tmp/release-1.4.7-ready-source-receipt.json` covers **341 inputs**,
 fingerprint `6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0`.
 [Hosted macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39190608251)
@@ -93,8 +96,7 @@ and Cmd-Q with exit 0. It creates zero Task messages and performs zero Browser
 operations. No model, microphone or external-provider acceptance is implied.
 The original receipt `tmp/release-1.4.7-ui/acceptance.json` retains its `bb26729`
 source scope; `tmp/release-1.4.7-native-artifact-equivalence.json` verifies the
-final source's archive and binary match that tested package exactly. No second
-UI run or final publication is claimed.
+final source's archive and binary match that tested package exactly.
 
 ## Confirmed STDIO fixture timing diagnosis
 
@@ -180,6 +182,15 @@ seconds, 48 complete cycles, 386 completed shards, zero failures. Its following
 8h run was interrupted and does not qualify; 24h and 72h never began. Those
 receipts remain 1.4.6 evidence and provide **no 1.4.7 soak qualification**.
 
+## Publication
+
+`main` and annotated tag `v1.4.7` were pushed at release commit
+`890574e29000f009c8b7c69f6f3df53d2449deaf`. The GitHub Release has `draft: false`
+and `prerelease: false`; it was latest at verification. All five uploaded asset
+sizes and API SHA-256 digests match the verified local artifacts. Receipt:
+`tmp/release-1.4.7-publication.json`. The tag remains fixed; later acceptance
+records are follow-up documentation on `main`.
+
 ## Cleanup before publication
 
 Removed 3,805,715,145 bytes of rebuildable caches from the root build, the
@@ -187,12 +198,25 @@ completed 1.4.7 release stage and inactive 1.4.6 soak runs. Release archives,
 source snapshots, logs and receipts are preserved. Receipt:
 `tmp/release-1.4.7-cleanup.json`. No unmerged local branch commits remain.
 
+## Version-bound soak launch — 2026-10-19
+
+A fresh 2h → 8h → 24h → 72h sequence launched at **23:07:46 Asia/Taipei**
+(`15:07:46Z`) from an isolated archive of the exact `v1.4.7` release commit.
+All **464 tracked files** and the **341-input/source/toolchain** receipt match
+that release. The 2h run `9e7bfc70-4fe5-411c-af72-c89055c0f18d` is preparing
+its test inventory/build at this checkpoint; measured duration starts after
+preparation. No profile is qualified yet, and no prior version's duration or
+result is reused. Later profiles start only after the preceding one qualifies.
+Snapshot receipt: `tmp/release-1.4.7-tag-source-verification.json`; immutable
+launch checkpoint: `tmp/release-1.4.7-soak-start-checkpoint.json`; live controller
+state: `tmp/release-1.4.7-soak-suite/state.json`. External-provider acceptance
+remains separate from these local integration and failure-injection tests.
+
 ## Pending for 1.4.7
 
-- Publish the verified regular GitHub Release from `main` and record the
-  release commit/tag, uploaded artifact sizes/digests and publication receipt.
-- Fresh version-bound soak; external SSH/MCP/PR/OAuth/model/voice/Computer Use
-  acceptance where no real receipt exists.
+- Qualifying results from the version-bound soak sequence above.
+- External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance where no real
+  receipt exists.
 - Apple Developer ID signing, notarization/stapling and production update-feed
   and rollback acceptance.
 

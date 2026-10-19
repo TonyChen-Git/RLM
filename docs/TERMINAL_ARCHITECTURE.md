@@ -91,7 +91,7 @@ unsupported compound syntax retain the original command rather than guessing
 shell semantics; the existing sandbox still applies.
 Command Line Tools provides a fallback when it is the authorized developer root.
 
-These launcher changes are covered by the final `eeddc75` 1.4.7 candidate's
+These launcher changes are covered by the verified `eeddc75` 1.4.7 source's
 complete local gate (896 Swift tests, one environment skip, zero failures) and
 hosted gate (896 tests, two skips, zero failures). The ad-hoc package and security
 checks pass. October 19 native smoke verifies startup, an idle Task, About and

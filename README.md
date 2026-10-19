@@ -9,18 +9,17 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **待發佈版本（2026-10-19）**：`1.4.7` build `14` 已通過完整本機 gate
-> （896 項 Swift、48 項 Python，各 1 skip、0 failures）、arm64 封裝與安全檢查，
-> macOS CI 通過 896 項測試（2 skips、0 failures），Linux worker CI 通過 10 項
-> （0 skips、0 failures）。最終封裝與已通過有限原生 UI smoke 的檔案完全相符。
-> 正式發佈與本版長測尚待完成；詳見 [1.4.7 版本說明](docs/RELEASE_NOTES_1.4.7.md)。
+> **目前版本（2026-10-19）**：[LumaChat 1.4.7 build 14](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
+> 已從 `main` 發佈為一般正式 GitHub Release（非 prerelease），整合 Phase I–Q 與後續修復。
+> 完整本機 gate 通過 896 項 Swift、48 項 Python（各 1 skip、0 failures）；
+> macOS CI 896 項（2 skips）及 Linux worker CI 10 項皆零失敗。
+> arm64 封裝、安全檢查與有限原生 UI smoke 通過，五個上傳產物的大小與雜湊已核對。
+> 詳見 [1.4.7 版本說明](docs/RELEASE_NOTES_1.4.7.md)。
 
-> **發行與驗收界線**：目前已發佈的是
-> [GitHub Release v1.4.6](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6)，
-> 已整合 Phase I–Q，使用 ad-hoc 簽章。Apple Developer ID／公證／stapling、
-> 正式更新 feed 與未執行的外部驗收仍待完成；各版本長測證據分別記錄。
-> 歷史驗證見 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)、
-> [開發整合紀錄](docs/RELEASE_NOTES_UNRELEASED.md)與[差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
+> **驗收界線**：封裝使用 ad-hoc 簽章。Apple Developer ID／公證／stapling、
+> 正式更新 feed、未執行的外部驗收及本版長測資格仍待完成。
+> 各版本證據分別保留於 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)、
+> [開發整合紀錄](docs/RELEASE_NOTES_UNRELEASED.md) 與 [差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
 
 ## 能力總覽
 

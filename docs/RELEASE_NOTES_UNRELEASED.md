@@ -1,7 +1,7 @@
 # Luma Chat — Development integration history
 
-The [1.4.7 corrective patch](RELEASE_NOTES_1.4.7.md) is ready for publication
-as of October 19. Final source `eeddc75` passes the complete local release gate:
+The [1.4.7 corrective patch](RELEASE_NOTES_1.4.7.md) was published on
+October 19 as a regular GitHub Release from `main`. Final source `eeddc75` passes the complete local release gate:
 896 Swift tests and 48 Python contracts, each with one skip and zero failures;
 optimized arm64 compilation, ad-hoc packaging and archive/security checks pass.
 Hosted macOS CI passes 896 tests, two skips and zero failures, optimized
@@ -11,7 +11,8 @@ order and verifies completion while its response stream remains open.
 All five final artifact hashes match the preceding candidate; exact archive and
 binary equivalence ties the final package to the October 19 limited native
 smoke (startup, idle Task, About 1.4.7 (14), clean quit). This is not a second UI
-run or external acceptance. Publication and version-bound soak remain pending.
+run or external acceptance. Uploaded asset sizes/digests are verified;
+version-bound soak qualification remains pending.
 Exact attempts are in the [1.4.7 validation receipt](validation/1.4.7.json).
 Published 1.4.6 evidence follows.
 
@@ -31,7 +32,7 @@ calculation types explicit while preserving order and assertions. The final
 local focused run passes 45 tests, zero skips/failures (40.665 seconds);
 the complete hosted run then failed with 886 tests, two skips and eight
 failures (four unexpected). Full failure history is retained in the validation
-receipt; the exposed environment/sandbox/MCP issues are being fixed for 1.4.7. These changes are outside the immutable release ZIP.
+receipt; the exposed environment/sandbox/MCP issues are corrected in 1.4.7. These changes are outside the immutable release ZIP.
 A fresh sequence against the exact release source launched October 15 at
 15:16:37 Asia/Taipei; actual 2h measurement began at 15:22:11 after inventory
 preparation. Its 2h run completed and qualifies: 7,227.507 seconds, 48 cycles,

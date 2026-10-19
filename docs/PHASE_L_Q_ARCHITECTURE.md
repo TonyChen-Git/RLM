@@ -1,6 +1,6 @@
 # Phase L–Q implementation and acceptance boundary
 
-Version baseline: 1.4.5; integrated release: 1.4.6 build 13. This document
+Version baseline: 1.4.5; integrated releases: 1.4.6 build 13 and 1.4.7 build 14. This document
 describes the current development tree.
 Source changes are not release evidence. The integrated build, tests, packaged
 native UI smoke and external acceptance must be recorded separately in the
@@ -196,13 +196,14 @@ backend, not a non-macOS desktop port. Production signing, the published feed,
 packaged native UI, external SSH/MCP/PR/Browser/Computer Use and 2h/8h/24h/
 multi-day soak require real evidence; an unexecuted workflow is not acceptance.
 
-The 1.4.7 final candidate `eeddc75` passes its complete local gate and arm64
+The verified 1.4.7 source `eeddc75` passes its complete local gate and arm64
 package (896 Swift tests and 48 Python contracts, each with one skip and zero
 failures), hosted macOS gate (896 tests, two skips, zero failures), and Linux
 worker CI (ten tests, zero skips/failures). Its archive and binary match the
 October 19 native-smoke artifact exactly. That smoke covers startup, an idle
 Task, About and clean quit; it does not add external or interactive feature
-acceptance. Publication and a fresh version-bound soak remain pending. Exact
+acceptance. The regular v1.4.7 Release is published; fresh version-bound soak
+qualification remains pending. Exact
 source, digest and run receipts are in [1.4.7 notes](RELEASE_NOTES_1.4.7.md).
 
 The eight soak categories also exercise the Phase I–Q Swift regressions:
