@@ -77,6 +77,32 @@ select a different backend or host through tool arguments. Working directories
 are validated against the bound workspace, and each terminal UUID resolves
 only inside the service for that exact Task.
 
+Developer-tool shims resolve executables inside the already-readable toolchain
+roots. A selected `DEVELOPER_DIR` is used only when it falls within those roots;
+the shim does not add a filesystem grant. Python uses the direct interpreter
+instead of the system `xcrun` dispatcher, which can depend on host metadata and
+caches outside the policy. Rewriting preserves exact path boundaries and
+quoted paths, so a tool basename embedded in another path is not substituted.
+The conservative scanner replaces only executable words in simple commands,
+including supported `exec`, `env` and `xcrun` forms. Arguments, script bodies,
+comments, simple shell variables and redirect operands remain data. TerminalSession's
+status/cwd wrapper therefore retains developer shims. Here-documents, nested expansions and
+unsupported compound syntax retain the original command rather than guessing
+shell semantics; the existing sandbox still applies.
+Command Line Tools provides a fallback when it is the authorized developer root.
+
+These launcher changes are covered by the final `eeddc75` 1.4.7 candidate's
+complete local gate (896 Swift tests, one environment skip, zero failures) and
+hosted gate (896 tests, two skips, zero failures). The ad-hoc package and security
+checks pass. October 19 native smoke verifies startup, an idle Task, About and
+clean quit; exact final archive/binary equivalence is recorded separately. It
+does not add interactive terminal or real SSH-host acceptance. Source and
+evidence boundaries are in [1.4.7 notes](RELEASE_NOTES_1.4.7.md).
+
+Each execution environment also supplies an empty `OPENSSL_CONF` in its own
+configuration directory. OpenSSL-linked tools use library defaults without
+reading host-wide configuration; TLS certificate verification remains enabled.
+
 The six structured tools remain ordinary registered tools:
 
 | Tool | Permission | Bound |

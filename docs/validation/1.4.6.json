@@ -94,9 +94,8 @@
     "countsAs146Qualification": false
   },
   "pending": [
-    "Fresh1.4.6 full-duration soak",
+    "1.4.6 qualifying 8h/24h/multi-day soak after interrupted sequence",
     "External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance",
-    "Executed Linux CI result",
     "Developer ID signing, notarization, stapling, production update feed and rollback acceptance"
   ],
   "localEvidenceOnly": [
@@ -119,6 +118,242 @@
     {
       "path": "tmp/release-1.4.6-browser/acceptance.json",
       "sha256": "7b87091dc6e0c7a3dccc9dfb1ded7097f70e1f810bfeffd12420cc849db7ba70"
+    },
+    {
+      "path": "tmp/release-1.4.6-publication.json",
+      "sha256": "6f04a755eaa041e0e7bbfa72588e0019995b8cae32c5b523f1ba487e0c192698"
+    },
+    {
+      "path": "tmp/release-1.4.6-linux-ci.log",
+      "sha256": "a6060c554f8ffffe6c72f0baf919f563540550fe72a5f06a4014b3a977b513d2"
+    },
+    {
+      "path": "tmp/release-1.4.6-macos-ci-failed.log",
+      "sha256": "ed32cb6f21e0d8df100015133b338672c5499870d70caa192d82c61513382da0"
+    },
+    {
+      "path": "tmp/release-1.4.6-compat-final.log",
+      "sha256": "13200574535086778459ccdb744f452689b2093478dfc3b2d7e84ddd8b15790f"
+    },
+    {
+      "path": "tmp/release-1.4.6-compat-final-result.json",
+      "sha256": "1a4410b441bb035af2258d1f6add04ebdf8462d0428931d4786a41e042d54bfe"
+    },
+    {
+      "path": "tmp/release-1.4.6-macos-final-ci-failed.log",
+      "sha256": "7391218e165823afc89220dfdefb088d624b8dff38e5bfc012647b19e418cabf"
+    },
+    {
+      "path": "tmp/release-1.4.6-macos-0d9364b-failed.log",
+      "sha256": "15bfeb558e497fda9f8f371e2d94e7721ce62cd9e5f2adb2e55fc95e24c76aea"
+    },
+    {
+      "path": "tmp/release-1.4.6-soak-suite/state.json",
+      "sha256": "3e09066689896a3119055678eb2e23d36349ca997d9d5aeff69a4884d418c328"
+    },
+    {
+      "path": "tmp/release-1.4.6-tag-source/tmp/soak/13b6ed74-57c2-458a-9cec-6d9d306d0e70/state.json",
+      "sha256": "938ab1fa5ce362a47eb51455a6ecf5c62f7c605a0452b7f5ab9589120cd759d1"
+    },
+    {
+      "path": "tmp/release-1.4.6-tag-source/tmp/soak/a62f13b0-7fc9-4989-9151-2a21403d188e/state.json",
+      "sha256": "f9d009428f77507be7e5ddd8c4e767717d2b05193de4d299013e35206f458a88"
+    },
+    {
+      "path": "tmp/release-1.4.6-postpublication-cleanup.json",
+      "sha256": "e256c85936532759edf4339f079ac5ec84356ded26e3f082315a79fa26fbd595"
     }
-  ]
+  ],
+  "publication": {
+    "url": "https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6",
+    "tag": "v1.4.6",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "publishedAt": "2026-10-15T02:13:10Z",
+    "releaseCommit": "828c913fdcde4fdc7448f3881319e3b20f1d23a3",
+    "assetDigestsVerified": true,
+    "verifiedAssetCount": 5,
+    "tagAndArtifactsUnchangedByFollowup": true
+  },
+  "ci": {
+    "linuxWorker": {
+      "tagRunID": 38669773678,
+      "tagRunURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38669773678",
+      "tagConclusion": "success",
+      "mainRunID": 38669774239,
+      "mainRunURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38669774239",
+      "mainConclusion": "success",
+      "tagTests": 10,
+      "tagSkipped": 0,
+      "tagFailures": 0,
+      "tagSeconds": 5.971,
+      "scope": "Linux worker contracts; no real SSH-host acceptance"
+    },
+    "macOS": {
+      "tagRunID": 38669773617,
+      "tagRunURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38669773617",
+      "mainRunID": 38669774231,
+      "mainRunURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38669774231",
+      "conclusion": "failure",
+      "phase": "module emission before tests",
+      "toolchain": "Xcode 16.4 / Apple Swift 6.1.2",
+      "diagnostic": "swift-frontend emit-module command failed due to signal 11",
+      "successfulRerunPending": true,
+      "followups": [
+        {
+          "commit": "c63f53a7e235febdf4b2722a5d6251618c9adc41",
+          "scope": "main after release; not included in published archive",
+          "change": "Pin Xcode 26.3 build 17C529 / Apple Swift 6.2.4",
+          "runID": 38670294663,
+          "runURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38670294663",
+          "conclusion": "failure",
+          "diagnostics": [
+            "BrowserService Int arithmetic requires explicit Double conversion",
+            "ContextManager expression type-checking timeout"
+          ],
+          "signal11": false
+        },
+        {
+          "commit": "8925875750b2effac4eed279298b1791003e1d90",
+          "scope": "main after release; not included in published archive",
+          "change": "Explicit Double conversion and intermediate context counts preserving calculations",
+          "runID": 38697655318,
+          "runURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38697655318",
+          "status": "completed",
+          "conclusion": "failure",
+          "diagnostics": [
+            "ContextManager remaining addition expression type-checking timeout"
+          ],
+          "browserConversionErrorsResolved": true
+        },
+        {
+          "commit": "081300cb6a5aec8c841f8054a6c9db2c677284c9",
+          "scope": "main after release; not included in published archive",
+          "change": "Sequential additions for context counts and byte sums preserving addition order",
+          "status": "completed",
+          "conclusion": "failure",
+          "runID": 38698150635,
+          "runURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38698150635",
+          "appCompiled": true,
+          "phase": "test target compilation before tests",
+          "diagnostics": [
+            "ReviewToolStructuredDataLimitTests.swift:34 requires explicit Double conversion",
+            "TaskTerminalToolTests.swift:580 requires explicit Double conversion",
+            "TaskTerminalToolTests.swift:762 requires explicit Double conversion"
+          ]
+        },
+        {
+          "commit": "0d9364b918b39c68a810d3e300599681fb6ab64b",
+          "scope": "main after release; not included in published archive",
+          "change": "Explicit Double conversions in three test expressions; assertions and coverage unchanged",
+          "runID": 38698727639,
+          "runURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38698727639",
+          "status": "completed",
+          "conclusion": "failure",
+          "tests": 886,
+          "skipped": 2,
+          "failures": 8,
+          "unexpectedFailures": 4,
+          "seconds": 342.539,
+          "diagnosticSummary": "Environment/shared-store assumptions, sandbox runtime execution and large MCP framing failures; corrective 1.4.7 patch in progress"
+        }
+      ],
+      "currentStatus": "post_publication_tests_failed_corrective_1.4.7_in_progress"
+    }
+  },
+  "releaseSoak": {
+    "sourceTag": "v1.4.6",
+    "sourceCommit": "828c913fdcde4fdc7448f3881319e3b20f1d23a3",
+    "sourceFingerprint": "32aed45fe29a36a81ff163a893b9204ac9e678e581b90ecc8162a60903b72d99",
+    "archivedFilesVerified": 456,
+    "sourceFileCount": 340,
+    "receiptMatchesRelease": true,
+    "sourceIncludesPostPublicationChanges": false,
+    "sequence": [
+      "2h",
+      "8h",
+      "24h",
+      "72h"
+    ],
+    "startedAt": "2026-10-15T07:16:37Z",
+    "finishedAt": "2026-10-15T09:53:22Z",
+    "status": "interrupted",
+    "active": false,
+    "suiteQualificationEligible": false,
+    "previousDurationReused": false,
+    "durationOverride": false,
+    "profiles": [
+      {
+        "profile": "2h",
+        "runID": "13b6ed74-57c2-458a-9cec-6d9d306d0e70",
+        "status": "completed",
+        "exitCode": 0,
+        "measurementStartedAt": "2026-10-15T07:22:11Z",
+        "finishedAt": "2026-10-15T09:22:39Z",
+        "continuousElapsedSeconds": 7227.507,
+        "completedCycles": 48,
+        "completedShards": 386,
+        "failures": 0,
+        "qualificationEligible": true
+      },
+      {
+        "profile": "8h",
+        "runID": "a62f13b0-7fc9-4989-9151-2a21403d188e",
+        "status": "interrupted",
+        "exitCode": 130,
+        "finishedAt": "2026-10-15T09:53:17Z",
+        "continuousElapsedSeconds": 1582.53,
+        "completedCycles": 10,
+        "completedShards": 81,
+        "interruptedChildCategory": "pty",
+        "interruptedChildExitCode": -15,
+        "qualificationEligible": false
+      },
+      {
+        "profile": "24h",
+        "status": "not_started"
+      },
+      {
+        "profile": "72h",
+        "status": "not_started"
+      }
+    ],
+    "controllerReceipt": "tmp/release-1.4.6-soak-suite/state.json",
+    "snapshotVerification": "tmp/release-1.4.6-tag-source-verification.json",
+    "countsAs147Qualification": false,
+    "scope": "Exact immutable 1.4.6 release source; only completed 2h profile qualifies"
+  },
+  "postPublicationLocalValidation": {
+    "sourceCommit": "0d9364b918b39c68a810d3e300599681fb6ab64b",
+    "sourceIdentityVerifiedBeforeAndAfter": true,
+    "exitCode": 0,
+    "tests": 45,
+    "skipped": 0,
+    "failures": 0,
+    "seconds": 40.665,
+    "suites": [
+      "ContextManagerSafetyTests",
+      "BrowserToolTests",
+      "CDPWebSocketLifecycleTests",
+      "ReviewToolStructuredDataLimitTests",
+      "TaskTerminalToolTests"
+    ],
+    "includedInPublishedArchive": false
+  },
+  "postPublicationCleanup": {
+    "receipt": "tmp/release-1.4.6-postpublication-cleanup.json",
+    "removedOnlyRebuildable146ScratchAndCaches": true,
+    "publishedArtifactsAndEvidencePreserved": true
+  },
+  "correctivePatchVerification": {
+    "version": "1.4.7",
+    "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+    "macOSRunID": 39190608251,
+    "conclusion": "success",
+    "tests": 896,
+    "skipped": 2,
+    "failures": 0,
+    "scope": "Corrective patch only; immutable 1.4.6 tag and artifact remain unchanged"
+  }
 }

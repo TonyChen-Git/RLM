@@ -3,7 +3,10 @@
 - Release preparation date: 2026-10-14
 - Source version/build: `1.4.6` / `13`
 - Release channel: regular GitHub Release from `main` (prerelease disabled)
-- Status: full release gate and packaged UI smoke passed; GitHub publication pending (2026-10-15)
+- Published: 2026-10-15 10:13:10 Asia/Taipei (`2026-10-15T02:13:10Z`)
+- Release: [v1.4.6](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6) — regular release, latest at publication
+- Release commit: `828c913fdcde4fdc7448f3881319e3b20f1d23a3`
+- Status: published; local release gate and packaged smoke passed; post-publication hosted failures are being corrected in 1.4.7
 - Artifact signing: ad-hoc; Developer ID signing and Apple notarization pending
 
 This release integrates Phase I–Q and the subsequent persistence, authority,
@@ -72,6 +75,71 @@ The corrected `1.4.6` constant is covered by the complete passing rerun above.
 The failed log, exit-1 receipt and artifacts remain at `tmp/release-1.4.6.log`,
 `tmp/release-1.4.6-result.json` and `tmp/release-1.4.6-first-attempt/`.
 
+### Publication and CI follow-up — 2026-10-15
+
+`main` and tag `v1.4.6` were pushed at release commit
+`828c913fdcde4fdc7448f3881319e3b20f1d23a3`. The regular
+[GitHub Release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6) is published with `draft: false` and
+`prerelease: false`. All five uploaded asset byte sizes and GitHub API SHA-256
+digests match the verified local artifacts. Publication receipt:
+`tmp/release-1.4.6-publication.json`. The release tag and artifacts are preserved;
+these follow-up acceptance records belong to later `main` documentation.
+
+- Linux worker CI **passes on both [tag](https://github.com/TonyChen-Git/RLM/actions/runs/38669773678) and
+  [main](https://github.com/TonyChen-Git/RLM/actions/runs/38669774239)**. The tag run executed **10 tests, zero skips, zero
+  failures, 5.971 seconds**, including the case skipped on the macOS host.
+  Log: `tmp/release-1.4.6-linux-ci.log`. This is Linux worker contract evidence;
+  authorized real SSH-host and network/fault acceptance remain separate.
+- macOS CI **failed on both [tag](https://github.com/TonyChen-Git/RLM/actions/runs/38669773617) and
+  [main](https://github.com/TonyChen-Git/RLM/actions/runs/38669774231)** before test execution: Xcode 16.4 / Apple Swift 6.1.2
+  `swift-frontend` crashed with **signal 11** during module emission. This is
+  a compiler crash, preserved in `tmp/release-1.4.6-macos-ci-failed.log`.
+- Post-publication `main` follow-ups pin **Xcode 26.3 build 17C529 / Apple
+  Swift 6.2.4** (`c63f53a`), make Browser numeric conversions and context
+  additions explicit (`8925875`, `081300c`), then fix three equivalent numeric
+  expressions in tests (`0d9364b`). Earlier reruns failed compiler checks for
+  those expressions; the App compiled before the final three test expressions
+  were corrected. Calculation order, assertions and coverage are preserved.
+  The [tracked receipt](validation/1.4.6.json) retains the complete failure chain.
+- Final local focused validation on `0d9364b` passes **45 tests, zero skips,
+  zero failures, 40.665 seconds**, covering context safety, Browser/CDP lifecycle,
+  structured Review limits and Task Terminal tools. Source identity was checked
+  before and after. Logs: `tmp/release-1.4.6-compat-final.log` and
+  `tmp/release-1.4.6-compat-final-result.json`. The [complete hosted run](https://github.com/TonyChen-Git/RLM/actions/runs/38698727639)
+  subsequently failed: **886 tests, two skips, eight failures (four unexpected),
+  342.539 seconds**. This broader result exposed environment/shared-storage,
+  sandbox runtime and large MCP framing issues being corrected in
+  [1.4.7](RELEASE_NOTES_1.4.7.md). Log:
+  `tmp/release-1.4.6-macos-0d9364b-failed.log`. These later `main` changes are
+  **not included in the immutable release tag or published ZIP**. The released
+  artifact and its original validation retain their documented scope.
+
+### Exact release-source soak checkpoint — 2026-10-15
+
+A fresh **2h → 8h → 24h → 72h** sequence launched at **15:16:37 Asia/Taipei**
+(`07:16:37Z`) against an isolated archive of the exact `v1.4.6` release commit,
+not the later `main` compatibility changes. All 456 archived files were
+verified, and the 340-input/source/toolchain receipt matches the release
+fingerprint `32aed45fe29a36a81ff163a893b9204ac9e678e581b90ecc8162a60903b72d99`.
+The 2h measurement began at **15:22:11 Asia/Taipei** (`07:22:11Z`) and
+**completed with qualification true at 17:22:39** (`09:22:39Z`): **7,227.507
+continuous measured seconds, 48 complete cycles, 386 completed shards,
+zero failures**. No prior duration was reused and no duration override was used.
+
+The next 8h run, `a62f13b0-7fc9-4989-9151-2a21403d188e`, was **interrupted**
+at `09:53:17Z` (17:53:17 Asia/Taipei), exit 130, after 1,582.530 measured
+seconds, ten complete cycles and 81 completed shards. Its active PTY child
+ended with `-15` during interruption; this run does not qualify. The suite
+stopped at `09:53:22Z`; 24h and 72h never began. **No soak remains active.**
+These results belong to the exact 1.4.6 source and are not credited to 1.4.7.
+
+Run: `13b6ed74-57c2-458a-9cec-6d9d306d0e70`; receipts:
+`tmp/release-1.4.6-soak-suite/state.json`,
+`tmp/release-1.4.6-soak-suite-owner.json` and
+`tmp/release-1.4.6-tag-source/tmp/soak/13b6ed74-57c2-458a-9cec-6d9d306d0e70/state.json`.
+The verified snapshot is recorded in
+`tmp/release-1.4.6-tag-source-verification.json`.
+
 ### Preserved integration evidence before the version bump
 
 - October 14 `1.4.5` integration gate: **886 Swift tests**, one environment skip,
@@ -116,10 +184,13 @@ run directories. These local paths are not public download links.
 - MCP implements the `2025-06-18` lifecycle with diagnostics for unsupported
   revisions; modern stateless MCP and additional providers remain future work.
 - Real SSH/network/reboot/credential faults, external MCP/PR/OAuth/model
-  providers, real microphone interaction, Computer Use, real vendor exports
-  and executed Linux worker CI remain pending where no live receipt exists.
-- Fresh `1.4.6` 2h/8h/24h/multi-day soak remains pending. Existing fixture and
-  contract tests do not replace those acceptance runs.
+  providers, real microphone interaction, Computer Use and real vendor exports
+  remain pending where no live receipt exists. Linux worker CI now has the
+  passing evidence above; the macOS hosted failures are being addressed in
+  the separately versioned 1.4.7 patch.
+- The exact `1.4.6` 2h soak qualifies; 8h/24h/multi-day results remain pending
+  after the interruption above. Existing fixture and contract tests do not
+  replace those acceptance runs.
 - Developer ID signing, notarization, stapling, a published production update
   feed and production update/rollback acceptance remain pending. The regular
   GitHub Release uses the available ad-hoc-signed artifacts; its release channel

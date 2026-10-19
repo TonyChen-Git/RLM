@@ -5,11 +5,79 @@ Formal score and release evidence last audited: 2026-09-25, after the LumaChat
 2026-09-29 against official OpenAI documentation; the 1.4.2 candidate evidence
 and subsequent source changes are recorded separately below.
 
+## 1.4.7 corrective patch preparation — 2026-10-19
+
+Version `1.4.7`, build `14`, includes Swift 6.2.4 compatibility, isolated test/store
+paths, Python shims within existing authorized tool roots, isolated OpenSSL
+configuration, bounded incremental MCP framing and bounded diagnostic logging.
+The shim scanner preserves embedded scripts, arguments and TerminalSession's
+status/cwd wrapper without adding filesystem grants.
+
+Final candidate `eeddc7508348fe236c51d46b4cab55b914f2ff13` passes
+[hosted macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39190608251):
+**896 Swift tests, two skips, zero failures, 219.665 seconds** on Xcode 26.3 /
+Swift 6.2.4, debug compilation in 186.12 seconds, and the optimized build step.
+Archive 7/7 and soak harness 28/28 contracts pass, without skips. Its 341-input
+fingerprint is `6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0`.
+Evidence: `tmp/release-1.4.7-macos-ready-ci.log` and
+`tmp/release-1.4.7-ready-source-receipt.json`.
+[Linux worker CI](https://github.com/TonyChen-Git/RLM/actions/runs/39226505634)
+also passes: **ten tests, zero skips/failures, 5.348 seconds**
+(`tmp/release-1.4.7-linux-ready-ci.log`). The fresh complete local gate also
+passes, exit 0, with matching frozen source receipts: **896 Swift tests, one
+skip, zero failures, 255.063 seconds**; **48 Python contracts, one Linux-only
+skip, zero failures**. Debug/optimized arm64 compilation takes 404.04/184.48
+seconds. Ad-hoc signing, plist/archive/extracted-App checks, security audit and
+CLI version 1.4.7 pass. Logs and result: `tmp/release-1.4.7-ready.log` and
+`tmp/release-1.4.7-ready-result.json`. All five artifact hashes match the earlier
+candidates. The package is ready for publication, which remains pending.
+
+The final commit corrects only HTTP fixture ordering/liveness: serial delivery
+preserves byte order despite reversed deadlines, cancellation stops scheduled
+callbacks, and GET/POST SSE tests verify completion while the response stream
+remains open. Eight focused tests pass, zero skips/failures, in 1.187 seconds.
+The production transport and request deadlines remain unchanged. Earlier
+`bb26729` local gate (896 Swift/48 Python, each one skip, zero failures), Linux
+CI (ten tests, zero skips/failures) and the single GET SSE hosted failure remain
+recorded separately in the release notes and validation receipt.
+
+The earlier diagnostic run `38984361251` received only 3 MiB of a 4 MiB STDIO
+fixture by 9.096 seconds before its ten-second deadline, while a separate 1 MiB
+response's logging and decoding took about three milliseconds. Controlled
+background-policy experiments corroborate accumulated relative-sleep drift.
+`bb26729` uses absolute monotonic pacing with a yield after at most eight
+catch-up writes, retaining the payload, chunk size and deadline. Temporary
+DEBUG instrumentation is removed; production source/workflow match `744fb73`.
+
+Native packaged smoke passes on October 19: startup, idle Task accessibility,
+About accessibility/screenshot showing **1.4.7 (14)** and clean quit, exit 0.
+The run creates zero messages and executes zero Browser operations; model,
+microphone and external-provider acceptance are outside its scope. Receipt:
+`tmp/release-1.4.7-ui/acceptance.json`, tied to the previous `bb26729` package
+with ZIP SHA-256 `44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856`.
+The final archive and App binary match the smoke-tested package exactly,
+verified in `tmp/release-1.4.7-native-artifact-equivalence.json`. The original UI
+receipt retains its source scope; this is artifact equivalence, not a second UI
+run. The final binary SHA-256 is
+`12516c88ccf60286c808f3bba6f867e668e0c6b998e3b3689274d0d0061f2b79`.
+
+Earlier failed and intentionally interrupted attempts, the previous `744fb73`
+local pass and hosted failure, focused checks, Node 17/17 and 14/14 results,
+and timing experiment details are retained in [1.4.7 notes](RELEASE_NOTES_1.4.7.md)
+and [validation/1.4.7.json](validation/1.4.7.json). Publication and version-bound
+soak remain pending. The immutable 1.4.6 tag/artifacts and its
+qualifying 2h soak retain their separate scope. Apple production signing,
+notarization/stapling/feed and unexecuted external acceptance remain pending.
+
 ## 1.4.6 integrated release — 2026-10-15
 
-Version `1.4.6`, build `13`, integrates Phase I–Q and is prepared for a regular
-GitHub Release from `main` with prerelease disabled, as requested by the user.
-Publication remains pending. The packaging script uses
+Version `1.4.6`, build `13`, integrates Phase I–Q and was published from `main`
+as a regular [GitHub Release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6) with prerelease disabled at
+`2026-10-15T02:13:10Z` (10:13:10 Asia/Taipei), as requested by the user.
+Release commit/tag: `828c913fdcde4fdc7448f3881319e3b20f1d23a3` / `v1.4.6`.
+All five uploaded asset sizes and API SHA-256 digests match the verified local
+artifacts (`tmp/release-1.4.6-publication.json`). The release tag remains fixed;
+these later acceptance records are a follow-up on `main`. The packaging script uses
 `LUMACHAT_RELEASE_MODE=development` for ad-hoc signing; Developer ID,
 notarization/stapling and production update-feed acceptance remain pending.
 
@@ -22,6 +90,32 @@ plist/archive checks, extracted CLI version **LumaChat 1.4.6**, and security
 audit pass. Gate receipts: `tmp/release-1.4.6-retry.log`,
 `tmp/release-1.4.6-retry-result.json`; Node logs:
 `tmp/release-1.4.6-vscode.log`, `tmp/release-1.4.6-action.log`.
+
+Post-publication Linux worker CI passes on [tag](https://github.com/TonyChen-Git/RLM/actions/runs/38669773678) and
+[main](https://github.com/TonyChen-Git/RLM/actions/runs/38669774239); the tag run executes **10 tests, zero skips and zero
+failures in 5.971 seconds** (`tmp/release-1.4.6-linux-ci.log`). This completes
+executed Linux worker contract coverage, including the local macOS skip.
+Real SSH host/network/fault acceptance remains pending.
+
+Hosted macOS CI fails on [tag](https://github.com/TonyChen-Git/RLM/actions/runs/38669773617) and [main](https://github.com/TonyChen-Git/RLM/actions/runs/38669774231) before tests:
+Xcode 16.4 / Swift 6.1.2 `swift-frontend` exits with **signal 11** during module
+emission. Log: `tmp/release-1.4.6-macos-ci-failed.log`.
+Post-publication `main` commits pin Xcode 26.3 build 17C529 / Apple Swift
+6.2.4 (`c63f53a`), make numeric conversions and context additions explicit
+(`8925875`, `081300c`), and fix three corresponding test expressions (`0d9364b`).
+Earlier reruns failed compiler diagnostics for those expressions; the App
+compiled before the final three test-source corrections. No assertion or
+coverage change is claimed. Full failed-run IDs and diagnoses remain in the
+[validation receipt](validation/1.4.6.json).
+Final local focused validation on `0d9364b` passes **45 tests, zero skips,
+zero failures, 40.665 seconds**; logs: `tmp/release-1.4.6-compat-final.log`,
+`tmp/release-1.4.6-compat-final-result.json`. The [complete hosted run](https://github.com/TonyChen-Git/RLM/actions/runs/38698727639)
+failed after **886 tests, two skips, eight failures (four unexpected), 342.539
+seconds** (`tmp/release-1.4.6-macos-0d9364b-failed.log`). The focused local pass
+does not override that broader failure. Environment/shared-storage, sandbox
+runtime and MCP framing corrections are being prepared as 1.4.7. These later
+workflow/source/test changes are not in the immutable release tag or ZIP; the
+local release gate above and the published artifact retain their original scope.
 
 The final package's isolated native smoke passes launch, idle Task accessibility,
 About accessibility and screenshot showing **1.4.6 (13)**, and Cmd-Q with exit
@@ -42,8 +136,21 @@ and `tmp/release-1.4.6-first-attempt/`.
 
 See [1.4.6 release notes](RELEASE_NOTES_1.4.6.md) for this release's scope and
 remaining acceptance. Earlier package hashes, Browser 5/5 acceptance and the
-qualifying 2h soak below retain their original version/input scope. Fresh 1.4.6
-soak has not started. The local implementation includes the documented minimal
+qualifying 2h soak below retain their original version/input scope. A fresh
+exact-`v1.4.6` 2h → 8h → 24h → 72h sequence launched at 15:16:37 Asia/Taipei
+on October 15. Its isolated archive verifies all 456 tracked files and the
+same 340-input/source/toolchain receipt as the release. After inventory/build
+preparation, actual 2h measurement began at `07:22:11Z` (15:22:11 Asia/Taipei).
+The 2h run **completed and qualifies** at `09:22:39Z` (17:22:39 Asia/Taipei):
+**7,227.507 continuous seconds, 48 complete cycles, 386 completed shards,
+zero failures**, run `13b6ed74-57c2-458a-9cec-6d9d306d0e70`.
+The subsequent 8h run `a62f13b0-7fc9-4989-9151-2a21403d188e` was interrupted
+at `09:53:17Z`, exit 130, after 1,582.530 seconds, ten complete cycles and 81
+completed shards; its active PTY child ended with `-15`. It does not qualify.
+The suite stopped at `09:53:22Z`, with no active run and no 24h/72h start.
+Controller receipt: `tmp/release-1.4.6-soak-suite/state.json`; snapshot receipt:
+`tmp/release-1.4.6-tag-source-verification.json`. No old duration was reused or
+overridden. The passing 2h result applies to 1.4.6 only, not the 1.4.7 patch. The local implementation includes the documented minimal
 worker and bounded provider/import capabilities; remaining scope and production
 gates are not implied complete by the regular GitHub release channel.
 

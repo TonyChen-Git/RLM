@@ -1,13 +1,44 @@
 # Luma Chat — Development integration history
 
+The [1.4.7 corrective patch](RELEASE_NOTES_1.4.7.md) is ready for publication
+as of October 19. Final source `eeddc75` passes the complete local release gate:
+896 Swift tests and 48 Python contracts, each with one skip and zero failures;
+optimized arm64 compilation, ad-hoc packaging and archive/security checks pass.
+Hosted macOS CI passes 896 tests, two skips and zero failures, optimized
+compilation, archive 7/7 and soak harness 28/28 contracts. Linux worker CI passes
+ten tests, zero skips/failures, in 5.348 seconds. The HTTP fixture preserves byte
+order and verifies completion while its response stream remains open.
+All five final artifact hashes match the preceding candidate; exact archive and
+binary equivalence ties the final package to the October 19 limited native
+smoke (startup, idle Task, About 1.4.7 (14), clean quit). This is not a second UI
+run or external acceptance. Publication and version-bound soak remain pending.
+Exact attempts are in the [1.4.7 validation receipt](validation/1.4.7.json).
+Published 1.4.6 evidence follows.
+
 The Phase I–Q work below is integrated into the
-[1.4.6 build 13 release](RELEASE_NOTES_1.4.6.md), prepared for a regular GitHub
-Release from `main`. Its full release gate and limited native UI smoke pass:
+[1.4.6 build 13 release](RELEASE_NOTES_1.4.6.md), published on October 15 as a
+regular GitHub Release from `main`. Its local release gate and limited native
+UI smoke pass:
 886 Swift tests (one skip), 48 Python contracts (one Linux-only skip), VS Code
 17/17 and GitHub Action 14/14, all with zero failures. Ad-hoc arm64 packaging,
 archive/security checks, the extracted CLI version and About 1.4.6 (13) pass;
-the App exits cleanly. Publication, new-version soak, external acceptance and
-Apple production signing/notarization remain pending. This UI run did not
+the App exits cleanly. Linux worker CI now passes on tag and main (the tag
+runs 10 tests with zero skips/failures). Hosted macOS CI first failed with
+Swift 6.1.2 / Xcode 16.4 signal 11; Xcode 26.3 / Swift 6.2.4 then exposed
+ordinary type-checking errors. Post-publication `main` commits `c63f53a`,
+`8925875`, `081300c` and `0d9364b` pin that toolchain and make product/test
+calculation types explicit while preserving order and assertions. The final
+local focused run passes 45 tests, zero skips/failures (40.665 seconds);
+the complete hosted run then failed with 886 tests, two skips and eight
+failures (four unexpected). Full failure history is retained in the validation
+receipt; the exposed environment/sandbox/MCP issues are being fixed for 1.4.7. These changes are outside the immutable release ZIP.
+A fresh sequence against the exact release source launched October 15 at
+15:16:37 Asia/Taipei; actual 2h measurement began at 15:22:11 after inventory
+preparation. Its 2h run completed and qualifies: 7,227.507 seconds, 48 cycles,
+386 shards, zero failures. The following 8h run was interrupted and does not
+qualify; 24h/72h never began and no run remains active. These are 1.4.6 results,
+not 1.4.7 qualification. Longer soaks, external acceptance and Apple production
+signing/notarization remain pending. This UI run did not
 exercise Browser operations. Exact receipts and ZIP hash are in the version's
 release notes; historical 1.4.5 receipts below keep their original scope.
 

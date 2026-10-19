@@ -9,24 +9,18 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前狀態（2026-10-15）**：`1.4.6` build `13` 已完成 Phase I–Q
-> 整合編譯、測試、封裝及原生 UI smoke，準備從 `main` 發佈正式版 GitHub
-> Release。886 項 Swift 與 48 項 Python 檢查均為 0 failures，各 1 skip；
-> VS Code 17/17、GitHub Action 14/14 通過。新 App 的 About 顯示 1.4.6 (13)，
-> 正常退出；封裝 CLI 版本檢查通過。完整證據見
-> [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)。封裝使用 ad-hoc 簽章；
-> Apple Developer ID／公證／stapling、正式更新 feed 與外部驗收仍待完成。
-> 使用者自選模型、遠端主機與 local-first 的設計持續保留。
+> **待發佈版本（2026-10-19）**：`1.4.7` build `14` 已通過完整本機 gate
+> （896 項 Swift、48 項 Python，各 1 skip、0 failures）、arm64 封裝與安全檢查，
+> macOS CI 通過 896 項測試（2 skips、0 failures），Linux worker CI 通過 10 項
+> （0 skips、0 failures）。最終封裝與已通過有限原生 UI smoke 的檔案完全相符。
+> 正式發佈與本版長測尚待完成；詳見 [1.4.7 版本說明](docs/RELEASE_NOTES_1.4.7.md)。
 
-> **版本提升前的整合證據**：10 月 14 日 `1.4.5` development gate 通過
-> 886 項 Swift 測試（1 skip、0 failures）及 48 項 Python contracts
-> （1 skip、0 failures）。該最佳化封裝完成真實 Chrome 5/5 本機 fixture
-> 操作與 annotation UI 驗證，包含超過 68 秒的授權等待。
-> 同一批凍結輸入的 2h soak 已合格：7,207.592 秒、48 cycles、389 shards、
-> 0 failures；後續 8h 被中斷且不合格，24h／72h 尚未執行。
-> 這些歷史結果不計為新 `1.4.6` 的 soak。外部服務、麥克風、Linux CI、
-> 正式簽章／公證／更新驗收仍待完成。各階段的範圍與證據見
-> [差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
+> **發行與驗收界線**：目前已發佈的是
+> [GitHub Release v1.4.6](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.6)，
+> 已整合 Phase I–Q，使用 ad-hoc 簽章。Apple Developer ID／公證／stapling、
+> 正式更新 feed 與未執行的外部驗收仍待完成；各版本長測證據分別記錄。
+> 歷史驗證見 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)、
+> [開發整合紀錄](docs/RELEASE_NOTES_UNRELEASED.md)與[差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
 
 ## 能力總覽
 
@@ -97,8 +91,14 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 
 ## 建置與執行
 
-需求：macOS 14 或更新版本、Swift 6 toolchain，以及至少一個可連線且由使用者
-設定的模型 backend。`Package.swift` 提供桌面、CLI shim、updater 與 SDK 產品：
+需求：macOS 14 或更新版本，以及至少一個可連線且由使用者設定的模型 backend。
+原始碼建置的工具鏈以發行與 CI 記錄為準：本機發行 gate 使用 Apple Swift 6.4，
+目前 CI 固定 Xcode 26.3（build 17C529）／Apple Swift 6.2.4；1.4.7 最終候選
+hosted gate 已通過 896 項 Swift 測試（2 skips、0 failures）與最佳化編譯。
+其他 Swift 6 小版本未一律驗證；版本相容性與
+失敗紀錄見 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md) 與
+[1.4.7 修正版進度](docs/RELEASE_NOTES_1.4.7.md)。
+`Package.swift` 提供桌面、CLI shim、updater 與 SDK 產品：
 
 ```sh
 # 建立 debug products
@@ -355,11 +355,12 @@ docs/                           Architecture, roadmap, audit and release notes
   10 月 12 日封裝的 Steer／匯入還原 accessibility 驗收另有保留證據。
   2026-10-04 首次 2h 本機 soak 揭露的測試同步問題
   已修復；第二次 run 在 60 個完整 cycles、481 個 shards 後中斷，沒有完成結算，
-  兩次紀錄均不合格且原樣保留。尚無 qualifying 2h result。
-  10 月 14 日 15:24（台北）已啟動背景 2h → 8h → 24h → 72h 序列；
-  最新紀錄為首項 2h 準備 inventory，8h/24h/multi-day 尚未開始。
-  新 run 不沿用舊 run 時數或 cycles；完成與 qualification 檢查通過前不算驗收。
-  狀態見 `tmp/phase-iq-oct14-soak-suite/state.json`。本機整合／fixture soak
+  兩次紀錄均不合格且原樣保留。後續 10 月 14 日的 1.4.5 整合來源，以及
+  10 月 15 日精確的 1.4.6 發行來源，分別取得合格的 2h 結果；兩個序列的
+  8h 均中斷，24h／72h 未開始。目前沒有仍在執行的序列，1.4.7 尚無
+  自己的 qualifying soak。新 run 不沿用舊 run 時數或 cycles；完成與
+  qualification 檢查通過前不算驗收。證據見
+  [1.4.6 驗證紀錄](docs/validation/1.4.6.json)。本機整合／fixture soak
   不替代外部服務驗收；dry-run 只證明 profile、inventory 與 selector 契約有效。
 - live SSH host、真實 Ollama/OpenAI-compatible backend、native Computer Use、
   VS Code 與 GitHub hosted runner 仍需要各自授權環境的 acceptance。
@@ -399,6 +400,7 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
+- [1.4.7 patch release preparation](docs/RELEASE_NOTES_1.4.7.md)
 - [1.4.6 release notes](docs/RELEASE_NOTES_1.4.6.md)
 - [1.4.5 development prerelease notes](docs/RELEASE_NOTES_1.4.5.md)
 - [1.4.4 development prerelease notes](docs/RELEASE_NOTES_1.4.4.md)

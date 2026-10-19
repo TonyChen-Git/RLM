@@ -1,0 +1,603 @@
+{
+  "schemaVersion": 1,
+  "version": "1.4.7",
+  "build": "14",
+  "branch": "main",
+  "tag": "v1.4.7",
+  "publicationChannel": "regular release (not prerelease)",
+  "packagingMode": "development",
+  "signing": "ad-hoc",
+  "appleNotarized": false,
+  "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+  "sourceFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
+  "sourceFileCount": 341,
+  "gate": {
+    "status": "passed",
+    "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+    "log": "tmp/release-1.4.7-ready.log",
+    "resultReceipt": "tmp/release-1.4.7-ready-result.json",
+    "sourceReceipt": "tmp/release-1.4.7-ready-source-receipt.json",
+    "exitCode": 0,
+    "sourceReceiptMatches": true,
+    "swift": {
+      "tests": 896,
+      "skipped": 1,
+      "failures": 0,
+      "seconds": 255.063
+    },
+    "python": {
+      "tests": 48,
+      "skipped": 1,
+      "failures": 0,
+      "suites": {
+        "archive": 7,
+        "soak": 28,
+        "security": 3,
+        "worker": 10
+      },
+      "suiteSeconds": {
+        "archive": 2.245,
+        "soak": 4.571,
+        "security": 0.007,
+        "worker": 13.509
+      }
+    },
+    "debugBuildSeconds": 404.04,
+    "optimizedBuildSeconds": 184.48,
+    "archiveAndExtractedAppVerified": true,
+    "securityAuditPassed": true,
+    "extractedCLIVersion": "LumaChat 1.4.7"
+  },
+  "focused": {
+    "tests": 71,
+    "skipped": 1,
+    "failures": 0,
+    "seconds": 43.938,
+    "sourceCommit": "c90b394d2ba58dc055c06e5af6667f05d8dcd224",
+    "scope": "MCP, project validation and PTY tests before final status-wrapper correction; not the final full gate"
+  },
+  "node": {
+    "vscode": {
+      "tests": 17,
+      "failures": 0
+    },
+    "githubAction": {
+      "tests": 14,
+      "failures": 0
+    }
+  },
+  "attempts": [
+    {
+      "sourceCommit": "88821752ead38bf6fa2397cf3d90d161d4417d59",
+      "local": {
+        "tests": 894,
+        "skipped": 1,
+        "failures": 1,
+        "seconds": 248.268,
+        "exitCode": 1
+      },
+      "hostedMacOS": {
+        "runID": 38837294966,
+        "tests": 894,
+        "skipped": 2,
+        "failures": 2,
+        "seconds": 274.91,
+        "conclusion": "failure"
+      },
+      "diagnostics": [
+        "New OpenSSL fixture referenced absent /usr/bin/test; corrected to /bin/test",
+        "Hosted large MCP response timed out; later diagnostics isolated fixture timer drift, not synchronous redaction"
+      ],
+      "preservedAt": "tmp/release-1.4.7-attempt1/",
+      "linuxWorker": {
+        "runID": 38837304051,
+        "conclusion": "success",
+        "tests": 10,
+        "skipped": 0,
+        "failures": 0,
+        "seconds": 5.605
+      }
+    },
+    {
+      "sourceCommit": "c90b394d2ba58dc055c06e5af6667f05d8dcd224",
+      "status": "intentionally_interrupted",
+      "localReceipt": "tmp/release-1.4.7-retry-result.json",
+      "reason": "Review found simple status variables bypassed all developer shims for wrapped TerminalSession commands; stopped before packaging to correct it",
+      "hostedMacOSRunID": 38904852630,
+      "qualificationEligible": false,
+      "localRecordedStatus": "failed",
+      "localExitCode": 1,
+      "interruptionReceipt": "tmp/release-1.4.7-retry-interruption.json",
+      "hostedMacOSConclusion": "cancelled",
+      "hostedMacOSURL": "https://github.com/TonyChen-Git/RLM/actions/runs/38904852630",
+      "linuxWorker": {
+        "runID": 38904917612,
+        "url": "https://github.com/TonyChen-Git/RLM/actions/runs/38904917612",
+        "sourceCommit": "c90b394d2ba58dc055c06e5af6667f05d8dcd224",
+        "conclusion": "success",
+        "tests": 10,
+        "skipped": 0,
+        "failures": 0,
+        "seconds": 10.221,
+        "scope": "Linux worker contracts; no real SSH host acceptance"
+      }
+    },
+    {
+      "sourceCommit": "744fb7318041a4336a107ef74a3fdcfbb7c8a7a2",
+      "sourceFingerprint": "8c2560cb10b219e6d9308bf93d4b130acfc3ae3b4bc607224e28e9adde1d76f4",
+      "gate": {
+        "status": "passed",
+        "sourceCommit": "744fb7318041a4336a107ef74a3fdcfbb7c8a7a2",
+        "log": "tmp/release-1.4.7-final.log",
+        "resultReceipt": "tmp/release-1.4.7-final-result.json",
+        "sourceReceipt": "tmp/release-1.4.7-final-source-receipt.json",
+        "exitCode": 0,
+        "sourceReceiptMatches": true,
+        "swift": {
+          "tests": 896,
+          "skipped": 1,
+          "failures": 0,
+          "seconds": 246.439
+        },
+        "python": {
+          "tests": 48,
+          "skipped": 1,
+          "failures": 0,
+          "suites": {
+            "archive": 7,
+            "soak": 28,
+            "security": 3,
+            "worker": 10
+          }
+        },
+        "debugBuildSeconds": 366.68,
+        "optimizedBuildSeconds": 185.57,
+        "archiveAndExtractedAppVerified": true,
+        "securityAuditPassed": true,
+        "extractedCLIVersion": "LumaChat 1.4.7"
+      },
+      "ci": {
+        "macOS": {
+          "runID": 38906726117,
+          "url": "https://github.com/TonyChen-Git/RLM/actions/runs/38906726117",
+          "status": "completed",
+          "toolchain": "Xcode 26.3 build 17C529 / Apple Swift 6.2.4",
+          "sourceCommit": "744fb7318041a4336a107ef74a3fdcfbb7c8a7a2",
+          "conclusion": "failure",
+          "tests": 896,
+          "skipped": 2,
+          "failures": 2,
+          "unexpectedFailures": 1,
+          "seconds": 244.32,
+          "diagnostic": "Both paced 4 MiB MCP fixture responses hit 10s deadline; later diagnostics isolated incomplete fixture delivery",
+          "log": "tmp/release-1.4.7-macos-final-ci.log"
+        },
+        "linuxWorker": {
+          "runID": 38906788610,
+          "url": "https://github.com/TonyChen-Git/RLM/actions/runs/38906788610",
+          "sourceCommit": "744fb7318041a4336a107ef74a3fdcfbb7c8a7a2",
+          "status": "completed",
+          "conclusion": "success",
+          "tests": 10,
+          "skipped": 0,
+          "failures": 0,
+          "seconds": 8.819,
+          "scope": "Linux worker contracts; no real SSH host acceptance",
+          "log": "tmp/release-1.4.7-linux-final-ci.log"
+        }
+      },
+      "artifacts": [
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.archive-manifest.json",
+          "bytes": 5073,
+          "sha256": "cb8797978d80d82ff7c225c31491bb02eddfa1423002963587b598eaf1121d3f"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.provenance.json",
+          "bytes": 886,
+          "sha256": "30b73e0ebc29d1fc4dd7ab8749a330e4fae12f75d18ecbb85e2a1a1312eb1b9d"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.sbom.spdx.json",
+          "bytes": 786,
+          "sha256": "60b46f26ea328395eb90a91e0f24fd474b96015edf945f4a1d81bd9156e733fd"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.sha256",
+          "bytes": 91,
+          "sha256": "ab7214878b23fa5bcac50cfddd181c5888c682f3a5c4dbeeecd1165826971059"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.zip",
+          "bytes": 11441071,
+          "sha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856"
+        }
+      ],
+      "preservedAt": "tmp/release-1.4.7-744fb73-package/",
+      "qualificationEligible": false,
+      "reason": "Local gate passed; hosted large MCP fixture timed out before complete delivery"
+    },
+    {
+      "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+      "sourceFingerprint": "88aed53e06a0465f0bb678e0a29c3a0e03100b87b6977888748099a159ba8533",
+      "gate": {
+        "status": "passed",
+        "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+        "log": "tmp/release-1.4.7-verified.log",
+        "resultReceipt": "tmp/release-1.4.7-verified-result.json",
+        "sourceReceipt": "tmp/release-1.4.7-verified-source-receipt.json",
+        "exitCode": 0,
+        "sourceReceiptMatches": true,
+        "swift": {
+          "tests": 896,
+          "skipped": 1,
+          "failures": 0,
+          "seconds": 248.766
+        },
+        "python": {
+          "tests": 48,
+          "skipped": 1,
+          "failures": 0,
+          "suites": {
+            "archive": 7,
+            "soak": 28,
+            "security": 3,
+            "worker": 10
+          }
+        },
+        "debugBuildSeconds": 319.42,
+        "optimizedBuildSeconds": 190.09,
+        "archiveAndExtractedAppVerified": true,
+        "securityAuditPassed": true,
+        "extractedCLIVersion": "LumaChat 1.4.7"
+      },
+      "ci": {
+        "macOS": {
+          "runID": 39040583738,
+          "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39040583738",
+          "status": "completed",
+          "toolchain": "Xcode 26.3 build 17C529 / Apple Swift 6.2.4",
+          "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+          "conclusion": "failure",
+          "tests": 896,
+          "skipped": 2,
+          "failures": 1,
+          "unexpectedFailures": 1,
+          "seconds": 262.973,
+          "diagnostic": "Large MCP stdio fixtures pass; GET SSE fixture fails malformed JSON-RPC response; investigation pending",
+          "log": "tmp/release-1.4.7-macos-verified-ci.log"
+        },
+        "linuxWorker": {
+          "runID": 39040615622,
+          "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39040615622",
+          "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+          "status": "completed",
+          "conclusion": "success",
+          "tests": 10,
+          "skipped": 0,
+          "failures": 0,
+          "seconds": 7.933,
+          "scope": "Linux worker contracts; no real SSH host acceptance",
+          "log": "tmp/release-1.4.7-linux-verified-ci.log"
+        }
+      },
+      "nativeSmoke": {
+        "status": "passed",
+        "receipt": "tmp/release-1.4.7-ui/acceptance.json",
+        "scope": "Native packaged startup, idle Task, About version and clean quit only; no Browser/model/microphone operations",
+        "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+        "archiveSha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856",
+        "version": "1.4.7",
+        "build": "14",
+        "taskMessageCount": 0,
+        "browserOperationCount": 0,
+        "exitCode": 0
+      },
+      "artifacts": [
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.archive-manifest.json",
+          "bytes": 5073,
+          "sha256": "cb8797978d80d82ff7c225c31491bb02eddfa1423002963587b598eaf1121d3f"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.provenance.json",
+          "bytes": 886,
+          "sha256": "30b73e0ebc29d1fc4dd7ab8749a330e4fae12f75d18ecbb85e2a1a1312eb1b9d"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.sbom.spdx.json",
+          "bytes": 786,
+          "sha256": "60b46f26ea328395eb90a91e0f24fd474b96015edf945f4a1d81bd9156e733fd"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.sha256",
+          "bytes": 91,
+          "sha256": "ab7214878b23fa5bcac50cfddd181c5888c682f3a5c4dbeeecd1165826971059"
+        },
+        {
+          "path": "dist/LumaChat-1.4.7-arm64.zip",
+          "bytes": 11441071,
+          "sha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856"
+        }
+      ],
+      "checkpoint": "tmp/release-1.4.7-bb26729/verification.json",
+      "qualificationEligible": false,
+      "reason": "Complete local gate and packaged smoke pass; hosted STDIO fixtures pass but unordered GET SSE fixture failed; test-only correction follows",
+      "checkpointScope": "Top-level bb26729 gate, CI and artifacts only; historical nested attempts are superseded by the corrected records in this receipt"
+    }
+  ],
+  "ci": {
+    "macOS": {
+      "runID": 39190608251,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39190608251",
+      "status": "completed",
+      "toolchain": "Xcode 26.3 build 17C529 / Apple Swift 6.2.4",
+      "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+      "conclusion": "success",
+      "tests": 896,
+      "skipped": 2,
+      "failures": 0,
+      "unexpectedFailures": 0,
+      "seconds": 219.665,
+      "log": "tmp/release-1.4.7-macos-ready-ci.log",
+      "debugBuildSeconds": 186.12,
+      "optimizedDesktopBuildPassed": true,
+      "pythonContractTests": 35,
+      "pythonFailures": 0,
+      "pythonSkipped": 0,
+      "skipReasons": [
+        "System top is setuid and blocked by the PTY sandbox",
+        "Homebrew htop unavailable on hosted runner"
+      ]
+    },
+    "linuxWorker": {
+      "runID": 39226505634,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39226505634",
+      "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+      "status": "completed",
+      "scope": "Linux worker contracts; no real SSH host acceptance",
+      "conclusion": "success",
+      "tests": 10,
+      "skipped": 0,
+      "failures": 0,
+      "seconds": 5.348,
+      "log": "tmp/release-1.4.7-linux-ready-ci.log"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "dist/LumaChat-1.4.7-arm64.archive-manifest.json",
+      "bytes": 5073,
+      "sha256": "cb8797978d80d82ff7c225c31491bb02eddfa1423002963587b598eaf1121d3f"
+    },
+    {
+      "path": "dist/LumaChat-1.4.7-arm64.provenance.json",
+      "bytes": 886,
+      "sha256": "30b73e0ebc29d1fc4dd7ab8749a330e4fae12f75d18ecbb85e2a1a1312eb1b9d"
+    },
+    {
+      "path": "dist/LumaChat-1.4.7-arm64.sbom.spdx.json",
+      "bytes": 786,
+      "sha256": "60b46f26ea328395eb90a91e0f24fd474b96015edf945f4a1d81bd9156e733fd"
+    },
+    {
+      "path": "dist/LumaChat-1.4.7-arm64.sha256",
+      "bytes": 91,
+      "sha256": "ab7214878b23fa5bcac50cfddd181c5888c682f3a5c4dbeeecd1165826971059"
+    },
+    {
+      "path": "dist/LumaChat-1.4.7-arm64.zip",
+      "bytes": 11441071,
+      "sha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856"
+    }
+  ],
+  "nativeSmoke": {
+    "status": "passed",
+    "receipt": "tmp/release-1.4.7-ui/acceptance.json",
+    "scope": "Native packaged startup, idle Task, About version and clean quit only; no Browser/model/microphone operations",
+    "sourceCommit": "bb2672968f0e3b57ffe8cee193a18c59b50262a5",
+    "archiveSha256": "44d2ceb9cd7e45dc81e4a12fa78c0058cd1b880404f24843ed55442c7c8df856",
+    "version": "1.4.7",
+    "build": "14",
+    "taskMessageCount": 0,
+    "browserOperationCount": 0,
+    "exitCode": 0,
+    "appliesToFinalPackageViaExactArtifactIdentity": true,
+    "artifactIdentityReceipt": "tmp/release-1.4.7-native-artifact-equivalence.json"
+  },
+  "publication": {
+    "status": "pending"
+  },
+  "releaseSoak": {
+    "status": "not_started",
+    "qualified": false,
+    "previousVersionEvidenceReused": false
+  },
+  "pending": [
+    "Publication and uploaded asset verification",
+    "Version-bound 2h/8h/24h/multi-day soak",
+    "External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance",
+    "Developer ID signing, notarization, stapling, production update feed and rollback acceptance"
+  ],
+  "localEvidenceOnly": [
+    {
+      "path": "tmp/release-1.4.7-source-receipt.json",
+      "sha256": "90e0c4259cd1620c40ca91e5458a3d5b30691a8b4d7e8846c3548527ffe96912"
+    },
+    {
+      "path": "tmp/release-1.4.7-result.json",
+      "sha256": "89705ae401b8c1fdf715941bd44e8a68cec450bfd955978bf4d9ffaad39495f8"
+    },
+    {
+      "path": "tmp/release-1.4.7-macos-ci.log",
+      "sha256": "54ed28159591daef1bf4e3506d86c4c6ed251dbbe6142e2698353fbd608658e4"
+    },
+    {
+      "path": "tmp/release-1.4.7-focused.log",
+      "sha256": "b9fab2226e6c719c514d0cfc80e805714e7b208fd8ed633deed22857c0454de4"
+    },
+    {
+      "path": "tmp/release-1.4.7-focused.result.json",
+      "sha256": "f81968d38f237e3a75195070cb7fdbeb5534ab6f25a7551817535ff1e7629b32"
+    },
+    {
+      "path": "tmp/release-1.4.7-retry-source-receipt.json",
+      "sha256": "f2e761999557bbbf54ef518eb6dd4dc1e5d2eb175d33afa65591e384892ed0ea"
+    },
+    {
+      "path": "tmp/release-1.4.7-vscode.log",
+      "sha256": "99e7bdc4e6d8029607b40630dddbe8b20c72ea4d4ee505557572888262cd0874"
+    },
+    {
+      "path": "tmp/release-1.4.7-action.log",
+      "sha256": "4fd49990571e9062628acf61ce3ea6b1d330ba9cbb041d009652bc5e104cd821"
+    },
+    {
+      "path": "tmp/release-1.4.7-final-source-receipt.json",
+      "sha256": "241f0f4f561f7fd0122c007bb7b303e42db7c7a30f1faeb8fee2f0a2700d6f0b"
+    },
+    {
+      "path": "tmp/release-1.4.7-wrapper-focused.log",
+      "sha256": "35bfd5fd22ff907c5cb485009f311820384bca8181f2f04b70e2719dcda4ef17"
+    },
+    {
+      "path": "tmp/release-1.4.7-wrapper-focused-result.json",
+      "sha256": "e58ee7db802c54f40ff0d5fc34f5bf1dd1e7b8134e4f655a6fd6f0fda5d09728"
+    },
+    {
+      "path": "tmp/release-1.4.7-retry-result.json",
+      "sha256": "78e1c28bb73a714602ef2ecce92b6f22852a76914ec8d1a5fd159c9357be333e"
+    },
+    {
+      "path": "tmp/release-1.4.7-retry-interruption.json",
+      "sha256": "0ab3eae5d62710d46e815b871176d2b548b7175ee87cee3671337c5d25ce0bf4"
+    },
+    {
+      "path": "tmp/release-1.4.7-linux-final-ci.log",
+      "sha256": "f80ce323880e8146f9a8ecd3aba2c00edfe4e013168a7dc2a95900f769300948"
+    },
+    {
+      "path": "tmp/release-1.4.7-verified-source-receipt.json",
+      "sha256": "433d41117fb4480e98af548cba73e78ed5d06af48f7393910ff91023be3cc803"
+    },
+    {
+      "path": "tmp/release-1.4.7-verified-result.json",
+      "sha256": "99093cbd0f3fb0a2de9724caec57419040c02a8220881c06dd085125c1739daf"
+    },
+    {
+      "path": "tmp/release-1.4.7-verified.log",
+      "sha256": "ab546a07f3b4f78a06d9278e48eca70ec646c1ed33eb5ef1e3ecbdac84210e4f"
+    },
+    {
+      "path": "tmp/release-1.4.7-macos-verified-ci.log",
+      "sha256": "ea76a3fcdad50529cd5add7f5b0ff8e4158781b237d49c142c67fb88c0c4ab8c"
+    },
+    {
+      "path": "tmp/release-1.4.7-linux-verified-ci.log",
+      "sha256": "4405604d3b50cbca45b8a313cb51d13c6c0cc4c08d5b9eecafcce9e90c0d5c05"
+    },
+    {
+      "path": "tmp/release-1.4.7-mcp-timing-ci.log",
+      "sha256": "c95146723bea4784c5bc2908a816f3e78c07d490ded6649c73bf527d3d713525"
+    },
+    {
+      "path": "tmp/release-1.4.7-pacing-experiment.json",
+      "sha256": "915642c3b12147a55dadd8ae62478c0e47d57ce6eeba0c8b3ae8f46af4c0d8cc"
+    },
+    {
+      "path": "tmp/release-1.4.7-pacing-experiment-yield.json",
+      "sha256": "0974d4cc6dd51f97e6be894f8359038e021cf04e2b63eaeea1a86b9fa1638292"
+    },
+    {
+      "path": "tmp/release-1.4.7-ready-source-receipt.json",
+      "sha256": "b63116d0d0b2e1173ac8a689513749aeb48e0215d1859d080dd895a8afd4b259"
+    },
+    {
+      "path": "tmp/release-1.4.7-macos-ready-ci.log",
+      "sha256": "ed45906b484cca707dd58c66ef61e8b8e976383ef150e81053f19c7e304d2542"
+    },
+    {
+      "path": "tmp/release-1.4.7-http-ordering-focused.log",
+      "sha256": "7d1310504d469fa0ec0b6c1a28d086f206aa323c92aa845680aa902aef5d1538"
+    },
+    {
+      "path": "tmp/release-1.4.7-http-ordering-focused-result.json",
+      "sha256": "ea708d3e5970bccbd42e3cbaf7d7a00b954cdffde53ef90a294a5bcc9f605c80"
+    },
+    {
+      "path": "tmp/release-1.4.7-ui/acceptance.json",
+      "sha256": "5a6617edb44161102760a8472384fc92a923b85a102de296171bb3477b873e80"
+    },
+    {
+      "path": "tmp/release-1.4.7-linux-ready-ci.log",
+      "sha256": "ddeaa5b6a7a8e0fd0e9a79ea4af2f6dfac9d303357d114e2c35f90775ac55ac2"
+    },
+    {
+      "path": "tmp/release-1.4.7-ready-result.json",
+      "sha256": "eff4b5c2e2752e1bd63f02b1ed6d38c624374266f5efbadbb906abd38f6e292a"
+    },
+    {
+      "path": "tmp/release-1.4.7-ready.log",
+      "sha256": "0ce8ab8467c657aa31d02b19ba916be069c82ebfa0fe79e184098bf194cc5dbf"
+    },
+    {
+      "path": "tmp/release-1.4.7-native-artifact-equivalence.json",
+      "sha256": "05985779493089d1808b6caa5f69b6899b8215db65bfd12240641c03b072391d"
+    },
+    {
+      "path": "tmp/release-1.4.7-cleanup.json",
+      "sha256": "7dc600776d928068b995033692e238a9a3895d9644398a64b9c2076c71394da1"
+    }
+  ],
+  "wrapperFocused": {
+    "sourceCommit": "744fb7318041a4336a107ef74a3fdcfbb7c8a7a2",
+    "tests": 34,
+    "skipped": 0,
+    "failures": 0,
+    "seconds": 67.723,
+    "exitCode": 0,
+    "suites": [
+      "ProjectValidationToolTests",
+      "AdvancedGitServiceTests"
+    ],
+    "scope": "TerminalSession wrapper, developer shim boundaries and real Git operations; not the final full gate",
+    "log": "tmp/release-1.4.7-wrapper-focused.log",
+    "resultReceipt": "tmp/release-1.4.7-wrapper-focused-result.json"
+  },
+  "timingDiagnosis": {
+    "diagnosticRunID": 38984361251,
+    "sourceCommit": "49ed1768896197cbf1bdc1eade633c89da1a93a2",
+    "status": "confirmed_and_corrected",
+    "diagnosticLog": "tmp/release-1.4.7-mcp-timing-ci.log",
+    "observations": [
+      "4 MiB response incomplete at 10s deadline; 3 MiB received at 9.096s",
+      "1 MiB log and decode completed in approximately 3ms",
+      "257 relative 10ms sleeps take 25.098s under background policy; absolute monotonic schedule approximately 2.57s"
+    ],
+    "correction": "Absolute monotonic pacing, yielding after at most eight catch-up chunks; payload/chunk size/timeout unchanged; temporary diagnostics removed",
+    "hostedRegressionPassed": true,
+    "regressionRunID": 39040583738
+  },
+  "httpFixtureCorrection": {
+    "sourceCommit": "eeddc7508348fe236c51d46b4cab55b914f2ff13",
+    "productionCodeChanged": false,
+    "reason": "Independent concurrent chunk/finish timers could reorder ordered HTTP bytes under runner scheduling delays",
+    "correction": "Serial chained callbacks with synchronized cancellation; deterministic reversed deadlines preserve byte order; GET/POST assertions require a matching reply while stream stays open",
+    "focused": {
+      "tests": 8,
+      "skipped": 0,
+      "failures": 0,
+      "seconds": 1.187,
+      "log": "tmp/release-1.4.7-http-ordering-focused.log",
+      "resultReceipt": "tmp/release-1.4.7-http-ordering-focused-result.json"
+    },
+    "hostedRegressionPassed": true,
+    "hostedRunID": 39190608251
+  },
+  "cleanup": {
+    "receipt": "tmp/release-1.4.7-cleanup.json",
+    "removedBytes": 3805715145,
+    "scope": "Rebuildable caches only; release archives, source snapshots, logs and receipts preserved",
+    "completedAt": "2026-10-19T09:14:56.841135+00:00"
+  }
+}

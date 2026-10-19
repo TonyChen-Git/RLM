@@ -159,6 +159,32 @@ MCP currently implements the `2025-06-18` initialize lifecycle;
 other protocol revisions fail with a visible compatibility diagnostic and no
 tool registration. Modern stateless MCP support remains pending.
 
+STDIO newline framing scans only newly received bytes while a partial message
+is retained. This avoids repeatedly rescanning a large response across many
+pipe reads. Complete frames and unfinished tails retain the 16 MiB bound;
+oversized input clears the retained frame buffer and fails the transport.
+STDOUT diagnostic sanitization is limited to 64 KiB per complete frame. Larger
+frames produce only a byte-count/reason marker, without any payload prefix;
+the complete response still reaches wire decoding and typed validation. This
+keeps diagnostic redaction from consuming a large response's request deadline
+and avoids disclosing secrets split by truncation. The 16 MiB wire limit and
+typed content limits remain unchanged.
+
+The fragmented STDIO test producer uses absolute monotonic pacing and yields
+after at most eight catch-up writes. It retains 4 MiB responses, 16 KiB writes
+and the ten-second client deadline. Diagnostic hosted evidence showed an
+incomplete frame (3 MiB received by 9.096 seconds), while 1 MiB logging/decoding
+took about three milliseconds; background timer coalescing had accumulated over
+relative sleeps. The corrected STDIO suite passes hosted CI on `bb26729`.
+The HTTP fixture likewise serializes callbacks in wire byte order, even with
+reversed chunk deadlines, and cancellation stops scheduled deliveries. GET and
+POST SSE tests leave their stream open and verify completion after the matching
+event, avoiding a scheduler-dependent elapsed-time assertion. These test-only
+corrections in `eeddc75` pass the full hosted gate (896 Swift tests, two skips,
+zero failures); production transport deadlines are unchanged. Fixture results
+do not establish external-provider acceptance. Full release qualification is
+tracked in [1.4.7 notes](RELEASE_NOTES_1.4.7.md).
+
 ## Q — Distribution and verification
 
 `Scripts/release.sh` contains distinct ad-hoc development and production
@@ -169,6 +195,15 @@ and Linux CI exercises the Python worker. This is a cross-platform worker
 backend, not a non-macOS desktop port. Production signing, the published feed,
 packaged native UI, external SSH/MCP/PR/Browser/Computer Use and 2h/8h/24h/
 multi-day soak require real evidence; an unexecuted workflow is not acceptance.
+
+The 1.4.7 final candidate `eeddc75` passes its complete local gate and arm64
+package (896 Swift tests and 48 Python contracts, each with one skip and zero
+failures), hosted macOS gate (896 tests, two skips, zero failures), and Linux
+worker CI (ten tests, zero skips/failures). Its archive and binary match the
+October 19 native-smoke artifact exactly. That smoke covers startup, an idle
+Task, About and clean quit; it does not add external or interactive feature
+acceptance. Publication and a fresh version-bound soak remain pending. Exact
+source, digest and run receipts are in [1.4.7 notes](RELEASE_NOTES_1.4.7.md).
 
 The eight soak categories also exercise the Phase I–Q Swift regressions:
 memory/imports in Agent, SSH/worker authority in PTY, webhook/PR in Automation,
