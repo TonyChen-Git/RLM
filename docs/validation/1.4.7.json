@@ -457,7 +457,7 @@
     "receipt": "tmp/release-1.4.7-publication.json"
   },
   "releaseSoak": {
-    "status": "preparing",
+    "status": "failed",
     "qualified": false,
     "previousVersionEvidenceReused": false,
     "sourceTag": "v1.4.7",
@@ -465,25 +465,116 @@
     "sourceFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
     "trackedSnapshotFilesVerified": 464,
     "sourceFileCount": 341,
-    "controllerStartedAt": "2026-10-19T15:07:46Z",
+    "controllerStartedAt": "2026-10-20T06:37:55Z",
     "profiles": [
       "2h",
       "8h",
       "24h",
       "multi-day"
     ],
-    "activeProfile": "2h",
-    "activeRunID": "9e7bfc70-4fe5-411c-af72-c89055c0f18d",
-    "controllerState": "tmp/release-1.4.7-soak-suite/state.json",
-    "runState": "tmp/release-1.4.7-tag-source/tmp/soak/9e7bfc70-4fe5-411c-af72-c89055c0f18d/state.json",
-    "startCheckpoint": "tmp/release-1.4.7-soak-start-checkpoint.json",
+    "activeProfile": null,
+    "activeRunID": null,
+    "controllerState": "tmp/release-1.4.7-soak-retry2-suite/state.json",
+    "runState": "tmp/release-1.4.7-tag-source/tmp/soak/b63ab86f-26b4-42af-93b5-40aff7289d16/state.json",
+    "startCheckpoint": "tmp/release-1.4.7-soak-retry2-launch-checkpoint.json",
     "scope": "Version-bound local integration/failure-injection soak; no external-provider acceptance; qualification requires full uninterrupted duration after preparation",
-    "statusAsOf": "2026-10-19T15:08:58.623118+00:00"
+    "statusAsOf": "2026-10-20T09:19:07Z",
+    "previousLaunchCheckpoint": {
+      "status": "preparing",
+      "qualified": false,
+      "previousVersionEvidenceReused": false,
+      "sourceTag": "v1.4.7",
+      "sourceCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+      "sourceFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
+      "trackedSnapshotFilesVerified": 464,
+      "sourceFileCount": 341,
+      "controllerStartedAt": "2026-10-19T15:07:46Z",
+      "profiles": [
+        "2h",
+        "8h",
+        "24h",
+        "multi-day"
+      ],
+      "activeProfile": "2h",
+      "activeRunID": "9e7bfc70-4fe5-411c-af72-c89055c0f18d",
+      "controllerState": "tmp/release-1.4.7-soak-suite/state.json",
+      "runState": "tmp/release-1.4.7-tag-source/tmp/soak/9e7bfc70-4fe5-411c-af72-c89055c0f18d/state.json",
+      "startCheckpoint": "tmp/release-1.4.7-soak-start-checkpoint.json",
+      "scope": "Version-bound local integration/failure-injection soak; no external-provider acceptance; qualification requires full uninterrupted duration after preparation",
+      "statusAsOf": "2026-10-19T15:08:58.623118+00:00"
+    },
+    "completedAttemptsCheckpoint": "tmp/release-1.4.7-soak-oct20-checkpoint.json",
+    "qualificationByProfile": {
+      "2h": {
+        "status": "qualified",
+        "runID": "9e7bfc70-4fe5-411c-af72-c89055c0f18d"
+      },
+      "8h": {
+        "status": "pending",
+        "qualified": false,
+        "attempts": 3
+      },
+      "24h": {
+        "status": "not_started",
+        "qualified": false
+      },
+      "multi-day": {
+        "status": "not_started",
+        "durationHours": 72,
+        "qualified": false
+      }
+    },
+    "completedAttempts": [
+      {
+        "profile": "2h",
+        "runID": "9e7bfc70-4fe5-411c-af72-c89055c0f18d",
+        "status": "completed",
+        "qualified": true,
+        "continuousSeconds": 7257.719,
+        "cycles": 52,
+        "completedShards": 418,
+        "failures": 0
+      },
+      {
+        "profile": "8h",
+        "runID": "9c815775-939e-47f0-b262-2c7eb3f0be45",
+        "status": "failed",
+        "qualified": false,
+        "continuousSeconds": 27071.07,
+        "cycles": 187,
+        "completedShards": 1499,
+        "reason": "452-second clamshell sleep on battery; clock continuity guard rejected result"
+      },
+      {
+        "profile": "8h",
+        "runID": "3d1b6070-5451-4379-a5c3-345c7487e35c",
+        "status": "interrupted",
+        "qualified": false,
+        "continuousSeconds": 7588.814,
+        "cycles": 51,
+        "completedShards": 412,
+        "exitCode": 130,
+        "reason": "Interruption signal; sender and exact signal not recorded"
+      },
+      {
+        "profile": "8h",
+        "runID": "b63ab86f-26b4-42af-93b5-40aff7289d16",
+        "status": "failed",
+        "qualified": false,
+        "continuousSeconds": 9317.128,
+        "cycles": 64,
+        "completedShards": 513,
+        "exitCode": 1,
+        "reason": "RuntimeError: soak shard pty failed with exit 1",
+        "failureCount": 1
+      }
+    ],
+    "lastAttemptCheckpoint": "tmp/release-1.4.7-soak-retry2-failure-checkpoint.json"
   },
   "pending": [
-    "Version-bound 2h/8h/24h/multi-day soak",
-    "External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance",
-    "Developer ID signing, notarization, stapling, production update feed and rollback acceptance"
+    "Version-bound 8h/24h/multi-day soak; 2h qualifies",
+    "External SSH/MCP/PR/OAuth/model acceptance; requested targets deferred by user",
+    "Native annotation write, microphone recognition/navigation interruption, audible output and actual Computer Use capture/action acceptance"
   ],
   "localEvidenceOnly": [
     {
@@ -629,6 +720,191 @@
     {
       "path": "tmp/release-1.4.7-soak-start-checkpoint.json",
       "sha256": "ce6250efce2abb5c1507abd587b08c68722f2d815fdbdcb3e7a8441b8fa7b6a5"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-ci-acceptance.json",
+      "bytes": 3018,
+      "sha256": "9a0008225eab3622149eabb818a509dd659c5e45ebd6e7be74e88219fa5630fa"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-macos-ci.log",
+      "bytes": 467782,
+      "sha256": "9c09e6a5fad90bee2ed76366d95750216e51e88315381cd2d66d841b6e513efe"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-linux-ci.log",
+      "bytes": 21526,
+      "sha256": "60084bc5ede1593a296888a1da250ab85d2d536a915c7245e43b3335480e8178"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-macos-ci-run.json",
+      "bytes": 1799,
+      "sha256": "1eae72417edf7a08fd7b431c732c29bc98835b9b3334cfacfb4abd671545c4bf"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-linux-ci-run.json",
+      "bytes": 1461,
+      "sha256": "4d7039d2a32a54de8986d1de6067c547dc7986fd210ab93b85372c4148e1dc83"
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-oct20-checkpoint.json",
+      "sha256": "3e60aed217cb16f6849023f5fd91ba9ad6e0676e404d3a7009f6e4644058a115",
+      "bytes": 24589
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-retry2-launch-checkpoint.json",
+      "sha256": "655efea5877196ebc3f2b4d60c177969cf2ebe414b023c13103765c388fdcf5d",
+      "bytes": 3323
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-8h-diagnosis/diagnosis.json",
+      "sha256": "2e786d6d81bc0a1385d76ef4c70649861e7d3e77cdf4e6a7a0d835efb7098506",
+      "bytes": 3373
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/acceptance.json",
+      "sha256": "8e642e633758a70aae9c06a17ae7239c2be17221a3464da49595437589d91ada",
+      "bytes": 5087
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/preparation.json",
+      "sha256": "e568f5739dd6a5af726e426c9cb674c9b778a9ad6c2319175e6b85f934b4bda3",
+      "bytes": 655
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/setup-validation.json",
+      "sha256": "874fa4cfcc813c64a48954aa08ba63f515eb9e000b995b21de89cc945139271a",
+      "bytes": 1207
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/receipt.json",
+      "sha256": "b120ce1b2d749e8ebdcacff55598e2bd94965371e12a17461cb2f9ccf40b259b",
+      "bytes": 1924
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/requests.metadata.jsonl",
+      "sha256": "4d6fea0a12bcdf5cf2d64bd62ba329c74ee5eff2a79ada25772c21853c63aa6d",
+      "bytes": 5844
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/app-result.json",
+      "sha256": "0257f276e97f0d21de940a0f5ee55d8fe876b206ede3cafac1a599afeab873e3",
+      "bytes": 59
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/restart-app-result.json",
+      "sha256": "2f30c3c7caa8525d4133d4721afcbb15ba2b3b91fdd9360327411376e2f17c68",
+      "bytes": 58
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/annotation-pane.png",
+      "sha256": "54700455f800e23f1de21cae5807ca39f1dec99b0f999d2e462467a825b93e12",
+      "bytes": 333053
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/annotation-pane-ax.txt",
+      "sha256": "c08802e2743b5c65df41fb51bd77bcb84e43a5a8326231516a8080d5b25391cb",
+      "bytes": 581
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/voice-playing-ax.txt",
+      "sha256": "3f3b512c704e7032d90671028ad63ef17e3f2c6cd73cf95b30ebf387b48b28e5",
+      "bytes": 802
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/voice-stopped-ax.txt",
+      "sha256": "7d8d3061eedcf4bebc42c57a76139962bb8f7751b246ee341a26466e1d7ccfef",
+      "bytes": 797
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/restarted-task-ax.txt",
+      "sha256": "3f18f8198e7079dba2a18a7ff2390263369457b6ec547118061e77ed2a703414",
+      "bytes": 11783
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/restarted-annotation-ax.txt",
+      "sha256": "3ffa03be4caae97f37573619899734f2239343de30d9a1281661d881ac5293e7",
+      "bytes": 10042
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/computer-use-settings-ax.txt",
+      "sha256": "55e185ff835cf5604ffec6d3b308564c9ac7e57c469d68bb740c2b55e06dd14e",
+      "bytes": 6503
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/completed-session-snapshot.json",
+      "sha256": "e0be419f4175d671bd31b75ac173feca92d045f5519ee03234bd9d2552302be1",
+      "bytes": 50174
+    },
+    {
+      "path": "tmp/release-1.4.7-browser-acceptance/tmp/ui-smoke-profile.browser-f7519368-1c10-4bac-a363-c0f32c249586/app-support/AgentSessions/0E7A3E08-887F-4CC5-BFA4-D648B831CFCC/Attachments/ef6eedef-5ebd-47e2-9e78-7ca3d1d2ac3a.png",
+      "sha256": "b827a9c9670842113139c7f4cc74b8e17ff95b92d3ed0691dfa3a675c01f2580",
+      "bytes": 52770
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-retry2-failure-checkpoint.json",
+      "bytes": 4277,
+      "sha256": "287d8f70b5075ecdf746f0f16d5ca7ba303f290d87a3081db3ccf98175acd566"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-source/tmp/soak/b63ab86f-26b4-42af-93b5-40aff7289d16/state.json",
+      "bytes": 1106,
+      "sha256": "56afcaa426fae538ebbbb9f3444026cdda42e829d4748861957b51881e6f3c81"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-source/tmp/soak/b63ab86f-26b4-42af-93b5-40aff7289d16/events.jsonl",
+      "bytes": 273404,
+      "sha256": "f2bf5d83cda466d691765e72a1ec1c0ce7924cac1989d6edd8bd5371e0dadb42"
+    },
+    {
+      "path": "tmp/release-1.4.7-tag-source/tmp/soak/b63ab86f-26b4-42af-93b5-40aff7289d16/logs/cycle-000065-pty.log",
+      "bytes": 23502,
+      "sha256": "1414506e58c5523436d4a7af9b632e769612da7006df24cb4b0a3ae64b397715"
+    },
+    {
+      "path": "tmp/release-1.4.7-soak-retry2-suite/state.json",
+      "bytes": 1449,
+      "sha256": "d086fb41e02c6e7f14670ff8effd3a527f617c33820e348fef01286a50d25be2"
+    },
+    {
+      "path": "tmp/pip-import-diagnosis-20261020T151531Z/result.json",
+      "bytes": 1093,
+      "sha256": "036999c93be9891f093fee495e102711d64c2d8b0ed16d346a5afc008ff4d5f8"
+    },
+    {
+      "path": "tmp/pty-pip-oct20/verify.py",
+      "sha256": "34774370b6ef32b863e15b30780577e5b02aa622bab8509213bf67bee2de5f2f",
+      "bytes": 4137
+    },
+    {
+      "path": "tmp/pty-pip-oct20/verification.json",
+      "sha256": "880ca0110b36681eee52a987cb6c317b7421a4038a8a315747ef6cf014aa002c",
+      "bytes": 1417
+    },
+    {
+      "path": "tmp/pty-pip-oct20/verified-source-before.json",
+      "sha256": "85b23154bfef7379d8612969b75ef96820c004184c4cc4bd492703016f02bd80",
+      "bytes": 41746
+    },
+    {
+      "path": "tmp/pty-pip-oct20/verified-source-after.json",
+      "sha256": "85b23154bfef7379d8612969b75ef96820c004184c4cc4bd492703016f02bd80",
+      "bytes": 41746
+    },
+    {
+      "path": "tmp/pty-pip-oct20/pty-suite.log",
+      "sha256": "d966662dc1c39772d9aff84ed46da7bcc2d9b20d8944116e7ca8d39ca1b8a899",
+      "bytes": 6599
+    },
+    {
+      "path": "tmp/pty-pip-oct20/pip-repeat-1.log",
+      "sha256": "f55db187ff9c31e1e6575454dc141aed5297bee34d421f37caeff9daadcc3f0b",
+      "bytes": 960
+    },
+    {
+      "path": "tmp/pty-pip-oct20/pip-repeat-2.log",
+      "sha256": "ed8447d4a6e040bdd862a4ce6eb4046ea1305f724a64097d6f8c625fe4c0e5eb",
+      "bytes": 960
     }
   ],
   "wrapperFocused": {
@@ -682,5 +958,241 @@
     "scope": "Rebuildable caches only; release archives, source snapshots, logs and receipts preserved",
     "completedAt": "2026-10-19T09:14:56.841135+00:00"
   },
-  "releaseCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf"
+  "releaseCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+  "privateUseScope": {
+    "recordedOn": "2026-10-20",
+    "userInstruction": "不用簽 我私用",
+    "delivery": "Existing verified ad-hoc 1.4.7 package",
+    "distributionAcceptanceStatus": "not_required_for_private_use",
+    "excludedAcceptance": [
+      "Apple Developer ID signing",
+      "Apple notarization and stapling",
+      "Production update feed",
+      "Live production signed-update and rollback acceptance"
+    ],
+    "excludedAcceptanceExecuted": false,
+    "excludedAcceptancePassed": false,
+    "securityBoundary": "Existing updater trust/signature validation, permissions and sandbox checks remain unchanged; missing production trust material still fails closed",
+    "retainedProductionPrerequisites": [
+      "Developer ID Application identity and private key",
+      "Team ID and notarytool Keychain profile",
+      "Production HTTPS update feed and archive URLs",
+      "Ed25519 update signing key and matching trusted public key",
+      "SOURCE_DATE_EPOCH",
+      "Actual signing, notarization, stapling, feed and update-recovery acceptance"
+    ],
+    "historicalPrerequisiteState": "No valid Developer ID signing identity or configured production signing/notary/feed environment was found; no production workflow was dispatched",
+    "remainingEvidence": "Functional live acceptance and version-bound soak still require their own results; private use does not qualify either automatically",
+    "historicalProductionScoreUnchanged": true
+  },
+  "postPublicationTagCI": {
+    "receipt": "tmp/release-1.4.7-tag-ci-acceptance.json",
+    "recordedAtUTC": "2026-10-20T01:37:40.995472+00:00",
+    "scope": "Exact published v1.4.7 tag source hosted CI; no external account/provider acceptance or Apple production distribution claim",
+    "tag": "v1.4.7",
+    "sourceCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+    "status": "passed",
+    "macOS": {
+      "runID": 39274782878,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39274782878",
+      "status": "completed",
+      "conclusion": "success",
+      "createdAt": "2026-10-19T15:04:59Z",
+      "jobStartedAt": "2026-10-19T15:05:09Z",
+      "jobCompletedAt": "2026-10-19T15:20:38Z",
+      "runnerOS": "macOS 15.7.9 (24G830)",
+      "runnerImage": "macos-15-arm64 20260907.0337.1",
+      "toolchain": {
+        "xcode": "26.3",
+        "xcodeBuild": "17C529",
+        "swift": "6.2.4",
+        "swiftCompiler": "swiftlang-6.2.4.1.4 clang-1700.6.4.2"
+      },
+      "swiftTests": {
+        "executed": 896,
+        "skipped": 2,
+        "failures": 0,
+        "testSeconds": 243.144,
+        "suiteElapsedSeconds": 243.353,
+        "skipReasons": [
+          "Homebrew htop unavailable on runner",
+          "System top is setuid and intentionally blocked by PTY sandbox"
+        ]
+      },
+      "debugBuildSeconds": 189.74,
+      "optimizedDesktopBuild": {
+        "status": "passed",
+        "product": "LumaChatDesktop",
+        "seconds": 456.01
+      },
+      "pythonTests": [
+        {
+          "suite": "release_archive",
+          "executed": 7,
+          "skipped": 0,
+          "failures": 0,
+          "seconds": 0.109
+        },
+        {
+          "suite": "soak_harness",
+          "executed": 28,
+          "skipped": 0,
+          "failures": 0,
+          "seconds": 1.491
+        }
+      ]
+    },
+    "linuxWorker": {
+      "runID": 39274782832,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39274782832",
+      "status": "completed",
+      "conclusion": "success",
+      "createdAt": "2026-10-19T15:04:59Z",
+      "jobStartedAt": "2026-10-19T15:05:03Z",
+      "jobCompletedAt": "2026-10-19T15:05:20Z",
+      "runnerOS": "Ubuntu 24.04.5 LTS",
+      "runnerImage": "ubuntu-24.04 20261012.334.1",
+      "pythonVersion": "not emitted by workflow; not inferred",
+      "workerProtocolTests": {
+        "executed": 10,
+        "skipped": 0,
+        "failures": 0,
+        "seconds": 7.197,
+        "command": "python3 Scripts/test_lumachat_worker.py"
+      }
+    }
+  },
+  "externalAcceptanceDecision": {
+    "recordedOn": "2026-10-20",
+    "userInstruction": "先不提供",
+    "status": "deferred_by_user",
+    "deferredTargets": [
+      "User-selected external model endpoint",
+      "Authorized SSH host and workspace",
+      "Authorized MCP server",
+      "Authorized test repository for live PR workflows"
+    ],
+    "scope": "Live acceptance requiring the requested external targets; local verification and other explicitly available acceptance may continue",
+    "targetDependentAcceptanceExecuted": false,
+    "targetDependentAcceptancePassed": false,
+    "remainingRequirement": "Actual authorized targets and live receipts before these checks can be marked passed; fixture tests and hosted CI do not substitute for live acceptance"
+  },
+  "packagedLocalAcceptance": {
+    "schemaVersion": 1,
+    "recordedAt": "2026-10-20T06:38:06.324805+00:00",
+    "version": "1.4.7",
+    "build": "14",
+    "releaseCommit": "890574e29000f009c8b7c69f6f3df53d2449deaf",
+    "binarySHA256": "12516c88ccf60286c808f3bba6f867e668e0c6b998e3b3689274d0d0061f2b79",
+    "status": "passed_scoped_local_acceptance",
+    "scope": "Published package using a deterministic local model/page fixture and actual product-owned Chrome; no external model or provider acceptance",
+    "browser": {
+      "status": "passed",
+      "operations": [
+        "browser_open",
+        "browser_snapshot",
+        "browser_find",
+        "browser_screenshot",
+        "browser_close"
+      ],
+      "actualChromePageRequests": 1,
+      "screenshot": {
+        "width": 1280,
+        "height": 657,
+        "visuallyInspected": true,
+        "uniqueLabel": "LumaChat local browser evidence F7519368"
+      },
+      "annotationPane": "passed_accessibility_and_visual_inspection",
+      "annotationWrite": "not_completed_ui_automation_tool_noWindowsAvailable",
+      "taskAndScreenshotRecoveredAfterAppRestart": true,
+      "toolResultCountAfterRestart": 5,
+      "noAutomaticToolReplayOnRestartObserved": true,
+      "appExitCodes": [
+        0,
+        0
+      ],
+      "ownedChromeProcessesRemaining": 0,
+      "ephemeralProfilesRemaining": 0
+    },
+    "voice": {
+      "status": "passed_playback_stop_ui_only",
+      "nativeProvider": "AVSpeechSynthesizer",
+      "playActionShowsStopButton": true,
+      "stopActionRestoresPlayButton": true,
+      "audibleOutputIndependentlyVerified": false,
+      "microphoneCaptureAttempted": false,
+      "speechRecognition": "pending_user_participation",
+      "navigationInterruption": "not_executed"
+    },
+    "computerUse": {
+      "status": "passed_settings_disclosure_only",
+      "disabled": true,
+      "allowedApplicationsCount": 0,
+      "visionRequirementVisible": true,
+      "screenshotDataDestinationVisible": true,
+      "screenRecordingAndAccessibilityControlsVisible": true,
+      "permissionsGrantedDuringTest": false,
+      "captureAndActionAcceptance": "pending"
+    },
+    "receipt": "tmp/release-1.4.7-browser-acceptance/acceptance.json"
+  },
+  "postPublicationPTYFixtureCorrection": {
+    "changedInputs": [
+      "Tests/LumaChatTests/PseudoTerminalSessionTests.swift"
+    ],
+    "finishedAt": "2026-10-21T01:27:36Z",
+    "publishedFingerprint": "6b456593bccf15a34e1eb207507ce7afe9bae87b296e8aea56e558951140ade0",
+    "publishedProductionInputsUnchanged": true,
+    "runs": [
+      {
+        "exitCode": 0,
+        "failures": 0,
+        "log": "tmp/pty-pip-oct20/pty-suite.log",
+        "logSHA256": "d966662dc1c39772d9aff84ed46da7bcc2d9b20d8944116e7ca8d39ca1b8a899",
+        "name": "pty-suite",
+        "seconds": 27.718,
+        "selector": "PseudoTerminalSessionTests",
+        "skipped": 1,
+        "tests": 22,
+        "wallSeconds": 68.577
+      },
+      {
+        "exitCode": 0,
+        "failures": 0,
+        "log": "tmp/pty-pip-oct20/pip-repeat-1.log",
+        "logSHA256": "f55db187ff9c31e1e6575454dc141aed5297bee34d421f37caeff9daadcc3f0b",
+        "name": "pip-repeat-1",
+        "seconds": 11.877,
+        "selector": "PseudoTerminalSessionTests/testPTYRunsRealPipPromptAndDeclinesWithoutMutation",
+        "skipped": 0,
+        "tests": 1,
+        "wallSeconds": 13.157
+      },
+      {
+        "exitCode": 0,
+        "failures": 0,
+        "log": "tmp/pty-pip-oct20/pip-repeat-2.log",
+        "logSHA256": "ed8447d4a6e040bdd862a4ce6eb4046ea1305f724a64097d6f8c625fe4c0e5eb",
+        "name": "pip-repeat-2",
+        "seconds": 15.013,
+        "selector": "PseudoTerminalSessionTests/testPTYRunsRealPipPromptAndDeclinesWithoutMutation",
+        "skipped": 0,
+        "tests": 1,
+        "wallSeconds": 16.566
+      }
+    ],
+    "scope": "Local real PTY tests, not external SSH or original-tag soak qualification",
+    "sourceFingerprint": "d295b7da89b9a78a6cda360ab948c79f51c8716ab0b9e592e67a64f0f670a1c9",
+    "sourceReceiptMatches": true,
+    "startedAt": "2026-10-21T01:25:57Z",
+    "status": "passed",
+    "receipt": "tmp/pty-pip-oct20/verification.json",
+    "beforeSourceReceipt": "tmp/pty-pip-oct20/verified-source-before.json",
+    "afterSourceReceipt": "tmp/pty-pip-oct20/verified-source-after.json",
+    "sourceFileCount": 341,
+    "environmentSkip": "System top is setuid and intentionally blocked by the PTY sandbox",
+    "deadlineSeconds": 10,
+    "publishedTagModified": false,
+    "originalFailedSoakRequalified": false
+  }
 }

@@ -3,6 +3,9 @@
 Last development audit: 2026-09-25, after the 744-test combined Phase A-H
 LumaChat 1.4.1 validation/release gate
 
+Current schema and event-ingress description refreshed: 2026-10-20 against
+the Phase M implementation. Historical Phase F evidence retains its scope.
+
 ## Scope and status
 
 Phase F adds three connected but separate capabilities:
@@ -74,8 +77,15 @@ invent a result or silently replay it. Persisted queued work remains queued,
 and the selected missed-run policy decides what happens to elapsed scheduled
 occurrences.
 
-The schema is versioned. The current store writes version 2 and accepts the
-version-1 and early unversioned shapes before upgrading on a successful save.
+The schema is versioned. The current store writes version 3 and accepts
+version-2, version-1 and early unversioned shapes before upgrading on a
+successful save. Version 3 requires the separate producer-event replay ledger;
+a missing or null ledger is rejected. Startup migrates retained legacy
+producer claims, per-Automation event claims and event runs before evaluating
+schedules. The version prevents an older app from silently discarding this
+ledger. Already-evicted legacy identities cannot be recovered; ingress
+operators must reconcile that history and rotate the webhook secret before
+accepting signatures exposed under the older store.
 The non-secret snapshot is stored at:
 
 ```text
@@ -128,14 +138,21 @@ routed into the project's main checkout.
 
 ### Event boundary
 
-`emitAutomationEvent` is a typed, bounded ingress for future GitHub, Slack,
-Gmail, filesystem, and webhook producers. Producer event ID plus Automation ID
-is the durable deduplication identity. Payload fields participate only in exact
-host-side matching; payload text is not executed or appended as an instruction.
+`emitAutomationEvent` is a typed, bounded ingress. A producer-event identity is
+durably claimed even when no Automation matches; each matching Automation also
+has its own occurrence identity. The separate producer replay ledger retains
+up to 16,384 identities independently of run-history pruning and rejects new
+events when full. Payload fields participate only in exact host-side matching;
+payload text is not executed or appended as an instruction.
 
-Phase F does **not** include authenticated GitHub/Slack/Gmail adapters, a
-filesystem watcher, or a webhook listener. Those producer seams are reserved,
-not disguised as connected services.
+Phase M adds GitHub webhook ingress to the headless App Server, requiring its
+bearer authorization and a configured `LUMACHAT_GITHUB_WEBHOOK_SECRET`. HMAC
+SHA-256 verifies the original body before allowlisted projection. Replay
+identity uses the signed body digest, so changing the unsigned delivery UUID
+does not bypass deduplication; the event header must match the signed payload
+shape. Deployment still needs an operator-managed authenticated HTTPS ingress
+or relay and live GitHub acceptance. Slack, Gmail and filesystem producer
+adapters remain future work. See [Phase M architecture](PHASE_L_Q_ARCHITECTURE.md#m--pull-requests-and-event-triggers).
 
 ## Notifications
 
@@ -334,7 +351,8 @@ that such a service exists.
 | Complete per-run history | DEVELOPMENT-GATED | IDs, times, status, logs, result, changes, worktree |
 | Recurring mutation isolation | DEVELOPMENT-GATED | Validation forces dedicated managed worktree |
 | Post-run Diff/Review/Commit/PR/Discard | PARTIAL / DEVELOPMENT-GATED | Open Task exposes existing surfaces; explicit discard exists; no separate automated publish pipeline |
-| GitHub/Slack/Gmail/filesystem/webhook events | SEAM | Typed ingress only; producer adapters/listeners are absent |
+| GitHub webhook events | DEVELOPMENT-GATED / LIVE PROVIDER PENDING | Bearer- and HMAC-authenticated App Server ingress, signed-body identity and durable replay ledger; operator-managed HTTPS ingress and live acceptance remain |
+| Slack/Gmail/filesystem events | SEAM | Typed ingress exists; these producer adapters are absent |
 | Six notification kinds and Task routing | DEVELOPMENT-GATED | Explicit authorization, bounded payload, typed click route |
 | SSH shell/filesystem/Git/build/test | DEVELOPMENT-GATED / LIVE HOST PENDING | Host-bound backend and 16 structured tools |
 | Remote PTY | DEVELOPMENT-GATED / LIVE HOST PENDING | One-shot model tool plus Phase I Task-owned interactive SSH Terminal; local surrogate tests pass, live host and packaged UI pending |
@@ -356,8 +374,9 @@ that such a service exists.
 - Add full ViewModel/UI end-to-end coverage for Automation Task creation,
   retained-worktree Diff/Review/Commit/PR/Discard, notification-click navigation,
   Settings CRUD/test connection, and all three supported remote-handoff routes.
-- Add real producers if GitHub, Slack, Gmail, filesystem, or webhook-triggered
-  execution is required. The current seam must not be described as connected.
+- Configure an authorized HTTPS ingress or relay and perform live GitHub
+  webhook acceptance. Slack, Gmail and filesystem producers still need their
+  own adapters, authentication contracts and live acceptance.
 - Phase I's interactive SSH Terminal still needs live host, packaged UI,
   disconnect/restart/credential-revocation and long-soak acceptance. Richer
   remote Git, Browser/Computer Use/plugins/subagents, cross-platform backends,

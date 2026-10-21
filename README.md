@@ -13,11 +13,22 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 > 已從 `main` 發佈為一般正式 GitHub Release（非 prerelease），整合 Phase I–Q 與後續修復。
 > 完整本機 gate 通過 896 項 Swift、48 項 Python（各 1 skip、0 failures）；
 > macOS CI 896 項（2 skips）及 Linux worker CI 10 項皆零失敗。
+> 發佈後也核對 exact `v1.4.7` tag CI：macOS 896 項（2 skips、0 failures）及 Linux worker 10/10 通過。
 > arm64 封裝、安全檢查與有限原生 UI smoke 通過，五個上傳產物的大小與雜湊已核對。
 > 詳見 [1.4.7 版本說明](docs/RELEASE_NOTES_1.4.7.md)。
 
-> **驗收界線**：封裝使用 ad-hoc 簽章。Apple Developer ID／公證／stapling、
-> 正式更新 feed、未執行的外部驗收及本版長測資格仍待完成。
+> **10 月 20 日驗收更新**：同一封裝通過真實 Chrome 五項操作與 Task／截圖重啟保留，
+> 語音播放／停止控制及 Computer Use 安全提示已檢查；模型與網頁使用本機 fixture。
+> 本版 2h 長測通過；8h 尚未合格，第三次嘗試發現 pip 互動測試逾時。
+> 10 月 21 日測試流程修正通過 22 項 PTY 測試（1 skip、0 failures）及兩次 pip 重跑；
+> 產品程式碼與已發佈版相同。外部測試目標依使用者決定暫不提供。
+
+> **私用驗收範圍（2026-10-20 更新）**：依使用者「不用簽，我私用」的決定，
+> 沿用已驗證的 ad-hoc 封裝。Apple Developer ID／公證／stapling、正式更新 feed
+> 與 signed-update／rollback 外部驗收列為 `not_required_for_private_use`，未執行也未標為通過。
+> 未執行的功能外部驗收與本版長測資格仍須各自取得證據；更新信任與權限檢查維持原有行為。
+> 使用者目前「先不提供」外部模型、SSH、MCP 與測試 repository 目標；相關 live acceptance
+> 記為 `deferred_by_user`，未執行也未標為通過。
 > 各版本證據分別保留於 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)、
 > [開發整合紀錄](docs/RELEASE_NOTES_UNRELEASED.md) 與 [差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
 
@@ -76,7 +87,7 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 | E | Browser/CDP、annotations、Computer Use 2.0 | 實作與自動化 gate 通過；10 月 14 日封裝版通過真實 Chrome 本機 fixture 5/5 與 annotation UI；外部模型／Computer Use 待驗收 |
 | F | Automations、notifications、SSH Remote Runner | 實作與自動化 gate 通過；live SSH host、native UI 與長時間 soak 待外部驗證 |
 | G | CLI、App Server、SDK、VS Code、GitHub Action、artifact workflows | Swift、Node、schema 與 development package gate 通過 |
-| H | Release、update/rollback、sandbox/storage seam、cross-platform readiness | Development hardening gate 通過；production signing/notarization 與正式長時間 soak 待外部環境 |
+| H | Release、update/rollback、sandbox/storage seam、cross-platform readiness | Development hardening gate 通過；版本綁定長時間 soak 待完成；production signing/notarization 不列私用完成條件 |
 
 以原始八個開發 phase 計算，目前為 **8/8（100% implementation complete）**。
 這個百分比不等於 production Definition of Done；外部憑證、服務與長時間運行的
@@ -232,7 +243,7 @@ security report contract 1/1、Swift 744 tests（1 skip、0 failures）、VS Cod
 signature、plist、canonical ZIP、SBOM/provenance 與 security audit 均通過。生成的
 development ZIP SHA-256 為
 `d7bd60cc09888ebf7eacf541bf1d866588a348084520e441b414996f6ff1bfa7`。
-Production release 仍需要 Developer ID、notary profile、Ed25519 update key、
+未來若啟用 production distribution，仍需要 Developer ID、notary profile、Ed25519 update key、
 team ID、update feed/archive URL 與 `SOURCE_DATE_EPOCH`，並只能由明確設定的
 環境變數提供。
 

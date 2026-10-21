@@ -5,6 +5,25 @@ Formal score and release evidence last audited: 2026-09-25, after the LumaChat
 2026-09-29 against official OpenAI documentation; the 1.4.2 candidate evidence
 and subsequent source changes are recorded separately below.
 
+## Private-use acceptance scope — 2026-10-20
+
+The user explicitly chose private use without Apple distribution signing
+("不用簽 我私用"). The verified ad-hoc package remains the delivery artifact.
+Developer ID signing, notarization, stapling, the production update feed and
+live signed-update/rollback acceptance are `not_required_for_private_use` for
+this request. They were not executed or passed, and the historical production
+score and original release evidence are unchanged. Missing signing identities,
+notary configuration and production feed credentials remain documented facts.
+Future production distribution still requires those prerequisites and actual
+acceptance. The updater continues to fail closed without its configured trust
+material; permission and sandbox boundaries remain unchanged. Functional live
+acceptance and version-bound soak retain their separate evidence requirements.
+
+The user subsequently chose not to provide external model, SSH, MCP or test
+repository targets at this time ("先不提供"). Acceptance requiring those targets
+is `deferred_by_user`, with no passing live result claimed. Local fixture and
+hosted CI evidence retain their documented scope.
+
 ## 1.4.7 integrated corrective release — 2026-10-19
 
 Version `1.4.7`, build `14`, includes Swift 6.2.4 compatibility, isolated test/store
@@ -34,6 +53,18 @@ candidates. The regular [v1.4.7 Release](https://github.com/TonyChen-Git/RLM/rel
 was published at `2026-10-19T15:05:13Z`, from commit
 `890574e29000f009c8b7c69f6f3df53d2449deaf`. All five uploaded sizes/digests match;
 receipt: `tmp/release-1.4.7-publication.json`.
+
+Post-publication verification of the exact tag commit `890574e` separately
+passes [macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39274782878):
+**896 Swift tests, two skips, zero failures, 243.144 seconds**, debug build
+189.74 seconds and optimized desktop build 456.01 seconds. Archive 7/7 and
+soak harness 28/28 contracts pass with no skips.
+[Linux worker CI](https://github.com/TonyChen-Git/RLM/actions/runs/39274782832)
+passes **ten tests, zero skips/failures, 7.197 seconds**. Receipt:
+`tmp/release-1.4.7-tag-ci-acceptance.json`; completed logs:
+`tmp/release-1.4.7-tag-macos-ci.log` and `tmp/release-1.4.7-tag-linux-ci.log`.
+These results are stored as `postPublicationTagCI` alongside the earlier
+source-commit CI evidence. They do not qualify external-provider acceptance.
 
 The final commit corrects only HTTP fixture ordering/liveness: serial delivery
 preserves byte order despite reversed deadlines, cancellation stops scheduled
@@ -68,17 +99,63 @@ Earlier failed and intentionally interrupted attempts, the previous `744fb73`
 local pass and hosted failure, focused checks, Node 17/17 and 14/14 results,
 and timing experiment details are retained in [1.4.7 notes](RELEASE_NOTES_1.4.7.md)
 and [validation/1.4.7.json](validation/1.4.7.json). Version-bound soak
-qualification remains pending. The immutable 1.4.6 tag/artifacts and its
-qualifying 2h soak retain their separate scope. Apple production signing,
-notarization/stapling/feed and unexecuted external acceptance remain pending.
+qualification for 8h/24h/72h remains pending. The immutable 1.4.6 tag/artifacts and its
+qualifying 2h soak retain their separate scope. Unexecuted functional external
+acceptance remains pending. Apple distribution and signed-update acceptance
+are excluded from the current private-use completion scope as recorded above;
+they have no passing production evidence.
 
 The exact v1.4.7 tag's fresh 2h → 8h → 24h → 72h soak sequence launched at
 `2026-10-19T15:07:46Z`. Its isolated archive verifies all 464 tracked files and
 the same 341-input/source/toolchain receipt. The first 2h run is in preparation
-at the recorded checkpoint, with **no qualifying result yet**. Live state:
+at the original recorded checkpoint, with **no qualifying result at that time**. Original state:
 `tmp/release-1.4.7-soak-suite/state.json`; immutable launch evidence:
 `tmp/release-1.4.7-soak-start-checkpoint.json`. This is local integration and
 failure-injection evidence only; old versions' soak time is not reused.
+
+### October 20 scoped acceptance follow-up
+
+The exact-version **2h soak qualifies**: 7,257.719 continuous seconds,
+52 cycles, 418 completed shards, zero failures. Two 8h attempts do not qualify:
+the first stops after 27,071.070 seconds when the continuous-clock guard
+detects a 452-second clamshell sleep on battery; the second stops after
+7,588.814 seconds with exit 130 from an interruption signal of unknown origin.
+Final evidence: `tmp/release-1.4.7-soak-oct20-checkpoint.json`.
+A detached fresh 8h → 24h → 72h sequence starts at `2026-10-20T06:37:55Z`;
+launch receipt: `tmp/release-1.4.7-soak-retry2-launch-checkpoint.json`;
+live state: `tmp/release-1.4.7-soak-retry2-suite/state.json`.
+Neither interrupted time is reused; later profiles require the preceding pass.
+That third 8h attempt subsequently fails at `2026-10-20T09:19:07Z` after
+9,317.128 seconds, 64 cycles and 513 shards. The next PTY shard reports
+81 tests, one skip and one failure: the real pip prompt was not observed
+within ten seconds. Final receipt:
+`tmp/release-1.4.7-soak-retry2-failure-checkpoint.json`.
+Test-only follow-up on `main` stops interaction immediately when a prompt is
+missing, adds bounded diagnostics and disables unnecessary pip bytecode cache
+writes. The deadline and sandbox remain unchanged; the original failed result
+and published binary remain unchanged. See the release notes for measured
+cache-write costs and the distinction from PTY validation.
+
+On October 21, the corrected fixture passes all 22 PTY tests (one existing
+setuid-top environment skip, zero failures, 27.718 seconds) and two additional
+real-pip runs (11.877/15.013 seconds, no skips or failures). Frozen before/after
+receipts match fingerprint
+`d295b7da89b9a78a6cda360ab948c79f51c8716ab0b9e592e67a64f0f670a1c9`.
+Of the 341 release inputs, only the PTY test file differs; production inputs
+remain identical. Receipt: `tmp/pty-pip-oct20/verification.json`. These focused
+results do not qualify a continuous soak or replace the original tag results.
+
+The published package also passes actual Chrome open/snapshot/find/screenshot/
+close, with a visually verified 1280×657 PNG. Completed Task history and the
+image recover after restart; both App exits are 0 and owned Chrome processes/
+ephemeral profiles are absent afterward. The annotation pane displays correctly;
+annotation writing remains unverified because the UI automation tool reports
+`noWindowsAvailable` on dragging. Native TTS Play → Stop → Play controls pass,
+but audible output, microphone recognition and navigation interruption are
+not claimed. Computer Use safety disclosures/defaults pass UI inspection;
+capture/action acceptance remains unrun. Receipt:
+`tmp/release-1.4.7-browser-acceptance/acceptance.json`.
+This uses a deterministic local model/page fixture, not an external provider.
 
 ## 1.4.6 integrated release — 2026-10-15
 
@@ -691,7 +768,7 @@ for it. The 1.4.5 development artifact is not a new formal production release.
 | Task handoff and Task fork | 4 | 0 | 3 | PARTIAL / DEVELOPMENT-GATED | Release-gated Local ↔ Worktree CAS/Fork plus development-gated bounded Local/Worktree ↔ SSH migration and host rollback | Remote routes await live-host acceptance; SSH-to-SSH and broader kill/storage matrix remain |
 | PTY terminal and task terminal sessions | 6 | 4 | 5.5 | PARTIAL / DEVELOPMENT-GATED | Local `forkpty`/Task Terminal plus bounded one-shot `remote_pty_run`; signal-crash test passes | No old-process/scrollback reattach; no persistent remote input/resize/reconnect; non-Darwin and long soak remain |
 | Git lifecycle and advanced Git | 5 | 4 | 5 | COMPLETE | Normal/pointer/submodule/detached layouts; closed status/diff/log/show/branch/commit plus fetch/pull/push/switch/hard-reset/merge/rebase/cherry-pick/stash/tag/remote API; 21/21 focused and integrated release gate | Remote effects lack local Undo; linked-metadata limitations are surfaced rather than hidden |
-| Review, inline comments, PR workflow | 5 | 2 | 4.5 | PARTIAL | Five complete typed sources, frozen Last Agent Turn, native file/unified/side-by-side pane, file/hunk Stage/Unstage/Revert, durable comments, isolated Review Tasks/findings, GitHub PR adapter/Keychain/tools and packaged UI smoke | GitHub only; no authorized live PR mutation E2E; provider-omitted patches remain unknowable |
+| Review, inline comments, PR workflow | 5 | 2 | 4.5 | PARTIAL | Five complete typed sources, frozen Last Agent Turn, native file/unified/side-by-side pane, file/hunk Stage/Unstage/Revert, durable comments, isolated Review Tasks/findings, GitHub PR adapter/Keychain/tools and packaged UI smoke; Phase M later adds the GitLab merge-request adapter | No authorized live GitHub/GitLab PR mutation E2E; provider-omitted patches remain unknowable |
 | Subagents and scheduler | 5 | 0 | 0 | DEVELOPMENT-GATED | Durable child Tasks, seven tools, actor scheduler, budgets, scoped read/worktree isolation, structured aggregation, UI and passing focused tests | Live high-concurrency/long-duration acceptance remains |
 | Skills | 4 | 0.5 | 0.5 | DEVELOPMENT-GATED | Five-source `SKILL.md` discovery, precedence, `$skill`/description selection, transient instructions, loaded metadata, exact-ID resource tool, UI and passing focused tests | Scripts intentionally do not auto-execute; live ecosystem breadth remains |
 | Plugins, Hooks, OAuth connectors | 5 | 0 | 0 | DEVELOPMENT-GATED | Manifest/manager, atomic lifecycle, permission UI, sandboxed tools, typed hooks, PKCE and Keychain store pass combined gate | No hosted marketplace/signature transparency, OAuth live-provider refresh/device flow, or portable WASM sandbox |
@@ -940,9 +1017,11 @@ removal; a mismatch retains the transaction and checkout.
   scrollback. Non-macOS transports, broader crash/storage fault injection and
   long soak remain later-phase work.
 - No unit test performs a live push or creates a live PR. Remote-side rollback
-  is not available, provider tests use controlled transports, and GitHub is the
-  only provider adapter. There is no push→create→open→review end-to-end
-  acceptance run. GitLab and Bitbucket remain future extensions.
+  is not available and provider tests use controlled transports. The Phase B
+  gate included only GitHub; Phase M subsequently adds the GitLab merge-request
+  adapter. Neither provider has a recorded authorized
+  push→create→open→review end-to-end acceptance run. Bitbucket remains a future
+  extension.
 - Review intentionally falls back instead of inventing text for binary,
   oversized or malformed diff content. GitHub may omit a file patch. Review PR
   findings are therefore limited to bounded content actually returned by the

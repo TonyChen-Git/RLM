@@ -577,7 +577,10 @@ final class PseudoTerminalSessionTests: XCTestCase {
         let session = try makeSession(root: root)
         do {
             _ = try await session.start(
-                command: "exec \(shellQuote(isolatedPython)) -m pip uninstall lumachat-pty-prompt",
+                // The sandbox gives every PTY a fresh Python cache prefix.
+                // This test exercises pip's prompt and refusal, so avoid
+                // writing hundreds of unrelated bytecode cache files per run.
+                command: "exec \(shellQuote(isolatedPython)) -B -m pip uninstall lumachat-pty-prompt",
                 environment: [
                     "TERM": "xterm-256color",
                     "LC_ALL": "C",
@@ -831,16 +834,43 @@ final class PseudoTerminalSessionTests: XCTestCase {
                 if String(decoding: finalOutput.data, as: UTF8.self).contains(expected) {
                     return finalOutput
                 }
-                XCTFail(
-                    "PTY exited before emitting \(expected): "
-                        + String(decoding: finalOutput.data, as: UTF8.self)
+                throw try await outputWaitFailure(
+                    session,
+                    expected: expected,
+                    started: started,
+                    reason: "PTY exited before emitting the expected output"
                 )
-                return finalOutput
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("Timed out waiting for PTY output: \(expected)")
-        return try await session.readOutput(offset: 0, maxBytes: 1 * 1_024 * 1_024)
+        // Missing a prompt must stop the interaction. Returning after XCTFail
+        // allowed callers to send input without observing the expected state.
+        throw try await outputWaitFailure(
+            session,
+            expected: expected,
+            started: started,
+            reason: "Timed out waiting for PTY output"
+        )
+    }
+
+    private func outputWaitFailure(
+        _ session: PseudoTerminalSession,
+        expected: String,
+        started: ContinuousClock.Instant,
+        reason: String
+    ) async throws -> PTYTestError {
+        let status = try await session.status()
+        let output = try await session.readOutput(offset: 0, maxBytes: 8 * 1_024)
+        // These fixtures contain synthetic data. Bound the diagnostic and
+        // escape terminal control characters before including it in test logs.
+        let diagnostic = String(decoding: output.data, as: UTF8.self).debugDescription
+        return .missingOutput(
+            "\(reason): \(expected); elapsed=\(started.duration(to: .now)); "
+                + "state=\(status.state.rawValue); pid=\(status.processIdentifier); "
+                + "exit=\(String(describing: status.exitCode)); "
+                + "transportError=\(String(describing: status.transportErrorCode)); "
+                + "output(first \(output.data.count) bytes)=\(diagnostic)"
+        )
     }
 
     private func waitForOutput(
@@ -986,7 +1016,17 @@ final class PseudoTerminalSessionTests: XCTestCase {
     }
 }
 
-private enum PTYTestError: Error { case timeout }
+private enum PTYTestError: Error, CustomStringConvertible {
+    case timeout
+    case missingOutput(String)
+
+    var description: String {
+        switch self {
+        case .timeout: "PTY test timed out"
+        case .missingOutput(let diagnostic): diagnostic
+        }
+    }
+}
 
 private enum PTYProcessError: Error, CustomStringConvertible {
     case failed(executable: String, arguments: [String], status: Int32, output: String)

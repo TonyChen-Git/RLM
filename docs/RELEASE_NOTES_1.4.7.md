@@ -1,14 +1,14 @@
 # Luma Chat 1.4.7 — Integrated Patch Release
 
-- Status updated: 2026-10-19
+- Status updated: 2026-10-20
 - Source version/build: `1.4.7` / `14`
 - Release channel: regular GitHub Release from `main` (prerelease disabled)
 - Status: published; final local gate/package, hosted macOS/Linux CI and limited native smoke evidence pass
 - Published: 2026-10-19 23:05:13 Asia/Taipei (`2026-10-19T15:05:13Z`)
 - Release commit: `890574e29000f009c8b7c69f6f3df53d2449deaf`
 - Release: [v1.4.7](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7) — regular release, latest at publication
-- Signing boundary: verified ad-hoc package; Apple Developer ID,
-  notarization/stapling and production update-feed acceptance remain pending
+- Signing boundary: verified ad-hoc package for private use; Apple distribution
+  and production signed-update acceptance are `not_required_for_private_use`
 
 This patch follows the immutable [1.4.6 release](RELEASE_NOTES_1.4.6.md).
 The published 1.4.6 tag and artifacts remain unchanged. The 1.4.7 archive
@@ -16,6 +16,23 @@ below is published and scoped to its exact verified source. Temporary DEBUG
 timing instrumentation was removed in `bb26729`. Final source `eeddc75` adds only
 HTTP fixture ordering/liveness corrections; its production source and workflow
 match the previously verified candidates.
+
+## Private-use completion scope
+
+The user explicitly requested private use without Apple signing ("不用簽 我私用").
+Developer ID signing, notarization, stapling, the production update feed and
+live signed-update/rollback acceptance are therefore outside this request's
+completion conditions, recorded as `not_required_for_private_use`. They were
+not executed or passed. The published ad-hoc artifact and its evidence remain
+unchanged. Missing production identities/configuration remain prerequisites
+for any later production distribution, and the updater's existing trust,
+signature and fail-closed checks remain intact. Functional external acceptance
+and version-bound soak still require their own results.
+
+The user chose to defer providing external model, SSH, MCP and test repository
+targets ("先不提供"). Live acceptance requiring those targets is
+`deferred_by_user`; it was not executed or passed. This decision does not change
+the scope of existing local fixture or hosted CI evidence.
 
 ## Verified changes
 
@@ -97,6 +114,26 @@ operations. No model, microphone or external-provider acceptance is implied.
 The original receipt `tmp/release-1.4.7-ui/acceptance.json` retains its `bb26729`
 source scope; `tmp/release-1.4.7-native-artifact-equivalence.json` verifies the
 final source's archive and binary match that tested package exactly.
+
+## Post-publication exact-tag CI verification — 2026-10-20
+
+The immutable release commit `890574e29000f009c8b7c69f6f3df53d2449deaf`
+also passes its own hosted CI. These results are additional evidence; the
+earlier `eeddc75` source CI records above remain unchanged.
+
+- [macOS run 39274782878](https://github.com/TonyChen-Git/RLM/actions/runs/39274782878):
+  **896 Swift tests, two skips, zero failures, 243.144 seconds**, on Xcode 26.3
+  build 17C529 / Swift 6.2.4. Debug compilation takes 189.74 seconds; optimized
+  desktop compilation passes in 456.01 seconds. Archive contracts **7/7** and
+  soak harness contracts **28/28** pass without skips. The skips are unavailable
+  Homebrew `htop` and the intentionally sandbox-blocked setuid system `top`.
+- [Linux run 39274782832](https://github.com/TonyChen-Git/RLM/actions/runs/39274782832):
+  **ten worker protocol tests, zero skips/failures, 7.197 seconds**.
+
+Immutable receipt: `tmp/release-1.4.7-tag-ci-acceptance.json`; completed logs:
+`tmp/release-1.4.7-tag-macos-ci.log` and `tmp/release-1.4.7-tag-linux-ci.log`.
+The validation record stores these under `postPublicationTagCI`. Hosted CI does
+not provide external-account/provider or Apple production-distribution acceptance.
 
 ## Confirmed STDIO fixture timing diagnosis
 
@@ -198,27 +235,104 @@ completed 1.4.7 release stage and inactive 1.4.6 soak runs. Release archives,
 source snapshots, logs and receipts are preserved. Receipt:
 `tmp/release-1.4.7-cleanup.json`. No unmerged local branch commits remain.
 
-## Version-bound soak launch — 2026-10-19
+## Packaged local acceptance — 2026-10-20
+
+The published 1.4.7 binary passes **five actual Chrome operations** through the
+product: open, DOM snapshot, find, PNG screenshot and close. The 1280×657 PNG
+shows the unique fixture label and was visually inspected. Task completion,
+all five tool results and the screenshot remain available after App restart.
+Both App runs exit 0; no owned Chrome process or ephemeral profile remains.
+The model and page are local deterministic fixtures, not external providers.
+Receipt: `tmp/release-1.4.7-browser-acceptance/acceptance.json`.
+
+The Browser annotation pane passes visual/accessibility inspection. Saving a
+drawn annotation remains unverified: the UI automation tool rejects dragging
+with `noWindowsAvailable`. Native speech playback changes the control to Stop;
+stopping restores Play. This verifies playback controls, not independently
+heard audio, microphone recognition or navigation interruption. Computer Use
+settings show the disabled default, empty allowlist, vision requirement,
+screenshot destination disclosure and OS permission controls; no capture,
+action or permission grant was performed.
+
+## Version-bound soak — updated 2026-10-20
 
 A fresh 2h → 8h → 24h → 72h sequence launched at **23:07:46 Asia/Taipei**
 (`15:07:46Z`) from an isolated archive of the exact `v1.4.7` release commit.
 All **464 tracked files** and the **341-input/source/toolchain** receipt match
-that release. The 2h run `9e7bfc70-4fe5-411c-af72-c89055c0f18d` is preparing
-its test inventory/build at this checkpoint; measured duration starts after
-preparation. No profile is qualified yet, and no prior version's duration or
-result is reused. Later profiles start only after the preceding one qualifies.
+that release. The original checkpoint records preparation; measured duration
+starts after preparation. No prior version's duration or result is reused.
 Snapshot receipt: `tmp/release-1.4.7-tag-source-verification.json`; immutable
 launch checkpoint: `tmp/release-1.4.7-soak-start-checkpoint.json`; live controller
-state: `tmp/release-1.4.7-soak-suite/state.json`. External-provider acceptance
-remains separate from these local integration and failure-injection tests.
+state: `tmp/release-1.4.7-soak-suite/state.json`.
 
-## Pending for 1.4.7
+The **2h run qualifies**: `9e7bfc70-4fe5-411c-af72-c89055c0f18d`,
+7,257.719 continuous seconds, 52 complete cycles, 418 completed shards,
+zero failures, completed `2026-10-19T17:14:51Z`.
+The first 8h attempt reaches 27,071.070 seconds, 187 cycles and 1,499 shards
+before the clock guard rejects a 452-second clamshell sleep on battery.
+The second reaches 7,588.814 seconds, 51 cycles and 412 shards before an
+interruption signal stops it, exit 130; the signal's sender is unknown.
+Neither 8h attempt qualifies. Their final states and evidence are retained in
+`tmp/release-1.4.7-soak-oct20-checkpoint.json`.
 
-- Qualifying results from the version-bound soak sequence above.
+A fresh **8h → 24h → 72h** sequence launched at `2026-10-20T06:37:55Z`
+after confirming AC power and an open lid. It uses the same immutable source
+and fresh timing; the initial 8h run is
+`b63ab86f-26b4-42af-93b5-40aff7289d16`. The controller is detached from the
+launcher's terminal and records interruption signals. Launch evidence:
+`tmp/release-1.4.7-soak-retry2-launch-checkpoint.json`; live state:
+`tmp/release-1.4.7-soak-retry2-suite/state.json`.
+This third 8h attempt stops at `2026-10-20T09:19:07Z` after 9,317.128 seconds,
+64 complete cycles and 513 completed shards. Its 65th PTY shard runs 81 tests
+with one skip and one failure: the real pip fixture does not observe
+`Proceed (Y/n)?` within ten seconds. This is a failed result; 24h/72h have not
+started. Final evidence:
+`tmp/release-1.4.7-soak-retry2-failure-checkpoint.json`.
+External-provider acceptance remains separate from this local soak.
+
+### Post-publication test correction
+
+The failed prompt helper previously recorded an assertion and continued,
+allowing the fixture to send `n` without seeing the prompt. It now throws and
+cleans up, reporting elapsed time, process state and at most 8 KiB of raw
+output, escaped for logging. The real pip invocation adds `-B`, avoiding
+unrelated bytecode cache writes in the PTY's fresh cache directory. Its prompt deadline, real package
+manager, sandbox and refusal assertions remain unchanged.
+
+A separate local import experiment using Python 3.9.6 measures default imports
+at 2.021/3.118 seconds with 350 new cache files (4,335,258 bytes) each; `-B`
+takes 0.444/0.419 seconds with no cache files. This supports reducing disk work,
+but does not prove the original timeout's sole cause and is not PTY acceptance.
+Evidence: `tmp/pip-import-diagnosis-20261020T151531Z/result.json`.
+These are test-only changes on `main`, outside the immutable release tag;
+they do not change the published application binary or retroactively pass
+the failed soak.
+
+On **October 21**, the frozen correction passes **22 PTY tests, one existing
+setuid-top environment skip, zero failures, 27.718 seconds**, followed by two
+additional real-pip passes (11.877/15.013 seconds, zero skips/failures). These
+durations include fixture setup and cleanup; the prompt deadline remains ten
+seconds. Before/after source and toolchain receipts match fingerprint
+`d295b7da89b9a78a6cda360ab948c79f51c8716ab0b9e592e67a64f0f670a1c9`.
+Only `Tests/LumaChatTests/PseudoTerminalSessionTests.swift` differs among the
+341 release inputs. Receipt and logs: `tmp/pty-pip-oct20/verification.json`.
+Future soak evidence from this corrected test suite must retain its distinct
+source fingerprint and cannot be called an unchanged release-tag test run.
+
+## Pending for private-use 1.4.7
+
+- Qualifying 8h, 24h and 72h results; the exact-version 2h run has passed.
+- Native annotation write, microphone recognition/navigation interruption and
+  actual Computer Use capture/action acceptance beyond the scoped checks above.
 - External SSH/MCP/PR/OAuth/model/voice/Computer Use acceptance where no real
-  receipt exists.
-- Apple Developer ID signing, notarization/stapling and production update-feed
-  and rollback acceptance.
+  receipt exists. The requested external model, SSH, MCP and test repository
+  targets are currently `deferred_by_user`; their live acceptance remains unrun.
+
+Future production distribution additionally requires Developer ID identity and
+private key, Team ID, a notarytool Keychain profile, production HTTPS feed and
+archive URLs, an Ed25519 update signing key, `SOURCE_DATE_EPOCH`, and successful
+signing/notarization/stapling/feed/update-recovery acceptance. These requirements
+are retained for that future scope and are not private-use blockers or passes.
 
 See the [current validation receipt](validation/1.4.7.json),
 [parity audit](CODEX_FULL_PARITY_AUDIT.md) and
