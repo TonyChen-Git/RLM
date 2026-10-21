@@ -145,6 +145,17 @@ Of the 341 release inputs, only the PTY test file differs; production inputs
 remain identical. Receipt: `tmp/pty-pip-oct20/verification.json`. These focused
 results do not qualify a continuous soak or replace the original tag results.
 
+A separate corrected-test **8h → 24h → 72h** sequence starts at
+`2026-10-21T01:31:01Z` from immutable commit `fdcabc20a9c6538c76b1089afaf8a872af2c17e6`.
+The snapshot verifies 464 tracked files and the focused test receipt. It keeps
+the published production inputs but changes the PTY test file, so this is not
+an unchanged release-tag test run. The launch checkpoint is preparing, with
+no measured duration or qualification yet; prior elapsed time is not reused.
+Receipt: `tmp/release-1.4.7-corrected-soak-launch-checkpoint.json`; live state:
+`tmp/release-1.4.7-corrected-soak-suite/state.json`. The correction's
+[macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39527531264) is also
+in progress at the recorded checkpoint; no passing result is claimed.
+
 The published package also passes actual Chrome open/snapshot/find/screenshot/
 close, with a visually verified 1280×657 PNG. Completed Task history and the
 image recover after restart; both App exits are 0 and owned Chrome processes/

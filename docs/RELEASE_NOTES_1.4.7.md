@@ -319,6 +319,27 @@ Only `Tests/LumaChatTests/PseudoTerminalSessionTests.swift` differs among the
 Future soak evidence from this corrected test suite must retain its distinct
 source fingerprint and cannot be called an unchanged release-tag test run.
 
+### Corrected-test soak launch — October 21
+
+Commit `fdcabc20a9c6538c76b1089afaf8a872af2c17e6` is pushed directly to `main`.
+A verified 464-file archive of that commit starts a fresh **8h → 24h → 72h**
+sequence at **09:31:01 Asia/Taipei** (`01:31:01Z`). Production inputs remain
+identical to v1.4.7; this sequence uses the corrected PTY tests and the distinct
+fingerprint above. It does not alter the published tag/package or qualify its
+previous failed attempts. AC power and an open lid are confirmed at launch.
+The first run is `ccb2e92e-d3da-428c-af8f-25fd86ca7031`, preparing at the
+immutable checkpoint, with no measured duration or passing result yet.
+Later profiles start only after the preceding profile qualifies; no old time
+is reused. Snapshot verification:
+`tmp/release-1.4.7-corrected-tests-source-verification.json`; launch checkpoint:
+`tmp/release-1.4.7-corrected-soak-launch-checkpoint.json`; live state:
+`tmp/release-1.4.7-corrected-soak-suite/state.json`.
+
+The correction also triggers [macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39527531264),
+in progress at `tmp/release-1.4.7-correction-ci-launch-checkpoint.json`.
+This launch status adds no completed CI result; original release/tag CI evidence
+remains separate.
+
 ## Pending for private-use 1.4.7
 
 - Qualifying 8h, 24h and 72h results; the exact-version 2h run has passed.

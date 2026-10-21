@@ -905,6 +905,31 @@
       "path": "tmp/pty-pip-oct20/pip-repeat-2.log",
       "sha256": "ed8447d4a6e040bdd862a4ce6eb4046ea1305f724a64097d6f8c625fe4c0e5eb",
       "bytes": 960
+    },
+    {
+      "path": "tmp/release-1.4.7-corrected-tests-source-verification.json",
+      "sha256": "1187e709078e9f08794b7da90f825ba1c9d03adf7c79789876c331639f6659ab",
+      "bytes": 56165
+    },
+    {
+      "path": "tmp/release-1.4.7-corrected-soak-suite.py",
+      "sha256": "d927d3f970fec8a25309ed5700ee6c5eac78c675dc7b6049a2b79d01f7a5941f",
+      "bytes": 6905
+    },
+    {
+      "path": "tmp/release-1.4.7-corrected-soak-suite-owner.json",
+      "sha256": "7c3a44e14a61f1c7f0ed0dd80580eb18f6ca4ba4181b3e92a921e38f3d1fd32b",
+      "bytes": 484
+    },
+    {
+      "path": "tmp/release-1.4.7-corrected-soak-launch-checkpoint.json",
+      "sha256": "437284889f7bfd151cff7b64dd2425f0dc1ac6f61c107d1113e2818205007a85",
+      "bytes": 2980
+    },
+    {
+      "path": "tmp/release-1.4.7-correction-ci-launch-checkpoint.json",
+      "sha256": "1cd7b02dcbcbfdc0d91bb4d897d1c552388ac4ac7502bf2ccb94418b12f8a2c8",
+      "bytes": 2422
     }
   ],
   "wrapperFocused": {
@@ -1194,5 +1219,45 @@
     "deadlineSeconds": 10,
     "publishedTagModified": false,
     "originalFailedSoakRequalified": false
+  },
+  "postPublicationCorrectedTestSoak": {
+    "status": "preparing",
+    "qualified": false,
+    "statusAsOf": "2026-10-21T01:31:53.311285+00:00",
+    "sourceCommit": "fdcabc20a9c6538c76b1089afaf8a872af2c17e6",
+    "sourceFingerprint": "d295b7da89b9a78a6cda360ab948c79f51c8716ab0b9e592e67a64f0f670a1c9",
+    "sourceFileCount": 341,
+    "trackedSnapshotFilesVerified": 464,
+    "publishedProductTag": "v1.4.7",
+    "productionInputsMatchPublishedTag": true,
+    "publishedTagTestsUnchanged": false,
+    "changedInputsFromPublishedTag": [
+      "Tests/LumaChatTests/PseudoTerminalSessionTests.swift"
+    ],
+    "continuousEvidenceReused": false,
+    "profiles": [
+      "8h",
+      "24h",
+      "multi-day"
+    ],
+    "activeProfile": "8h",
+    "activeRunID": "ccb2e92e-d3da-428c-af8f-25fd86ca7031",
+    "controllerStartedAt": "2026-10-21T01:31:01Z",
+    "measurementStartedAt": null,
+    "controllerState": "tmp/release-1.4.7-corrected-soak-suite/state.json",
+    "runState": "tmp/release-1.4.7-corrected-tests-source/tmp/soak/ccb2e92e-d3da-428c-af8f-25fd86ca7031/state.json",
+    "launchCheckpoint": "tmp/release-1.4.7-corrected-soak-launch-checkpoint.json",
+    "snapshotVerification": "tmp/release-1.4.7-corrected-tests-source-verification.json",
+    "scope": "Local integration and failure injection with corrected PTY fixture; not unchanged release-tag tests or external-provider acceptance"
+  },
+  "postPublicationCorrectionCI": {
+    "sourceCommit": "fdcabc20a9c6538c76b1089afaf8a872af2c17e6",
+    "runID": 39527531264,
+    "url": "https://github.com/TonyChen-Git/RLM/actions/runs/39527531264",
+    "status": "in_progress",
+    "conclusion": null,
+    "statusAsOf": "2026-10-21T01:31:54.482412+00:00",
+    "receipt": "tmp/release-1.4.7-correction-ci-launch-checkpoint.json",
+    "scope": "Corrected PTY test suite; launch checkpoint only, completion pending"
   }
 }
