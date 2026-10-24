@@ -24,15 +24,34 @@ repository targets at this time ("先不提供"). Acceptance requiring those tar
 is `deferred_by_user`, with no passing live result claimed. Local fixture and
 hosted CI evidence retain their documented scope.
 
-## MCP 1.4.8 candidate integration — updated 2026-10-24
+## MCP 1.4.8 published integration — updated 2026-10-24
+
+The automatic `v1.4.8` tag CI reruns also passed on the same commit:
+macOS 962 Swift tests (two skips, zero failures), optimized compilation and
+35 Python contracts; Linux worker 10/10. Their separate receipts are recorded
+in the version validation file.
+
+The exact-tag 1.4.8 2h → 8h → 24h → 72h soak sequence was launched on
+October 24 at 20:21 Asia/Taipei. Its first run is preparing; no duration is
+qualified or transferred from earlier versions. Immutable launch evidence and
+the live state path are recorded in [validation/1.4.8.json](validation/1.4.8.json).
+
 
 The development source now contains `2026-07-28` stateless MCP for both STDIO
 and Streamable HTTP, alongside explicit `2025-06-18` legacy compatibility.
 This is new product code beyond the immutable v1.4.7 release, packaged as the
-local `1.4.8` / build `15` candidate. The full local release gate and packaging
-pass. Limited packaged MCP UI with a local fixture also passes. Publication,
-hosted CI and source-bound soak remain pending. Historical passing counts below retain their own version and input
-fingerprints.
+published `1.4.8` / build `15` private-use release. The full local release gate,
+packaging and limited packaged MCP UI with a local fixture pass. The regular
+[GitHub Release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.8)
+was published on October 24 from `888addf6219a29487b2f45e91d5b5b9c39319242`;
+all five downloaded assets match their local sizes and hashes.
+
+Both hosted workflows passed for that exact release commit: [macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/40068761358)
+records 962 Swift tests, two skips, zero failures, the optimized desktop build
+and 35 Python contracts; [Linux worker CI](https://github.com/TonyChen-Git/RLM/actions/runs/40068776132)
+passes 10/10. The macOS skips are unavailable Homebrew `htop` and the deliberately
+sandbox-blocked setuid system `top`. Source-bound soak remains unqualified.
+Historical passing counts below retain their own version and input fingerprints.
 
 The frozen MCP/Phase D run passes **140 tests, zero skips or failures,
 13.465 seconds**, fingerprint

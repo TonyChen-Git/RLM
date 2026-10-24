@@ -9,7 +9,23 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **已發佈版本（2026-10-19）**：[LumaChat 1.4.7 build 14](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
+> **已發佈版本（2026-10-24）**：[LumaChat 1.4.8 build 15](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.8)
+> 已從 `main` 的 `888addf` 發佈為一般正式 GitHub Release（非 prerelease）。已整合 MCP `2026-07-28` stateless 支援，
+> 包含 STDIO／Streamable HTTP、協定模式設定、每次請求的版本與能力資訊、工具標頭投影、
+> 斷線後明確重連及設定持久化安全。本機完整 gate 與 ad-hoc 封裝通過：962 項 Swift、
+> 48 項 Python（各 1 skip、0 failures）；Node adapter 17/17、14/14 通過。
+> 最終 gate 日誌已到封裝完成；控制器退出碼未保留，10 月 24 日已重新核對來源與產物。
+> 最終封裝的 MCP 原生 UI（本機 fixture）通過重啟保留、模式切換、重連、完整按鈕與警告顯示，
+> About 顯示 1.4.8 (15)，正常退出。此結果僅涵蓋上述 UI 範圍。
+> 同一 release commit 的 macOS CI 通過 962 項 Swift（2 skips、0 failures）、35 項 Python；
+> Linux worker CI 10/10 通過；正式 tag 自動重跑的兩個 CI 也已通過。
+> 五個發佈產物已下載比對大小與雜湊。
+> 新版本 2h → 8h → 24h → 72h 長測於 10 月 24 日 20:21（台北時間）啟動，
+> 使用正式 tag 的獨立來源快照；目前準備首個 2h 階段，尚未取得長測資格。
+> 歷史 1.4.7 的 2h 合格結果只適用於該版本。
+> 詳見 [1.4.8 版本說明](docs/RELEASE_NOTES_1.4.8.md) 與 [Phase L–Q 架構](docs/PHASE_L_Q_ARCHITECTURE.md)。
+
+> **歷史版本（2026-10-19）**：[LumaChat 1.4.7 build 14](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
 > 已從 `main` 發佈為一般正式 GitHub Release（非 prerelease），整合 Phase I–Q 與後續修復。
 > 完整本機 gate 通過 896 項 Swift、48 項 Python（各 1 skip、0 failures）；
 > macOS CI 896 項（2 skips）及 Linux worker CI 10 項皆零失敗。
@@ -17,25 +33,14 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 > arm64 封裝、安全檢查與有限原生 UI smoke 通過，五個上傳產物的大小與雜湊已核對。
 > 詳見 [1.4.7 版本說明](docs/RELEASE_NOTES_1.4.7.md)。
 
-> **10 月 20 日驗收更新**：同一封裝通過真實 Chrome 五項操作與 Task／截圖重啟保留，
+> **1.4.7 歷史驗收更新（10 月 20 日）**：同一封裝通過真實 Chrome 五項操作與 Task／截圖重啟保留，
 > 語音播放／停止控制及 Computer Use 安全提示已檢查；模型與網頁使用本機 fixture。
 > 本版 2h 長測通過；8h 尚未合格，第三次嘗試發現 pip 互動測試逾時。
 > 10 月 21 日測試流程修正通過 22 項 PTY 測試（1 skip、0 failures）及兩次 pip 重跑；
 > 當時產品程式碼與已發佈版相同。外部測試目標依使用者決定暫不提供。
 > 修正後測試的 8h → 24h → 72h 長測於 10 月 21 日 09:31（台北時間）重新啟動；
 > 11:17 收到來源不明的 SIGTERM 後中斷，實測 5,988.242 秒、46 cycles、368 完成 shards
-> （369 attempted），不合格；24h／72h 未開始，目前沒有執行中的長測序列。
-
-> **1.4.8 build 15 候選版（2026-10-24 更新）**：已整合 MCP `2026-07-28` stateless 支援，
-> 包含 STDIO／Streamable HTTP、協定模式設定、每次請求的版本與能力資訊、工具標頭投影、
-> 斷線後明確重連及設定持久化安全。本機完整 gate 與 ad-hoc 封裝通過：962 項 Swift、
-> 48 項 Python（各 1 skip、0 failures）；Node adapter 17/17、14/14 通過。
-> 最終 gate 日誌已到封裝完成；控制器退出碼未保留，10 月 24 日已重新核對來源與產物。
-> 最終封裝的 MCP 原生 UI（本機 fixture）通過重啟保留、模式切換、重連、完整按鈕與警告顯示，
-> About 顯示 1.4.8 (15)，正常退出。此結果僅涵蓋上述 UI 範圍。
-> 候選版尚未發佈，目前來源的 hosted CI 與版本綁定長測仍待完成。
-> 歷史 1.4.7 的 2h 合格結果只適用於該版本。
-> 詳見 [1.4.8 候選版紀錄](docs/RELEASE_NOTES_1.4.8.md) 與 [Phase L–Q 架構](docs/PHASE_L_Q_ARCHITECTURE.md)。
+> （369 attempted），不合格；該 1.4.7 序列已停止，24h／72h 未開始。
 
 > **私用驗收範圍（2026-10-20 更新）**：依使用者「不用簽，我私用」的決定，
 > 沿用已驗證的 ad-hoc 封裝。Apple Developer ID／公證／stapling、正式更新 feed
@@ -71,7 +76,7 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 - **Skills、Plugins、Hooks、OAuth**：bounded `SKILL.md` discovery、獨立 plugin
   manifest/lifecycle、permission-derived sandbox、host-only lifecycle hooks、
   PKCE OAuth 與 Keychain-only token；plugin-owned MCP 與手動 MCP 分離。MCP 設定可
-  查看連線診斷、Reconnect 與 Refresh Discovery。1.4.8 候選版增加 Automatic／legacy／stateless
+  查看連線診斷、Reconnect 與 Refresh Discovery。1.4.8 增加 Automatic／legacy／stateless
   協定選擇；既有設定保留 legacy，新建設定預設 Automatic。stateless 使用空的 client
   capabilities，未支援的 MRTR 追問會明確拒絕；工具結果不明時不自動重送。
 - **Browser 與 Computer Use 2.0**：Task-owned Chromium/CDP profile、tabs/

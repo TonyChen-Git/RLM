@@ -1,6 +1,17 @@
 # Luma Chat — Development integration history
 
-## MCP 1.4.8 candidate compatibility and recovery — updated 2026-10-24
+## MCP 1.4.8 published compatibility and recovery — updated 2026-10-24
+
+The automatic `v1.4.8` tag CI reruns also passed on the same commit:
+macOS 962 Swift tests (two skips, zero failures), optimized compilation and
+35 Python contracts; Linux worker 10/10. Their separate receipts are recorded
+in the version validation file.
+
+The exact-tag 1.4.8 2h → 8h → 24h → 72h soak sequence was launched on
+October 24 at 20:21 Asia/Taipei. Its first run is preparing; no duration is
+qualified or transferred from earlier versions. Immutable launch evidence and
+the live state path are recorded in [validation/1.4.8.json](validation/1.4.8.json).
+
 
 - Added the stable MCP `2026-07-28` stateless core profile for STDIO and
   Streamable HTTP, retaining `2025-06-18` legacy compatibility. Settings
@@ -36,7 +47,7 @@
   packaged MCP Settings UI run. Controls wrap with available width and complete
   diagnostics remain visible; the first candidate retains its separate evidence.
 
-These changes are packaged locally as **1.4.8 build 15**, beyond the published
+These changes are published as **1.4.8 build 15**, beyond the immutable
 1.4.7 binary. The frozen focused run passes **140 MCP/Phase D tests, zero skips
 or failures**. The separate full candidate gate passes **962 Swift tests and
 48 Python contracts, each with one skip and zero failures**, plus successful
@@ -52,9 +63,15 @@ connection, modern filtering diagnostics and button labels display completely,
 Refresh Discovery and Reconnect succeed, About reports 1.4.8 (15), and quit
 returns 0. HTTP metadata was checked against 20 captured requests. This limited
 scope does not qualify external providers or every Phase I–Q UI.
-Publication, current-source hosted CI and source-bound soak remain pending.
+The regular [v1.4.8 release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.8)
+was published from `888addf6219a29487b2f45e91d5b5b9c39319242`; all five downloaded
+assets match. Exact-commit hosted macOS CI passes 962 Swift tests (two skips,
+zero failures), the optimized desktop build and 35 Python contracts; Linux
+worker CI passes 10/10. The macOS skips are unavailable Homebrew `htop` and
+the intentionally sandbox-blocked setuid system `top`. Source-bound soak
+remains unqualified.
 Exact evidence and artifact hashes are recorded in
-[1.4.8 candidate notes](RELEASE_NOTES_1.4.8.md) and its
+[1.4.8 release notes](RELEASE_NOTES_1.4.8.md) and its
 [validation receipt](validation/1.4.8.json). Official protocol references and
 the supported profile are recorded in
 [Phase L–Q architecture](PHASE_L_Q_ARCHITECTURE.md).
@@ -63,7 +80,7 @@ The prior corrected-test 8h run
 `ccb2e92e-d3da-428c-af8f-25fd86ca7031` was interrupted by SIGTERM at
 `2026-10-21T03:17:32Z`, sender unknown: 5,988.242 continuous seconds, 46 cycles,
 368 completed / 369 attempted shards, exit 130. It does not qualify;
-24h/72h did not start and no long soak remains running. The controller's final
+24h/72h did not start and that historical sequence is stopped. The controller's final
 state is `tmp/release-1.4.7-corrected-soak-suite/state.json`. The original
 exact-tag 1.4.7 2h qualification remains valid only for that historical source.
 

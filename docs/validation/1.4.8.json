@@ -5,15 +5,64 @@
   "architecture": "arm64",
   "recordedDate": "2026-10-24",
   "timezone": "Asia/Taipei",
-  "status": "candidate_local_gate_and_mcp_UI_passed",
+  "status": "published_private_use_release",
   "publication": {
-    "status": "pending",
-    "published": false,
+    "status": "passed",
+    "published": true,
     "targetBranch": "main",
     "intendedChannel": "regular GitHub Release",
-    "releaseCommit": null
+    "releaseCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+    "tag": "v1.4.8",
+    "channel": "regular GitHub Release",
+    "url": "https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.8",
+    "publishedAt": "2026-10-24T06:21:08Z",
+    "assetDownloadVerification": "passed",
+    "assets": [
+      {
+        "name": "LumaChat-1.4.8-arm64.archive-manifest.json",
+        "bytes": 5073,
+        "sha256": "e8892fb2c4fc500fdea003f27518b92ed507f116095f8a23d6c956d7cf274582",
+        "downloadVerified": true
+      },
+      {
+        "name": "LumaChat-1.4.8-arm64.provenance.json",
+        "bytes": 886,
+        "sha256": "8a23dfe8f0cccaee099ec688af6d4dd18be3bcd6436f9c7cc3c652d7b52f88b1",
+        "downloadVerified": true
+      },
+      {
+        "name": "LumaChat-1.4.8-arm64.sbom.spdx.json",
+        "bytes": 786,
+        "sha256": "5c7d262789b1ce34de8c28d8014186e6ace04f6d04af3650c553a5d8514b9f82",
+        "downloadVerified": true
+      },
+      {
+        "name": "LumaChat-1.4.8-arm64.sha256",
+        "bytes": 91,
+        "sha256": "55f97200471d13cf8b30057baa7af3938160964ff17c733393bd75434d018ddd",
+        "downloadVerified": true
+      },
+      {
+        "name": "LumaChat-1.4.8-arm64.zip",
+        "bytes": 11507329,
+        "sha256": "ba0f14b8be761da2c2c648986fce9f19f9b831c0f0eb80ee973aa06865350888",
+        "downloadVerified": true
+      }
+    ],
+    "evidence": [
+      {
+        "path": "tmp/release-1.4.8-published.json",
+        "sha256": "0f966c045e044b48ead0e037d779448ff23d85312703e3c4dba980df05a1f732",
+        "bytes": 2720
+      },
+      {
+        "path": "tmp/release-1.4.8-publication-verification.json",
+        "sha256": "20dac388243ad761bc9bccfcb7efa7d6529eb655d5a82d3db4f38eddb375d778",
+        "bytes": 1304
+      }
+    ]
   },
-  "scope": "Private-use ad-hoc macOS candidate with full local release gate, focused MCP regression and packaged native MCP UI evidence using an isolated loopback fixture; hosted CI, publication and source-bound soak are not yet qualified. This does not qualify every Phase I-Q UI or external provider.",
+  "scope": "Published private-use ad-hoc macOS release with full local release gate, focused MCP regression, limited packaged native MCP UI and successful exact-release-commit hosted macOS/Linux CI. Five uploaded assets were downloaded and matched. Source-bound soak is not yet qualified; external provider and every Phase I-Q UI acceptance are not claimed.",
   "source": {
     "baseCommit": "2f17a1aca6bc15be52417d184d01b98762555684",
     "uncommittedChangesAtGate": true,
@@ -264,9 +313,9 @@
   },
   "acceptanceBoundaries": {
     "packagedNativeUI": "passed_limited_MCP_fixture_and_About_scope",
-    "hostedMacOSAndLinuxCI": "pending",
-    "releasePublication": "pending",
-    "sourceBoundSoak2h8h24hMultiDay": "pending",
+    "hostedMacOSAndLinuxCI": "passed_exact_release_commit",
+    "releasePublication": "passed_five_downloaded_assets_match",
+    "sourceBoundSoak2h8h24hMultiDay": "running_unqualified_first_2h_preparation",
     "externalModelSSHMCPOAuthPRTargets": "deferred_by_user",
     "developerIDNotarizationStaplingProductionFeedSignedUpdates": "not_required_for_private_use",
     "windowsDesktop": "out_of_scope",
@@ -274,7 +323,7 @@
     "mrtrSamplingElicitation": "unsupported_not_advertised",
     "historicalVersion147Evidence": "Retains its original source scope; no elapsed time, UI result or qualification transferred."
   },
-  "localEvidenceOnly": true,
+  "localEvidenceOnly": false,
   "priorCandidates": [
     {
       "source": {
@@ -579,6 +628,254 @@
     "sourceReceipt": {
       "path": "tmp/release-1.4.8-publication-source-receipt.json",
       "sha256": "cc8f0ff2298eb16180d0127fcf79d715716f39cd1bd149436ccc9fe1d00a6cbd"
+    }
+  },
+  "cleanup": {
+    "recordedAt": "2026-10-24T06:10:10.236277+00:00",
+    "removedRegenerableBuildDirectories": [
+      "tmp/release-1.4.8-arm64/scratch",
+      "tmp/release-1.4.8-arm64/cache",
+      "tmp/release-1.4.8-arm64/config",
+      "tmp/release-1.4.8-arm64/security",
+      "tmp/release-1.4.8-arm64/clang-module-cache",
+      "tmp/release-1.4.8-arm64/swift-module-cache",
+      "tmp/release-1.4.8-arm64/xdg-cache",
+      "tmp/release-1.4.8-arm64/xdg-config"
+    ],
+    "preserved": [
+      "release log and source receipts",
+      "validation evidence",
+      "packaged App and five release assets",
+      "archive extraction and security reports",
+      "isolated UI fixture evidence"
+    ],
+    "scope": "Only this task-owned final release build/cache directories; historical evidence and user settings preserved.",
+    "receipt": {
+      "path": "tmp/release-1.4.8-cleanup.json",
+      "sha256": "b5dcb7d2c9d13bb7062153f4a32b18c582eb95e994af7fca2b5ed2b57d610768",
+      "bytes": 775
+    }
+  },
+  "integration": {
+    "commit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+    "branch": "main",
+    "pushed": true,
+    "macOSRunID": 40068761358,
+    "linuxRunID": 40068776132
+  },
+  "hostedCI": {
+    "status": "passed",
+    "sourceCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+    "scope": "Both runs use the exact commit resolved by the published v1.4.8 tag; they are CI contracts, not external provider live acceptance.",
+    "macOS": {
+      "runID": 40068761358,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/40068761358",
+      "conclusion": "success",
+      "finishedAt": "2026-10-24T06:20:39Z",
+      "toolchain": "Apple Swift 6.2.4 (swiftlang-6.2.4.1.4 clang-1700.6.4.2)",
+      "swift": {
+        "tests": 962,
+        "skips": 2,
+        "failures": 0,
+        "seconds": 256.763,
+        "skipReasons": [
+          "The Homebrew htop executable is unavailable on this platform.",
+          "The system top executable is setuid and intentionally blocked by the PTY sandbox."
+        ]
+      },
+      "optimizedDesktopBuild": "passed",
+      "python": {
+        "tests": 35,
+        "skips": 0,
+        "failures": 0,
+        "suites": [
+          {
+            "name": "release archive",
+            "tests": 7,
+            "seconds": 0.111
+          },
+          {
+            "name": "soak harness",
+            "tests": 28,
+            "seconds": 1.235
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "tmp/release-1.4.8-ci-macos.json",
+          "sha256": "fc4f3742f8ee04e9a8bb0725a11fbcfcf7dfb5254937fdd5daca25cb106f5cc8",
+          "bytes": 1764
+        },
+        {
+          "path": "tmp/release-1.4.8-ci-macos.log",
+          "sha256": "c9cee2826b65ca3c115b12b11286ff795b59a81ea0becabffa363315f42a5485",
+          "bytes": 497611
+        }
+      ]
+    },
+    "linux": {
+      "runID": 40068776132,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/40068776132",
+      "conclusion": "success",
+      "finishedAt": "2026-10-24T06:05:11Z",
+      "worker": {
+        "tests": 10,
+        "skips": 0,
+        "failures": 0,
+        "seconds": 7.642
+      },
+      "evidence": [
+        {
+          "path": "tmp/release-1.4.8-ci-linux.json",
+          "sha256": "deead3b05383a01133d5b8bbdd2ad5ce78c874226df111dd4393f6899a5cfecc",
+          "bytes": 1426
+        },
+        {
+          "path": "tmp/release-1.4.8-ci-linux.log",
+          "sha256": "9841bd72445779bb3f7c1283596385f01d858eb7d52dbb0e9484a60de9ff8c0f",
+          "bytes": 19389
+        }
+      ]
+    }
+  },
+  "sourceBoundSoak": {
+    "status": "running_unqualified",
+    "sequence": [
+      "2h",
+      "8h",
+      "24h",
+      "72h"
+    ],
+    "startedAt": "2026-10-24T12:21:36Z",
+    "sourceCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+    "sourceFingerprint": "879db100d236f42b3a398318505109d5d7d961c7eb902f4f69f7ea98d079a7a8",
+    "snapshotAt": "2026-10-24T12:23:06Z",
+    "firstRunID": "46b1ba6f-f4b0-40d2-8805-a6ee0c4096cb",
+    "firstProfileStateAtSnapshot": "preparing",
+    "qualificationEligible": false,
+    "continuousEvidenceReused": false,
+    "stopOnFailureOrInterruption": true,
+    "liveStatePath": "tmp/release-1.4.8-soak-suite/run/state.json",
+    "evidence": [
+      {
+        "path": "tmp/release-1.4.8-soak-suite/launch-checkpoint.json",
+        "sha256": "87065729cf204c09a25498d5be46ddcf6ad1b87fbc7142658908b0663de5dd60",
+        "bytes": 1727
+      },
+      {
+        "path": "tmp/release-1.4.8-soak-suite/preparation.json",
+        "sha256": "ec71ce1023fc6907c1c6fd8e3103297f3251061c4d3da54b194a0d6e8649512e",
+        "bytes": 54504
+      },
+      {
+        "path": "tmp/release-1.4.8-soak-suite/controller-launch.json",
+        "sha256": "3de0910dde40441e4aa61a9bbef4fc7e5b6ee767564bd7f34c21f78767f0baa5",
+        "bytes": 360
+      },
+      {
+        "path": "tmp/release-1.4.8-soak-suite.py",
+        "sha256": "d239fe6fb6af6e2f215d9176abd05100687e494cfee35133292856ae787d3082",
+        "bytes": 30826
+      },
+      {
+        "path": "tmp/release-1.4.8-soak-suite-checks.log",
+        "sha256": "e4a8753418c6970f73a8903b4d2ab323bea2121235f0537810625976562f2643",
+        "bytes": 1034
+      }
+    ]
+  },
+  "tagWorkflowReruns": {
+    "status": "passed",
+    "sourceCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+    "tag": "v1.4.8",
+    "scope": "Automatic tag-triggered workflow reruns; distinct from pre-publication main runs; not external live acceptance.",
+    "macOS": {
+      "runID": 40069856902,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/40069856902",
+      "headBranch": "v1.4.8",
+      "sourceCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+      "conclusion": "success",
+      "startedAt": "2026-10-24T06:21:08Z",
+      "finishedAt": "2026-10-24T06:34:36Z",
+      "evidence": [
+        {
+          "path": "tmp/release-1.4.8-tag-ci-macos.json",
+          "sha256": "40674b02163acd0785ab15e6f6db1fec32a3dd80c513d2947911b307be6a46dc",
+          "bytes": 1786
+        },
+        {
+          "path": "tmp/release-1.4.8-tag-ci-macos.log",
+          "sha256": "a423063472b09b71df9c2698a6047fd22c1452cf84e5cc6029010336212f7426",
+          "bytes": 445836
+        }
+      ],
+      "toolchain": "Apple Swift 6.2.4 (swiftlang-6.2.4.1.4 clang-1700.6.4.2)",
+      "swift": {
+        "tests": 962,
+        "skips": 2,
+        "failures": 0,
+        "seconds": 223.466,
+        "skipReasons": [
+          "The Homebrew htop executable is unavailable on this platform.",
+          "The system top executable is setuid and intentionally blocked by the PTY sandbox."
+        ]
+      },
+      "build": {
+        "debug": "passed",
+        "debugSeconds": 166.33,
+        "optimizedDesktop": "passed",
+        "optimizedDesktopSeconds": 386.78
+      },
+      "python": {
+        "tests": 35,
+        "skips": 0,
+        "failures": 0,
+        "suites": [
+          {
+            "name": "release archive",
+            "tests": 7,
+            "seconds": 0.07
+          },
+          {
+            "name": "soak harness",
+            "tests": 28,
+            "seconds": 0.95
+          }
+        ]
+      }
+    },
+    "linux": {
+      "runID": 40069856827,
+      "url": "https://github.com/TonyChen-Git/RLM/actions/runs/40069856827",
+      "headBranch": "v1.4.8",
+      "sourceCommit": "888addf6219a29487b2f45e91d5b5b9c39319242",
+      "conclusion": "success",
+      "startedAt": "2026-10-24T06:21:07Z",
+      "finishedAt": "2026-10-24T06:21:28Z",
+      "evidence": [
+        {
+          "path": "tmp/release-1.4.8-tag-ci-linux.json",
+          "sha256": "6dd81ff4a3de5297b9e2cfd5d49b79506ae1c809cd388ec14a34c0a311a9716c",
+          "bytes": 1448
+        },
+        {
+          "path": "tmp/release-1.4.8-tag-ci-linux.log",
+          "sha256": "77f5d7b38e476d4fee6c23d57d5545935dcdfe7fa0bacbee9509580d4f0ac3ea",
+          "bytes": 15715
+        }
+      ],
+      "worker": {
+        "tests": 10,
+        "skips": 0,
+        "failures": 0,
+        "seconds": 7.235
+      }
+    },
+    "receipt": {
+      "path": "tmp/release-1.4.8-tag-ci-summary.json",
+      "sha256": "1f9f50df9813a17376f8e282a66a9d3d4a72b5eff9c5673c5179b1924c48e610",
+      "bytes": 2598
     }
   }
 }

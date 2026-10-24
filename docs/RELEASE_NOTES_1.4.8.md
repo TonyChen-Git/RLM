@@ -2,15 +2,17 @@
 
 - Status updated: 2026-10-24
 - Source version/build: `1.4.8` / `15`
-- Status: local gate, packaging and limited MCP native UI passed; publication,
-  hosted CI and source-bound soak pending
-- Intended release channel: regular GitHub Release from `main`
+- Status: published; local gate, packaging, limited MCP native UI and exact-commit
+  hosted CI passed; source-bound soak not yet qualified
+- Release channel: [regular GitHub Release](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.8) from `main`
+- Release commit: `888addf6219a29487b2f45e91d5b5b9c39319242`
+- Published: 2026-10-24 14:21:08 Asia/Taipei
 - Signing boundary: verified ad-hoc package for private use
 
-This candidate integrates the modern MCP implementation after the immutable
+This release integrates the modern MCP implementation after the immutable
 [1.4.7 release](RELEASE_NOTES_1.4.7.md). The existing 1.4.7 tag, package and
-historical acceptance results retain their original scope. This document does
-not claim that the 1.4.8 candidate has been published or fully accepted.
+historical acceptance results retain their original scope. Publication does
+not imply completed external acceptance or source-bound soak.
 
 ## Integrated changes
 
@@ -85,8 +87,8 @@ The Swift skip is the intentionally sandbox-blocked setuid system `top`.
 Python comprises archive 7, soak harness 28, security 3 and worker 10 tests;
 the worker process-cancellation case requires Linux `/proc` and skips on macOS.
 Node results are local adapter contracts, not VS Code UI or hosted Action
-acceptance. The toolchain is Apple Swift 6.4; the candidate's hosted toolchain
-compatibility remains pending.
+acceptance. The local toolchain is Apple Swift 6.4; hosted CI independently
+passed on Apple Swift 6.2.4 for the exact release commit.
 
 The preceding focused MCP/Phase D run passed **140 tests, zero skips or
 failures, 13.465 seconds** with unchanged 350-input fingerprint
@@ -124,7 +126,28 @@ headers were absent. Screenshots, accessibility snapshots and request evidence
 are bound to the final binary hash in the validation record. This limited MCP
 fixture acceptance does not qualify external providers or every Phase I–Q UI.
 
-## Candidate artifacts
+## Hosted CI and publication
+
+Both workflows passed for `888addf6219a29487b2f45e91d5b5b9c39319242`:
+
+- [macOS development gate](https://github.com/TonyChen-Git/RLM/actions/runs/40068761358):
+  962 Swift tests, two skips, zero failures (256.763 seconds), optimized desktop
+  build and 35 Python contracts. The skips are unavailable Homebrew `htop` and
+  the intentionally sandbox-blocked setuid system `top`. Toolchain: Swift 6.2.4.
+- [Linux worker](https://github.com/TonyChen-Git/RLM/actions/runs/40068776132):
+  10 tests, no skips or failures (7.642 seconds), including Linux process cancellation.
+
+The automatic tag-triggered reruns also passed: [macOS](https://github.com/TonyChen-Git/RLM/actions/runs/40069856902)
+records 962 Swift tests, two skips and zero failures (223.466 seconds),
+optimized compilation and 35 Python contracts; [Linux](https://github.com/TonyChen-Git/RLM/actions/runs/40069856827)
+passes 10/10 (7.235 seconds). These are separate same-commit CI receipts.
+
+The regular `v1.4.8` release was published on October 24 at 14:21:08 Asia/Taipei.
+All five uploaded assets were downloaded and their complete bytes, sizes and
+SHA-256 hashes matched the local artifacts. This is an ad-hoc private-use
+release; the external and long-duration acceptance limits below remain.
+
+## Published artifacts
 
 - ZIP: `dist/LumaChat-1.4.8-arm64.zip`, 11,507,329 bytes
 - ZIP SHA-256: `ba0f14b8be761da2c2c648986fce9f19f9b831c0f0eb80ee973aa06865350888`
@@ -132,13 +155,22 @@ fixture acceptance does not qualify external providers or every Phase I–Q UI.
 - Archive manifest, checksum, SPDX SBOM and SLSA provenance are generated
   beside the ZIP; all five artifact hashes are in the validation record.
 
-These files are locally packaged candidate artifacts. The provenance's fixed
+These files are the verified published artifacts. The provenance's fixed
 development timestamp is a reproducibility field; actual gate times are
 recorded above. No Apple distribution signature or notarization is claimed.
 
+## Source-bound soak launch
+
+The new 2h → 8h → 24h → 72h sequence started at
+`2026-10-24T12:21:36Z` (20:21 Asia/Taipei), using an isolated archive of the
+exact published tag. The first run is `46b1ba6f-f4b0-40d2-8805-a6ee0c4096cb`;
+the launch checkpoint records its preparation stage, with no qualified elapsed
+time. The controller stops on failure or interruption and does not reuse prior
+run time. Live status is `tmp/release-1.4.8-soak-suite/run/state.json`; the
+immutable launch checkpoint and input receipts are in the validation record.
+
 ## Acceptance still outstanding
 
-- Current-source hosted macOS/Linux CI, followed by publication verification.
 - New source-bound 2h, 8h, 24h and multi-day soak. No earlier elapsed time or
   qualification transfers to this new implementation. The old corrected-test
   8h attempt ended interrupted after 5,988.242 seconds, 46 cycles and 368
