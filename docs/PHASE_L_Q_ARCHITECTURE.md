@@ -155,9 +155,68 @@ expired-session responses after disconnect, including pending transports.
 Namespaces remain reserved while interrupted connections and discovery
 refreshes finish cleanup, preventing an old generation from unregistering a
 replacement connection's tools.
-MCP currently implements the `2025-06-18` initialize lifecycle;
-other protocol revisions fail with a visible compatibility diagnostic and no
-tool registration. Modern stateless MCP support remains pending.
+### MCP protocol compatibility — unreleased source, 2026-10-22
+
+The current development source adds the stable `2026-07-28` stateless protocol
+on STDIO and Streamable HTTP while retaining the `2025-06-18` initialize
+lifecycle. This source is newer than the published 1.4.7 package. Its focused
+verification, complete release gate, packaged UI and new source-bound soak
+must be recorded separately; historical package evidence is not inherited.
+
+Each server persists an explicit `legacy`, `stateless` or `automatic` mode.
+Existing documents and plugin declarations without the field decode as
+`legacy`; a newly created Settings draft defaults to `automatic`. Settings
+shows both the selected mode and negotiated protocol. Automatic mode starts
+with read-only `server/discover`; only recognized compatibility cases allow a
+fresh legacy transport/initialize lifecycle. Authentication failures, ordinary
+HTTP outages and capability requirements do not authorize a downgrade.
+STDIO probe timeout recovery joins teardown before starting the replacement
+process, and generation checks reject callbacks from the retired process.
+
+Stateless requests carry version, empty client capabilities and client identity
+in `params._meta`; they do not initialize a protocol session. Core server
+discovery, tools, resources, resource templates and prompts retain bounded
+pagination and payload validation. HTTP projects `MCP-Protocol-Version`,
+`Mcp-Method`, and the method's tool/prompt name or resource URI into owned
+headers; JSON and request-scoped SSE responses are supported. Stateless
+requests never use session identifiers, reconnect GET, or session DELETE.
+The client requires `resultType: complete`. MRTR `input_required`, sampling,
+elicitation and other unadvertised client capabilities are unsupported and
+fail explicitly without supplying input, granting authority or replaying the
+operation. An empty capabilities object is intentional, not a completeness
+claim for optional protocol extensions.
+
+HTTP `x-mcp-header` projections use only static `properties` paths with string,
+boolean or safe integer values. Names must be valid and unique without regard
+to case; null/absent values omit the header. Values that require escaping use
+the protocol's UTF-8 base64 sentinel. Per-value, count and aggregate size
+limits apply. Invalid annotated tools are excluded individually with bounded,
+redacted discovery warnings; valid tools still replace the previous registry.
+User-configured headers cannot override protocol-owned routing/session fields.
+
+Tool adapters bind both a connection token and a discovery token. Refresh
+revokes the old token before discovery; successful validated registration
+issues a new one. A transient discovery failure can retain the last displayed
+descriptors, but execution remains disabled until discovery succeeds. Retained
+adapters cannot execute after permissions/schema change, and the client checks
+the exact expected descriptor immediately before dispatch. A failed transport
+request invalidates its connection and registry authority. Reconnect is
+explicit; ambiguous tool outcomes are never automatically replayed, including
+legacy session expiry. Users must inspect the remote outcome before retrying.
+
+Settings edits, enable/disable, deletion and plugin-owned changes disconnect
+affected active or initializing clients and clear cached approvals before
+persisting the replacement configuration. UI state is published from committed
+settings. An ambiguous metadata write or readback failure keeps affected
+servers disconnected; it cannot silently reactivate old credentials or
+permissions. Credentials remain in Keychain, with staged credential writes
+and cleanup diagnostics separate from the metadata commit. No plugin install
+or MCP negotiation executes undeclared scripts outside existing permissions.
+
+Protocol references: [versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning),
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
+[STDIO](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio)
+and [server discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover).
 
 STDIO newline framing scans only newly received bytes while a partial message
 is retained. This avoids repeatedly rescanning a large response across many

@@ -1,0 +1,584 @@
+{
+  "schemaVersion": 1,
+  "version": "1.4.8",
+  "build": 15,
+  "architecture": "arm64",
+  "recordedDate": "2026-10-24",
+  "timezone": "Asia/Taipei",
+  "status": "candidate_local_gate_and_mcp_UI_passed",
+  "publication": {
+    "status": "pending",
+    "published": false,
+    "targetBranch": "main",
+    "intendedChannel": "regular GitHub Release",
+    "releaseCommit": null
+  },
+  "scope": "Private-use ad-hoc macOS candidate with full local release gate, focused MCP regression and packaged native MCP UI evidence using an isolated loopback fixture; hosted CI, publication and source-bound soak are not yet qualified. This does not qualify every Phase I-Q UI or external provider.",
+  "source": {
+    "baseCommit": "2f17a1aca6bc15be52417d184d01b98762555684",
+    "uncommittedChangesAtGate": true,
+    "sourceFingerprint": "f7c34cecebea6d19723774fc017dbb33ed5d4fe0d46140df717d25ece5cbe29f",
+    "inputCount": 350,
+    "contractFingerprint": "b75332977cf00704aedc228451e2f345af2f90f76a5a35e8aacf3e8c21d848d8",
+    "swiftFingerprint": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+    "swiftPath": "/usr/bin/swift",
+    "unchangedDuringGate": null,
+    "receipt": {
+      "path": "tmp/release-1.4.8-final-source-receipt.json",
+      "sha256": "8378def426b56c9bd7c76fdfcb4093387db3374ccba3e6a4f0e64d4da95097bd",
+      "bytes": 42848
+    },
+    "inputReceiptMatchesAtRecovery": true,
+    "inputReceiptVerifiedAt": "2026-10-24T00:54:32Z",
+    "verificationNote": "The controller did not save its final receipt. The complete starting receipt matches the current inputs at recovery; an immediate end-of-gate receipt is unavailable."
+  },
+  "localReleaseGate": {
+    "status": "passed",
+    "exitCode": null,
+    "startedAt": "2026-10-23T13:40:48Z",
+    "finishedAt": "2026-10-23T13:55:03Z",
+    "mode": "private-use-ad-hoc",
+    "swift": {
+      "tests": 962,
+      "skips": 1,
+      "failures": 0,
+      "unexpectedFailures": 0,
+      "testDurationSeconds": 253.914,
+      "skipReason": "The system top executable is setuid and intentionally blocked by the PTY sandbox."
+    },
+    "python": {
+      "tests": 48,
+      "skips": 1,
+      "failures": 0,
+      "suites": [
+        {
+          "name": "release archive",
+          "tests": 7,
+          "skips": 0,
+          "failures": 0,
+          "seconds": 0.859
+        },
+        {
+          "name": "soak harness",
+          "tests": 28,
+          "skips": 0,
+          "failures": 0,
+          "seconds": 3.799
+        },
+        {
+          "name": "security audit",
+          "tests": 3,
+          "skips": 0,
+          "failures": 0,
+          "seconds": 0.006
+        },
+        {
+          "name": "remote worker",
+          "tests": 10,
+          "skips": 1,
+          "failures": 0,
+          "seconds": 13.759
+        }
+      ],
+      "skipReason": "Process cancellation requires Linux /proc."
+    },
+    "build": {
+      "debug": "passed",
+      "debugSeconds": 347.02,
+      "optimized": "passed",
+      "optimizedSeconds": 177.47,
+      "toolchain": "Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)"
+    },
+    "package": {
+      "adHocSigning": "passed",
+      "strictDeepSignatureVerification": "passed",
+      "plistPrivacyManifestChecks": "passed",
+      "archiveCRCAndManifest": "passed",
+      "archiveMetadataExclusion": "passed",
+      "extractedApplicationChecks": "passed",
+      "extractedCLIVersion": "LumaChat 1.4.8",
+      "securityAudit": "passed",
+      "securityAuditSummary": {
+        "applicationBytes": 42239546,
+        "applicationFiles": 17,
+        "getTaskAllow": false,
+        "releaseMode": "development",
+        "schemaVersion": 1,
+        "sourceBytes": 10452518,
+        "sourceFiles": 423,
+        "updateTrustConfigured": false
+      }
+    },
+    "evidence": [
+      {
+        "path": "tmp/release-1.4.8-final-result.json",
+        "sha256": "c4a4e19b11e8b94d94d103ce60276d85a865134ac239d514b7db0ba430b9450c",
+        "bytes": 1206
+      },
+      {
+        "path": "tmp/release-1.4.8-final-result-before-recovery.json",
+        "sha256": "6e60ca31ce5c173be755a2fcefd070e8640bb180992753ad7a039c745b9c57c2",
+        "bytes": 333
+      },
+      {
+        "path": "tmp/release-1.4.8-final.log",
+        "sha256": "44bebbe2827acf52c063016ee1555564b3935146d58a7c6e453bc341452db189",
+        "bytes": 284313
+      },
+      {
+        "path": "tmp/release-1.4.8-final-runner.py",
+        "sha256": "0fd1f1e2577a59094a4b01cb0588adc688c2ada7dc7af6fbfa9d779db2be230f",
+        "bytes": 1907
+      },
+      {
+        "path": "tmp/release-1.4.8-arm64/security-audit.json",
+        "sha256": "2e82af4d49663abe0aab06e7bd814f463ffb5bca99f5e94e17de17094d8ea2d3",
+        "bytes": 190
+      },
+      {
+        "path": "tmp/release-1.4.8-arm64/signed-entitlements.plist",
+        "sha256": "9511674cb80035d75385e59b0e936a724daf7965266e375c1bc1b1c189264ea8",
+        "bytes": 244
+      },
+      {
+        "path": "tmp/release-1.4.8-arm64/archive-members.txt",
+        "sha256": "4d9e01cb447296a8a20005ea373e921c600c4da93e20fc194ae7e80cb72b86dc",
+        "bytes": 2311
+      }
+    ],
+    "completionEvidence": "All release.sh gates reached its final SHA-256 footer; process exit code unavailable after controller termination.",
+    "recoveredAt": "2026-10-24T00:54:32Z",
+    "recovery": {
+      "artifactChecks": [
+        {
+          "command": [
+            "/usr/bin/codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "/Volumes/SD/Code/RLM/dist/LumaChat.app"
+          ],
+          "exitCode": 0,
+          "output": ""
+        },
+        {
+          "command": [
+            "/usr/bin/unzip",
+            "-tq",
+            "/Volumes/SD/Code/RLM/dist/LumaChat-1.4.8-arm64.zip"
+          ],
+          "exitCode": 0,
+          "output": "No errors detected in compressed data of /Volumes/SD/Code/RLM/dist/LumaChat-1.4.8-arm64.zip."
+        },
+        {
+          "command": [
+            "/Volumes/SD/Code/RLM/dist/LumaChat.app/Contents/Resources/bin/lumachat",
+            "--version"
+          ],
+          "exitCode": 0,
+          "output": "LumaChat 1.4.8"
+        }
+      ],
+      "controllerStatusWasStale": true,
+      "finalLogMtimeUsedForFinishedAt": true,
+      "originalExitCodeUnavailable": true,
+      "sourceReceiptVerifiedOnRecovery": true
+    },
+    "revisionNote": "Fresh full gate after the packaged Settings UI finding; do not combine elapsed time or artifact identity with the preceding candidate."
+  },
+  "focusedMCP": {
+    "status": "passed",
+    "tests": 140,
+    "skips": 0,
+    "failures": 0,
+    "seconds": 13.465,
+    "sourceFingerprint": "1a25a1e3cec4b5bf78edfa276d39029d648277641f8bedbe7fd17f441c150f03",
+    "sourceUnchanged": true,
+    "scope": "MCP and Phase D fixtures plus real sandboxed STDIO; before version/build bump, not an external provider acceptance.",
+    "receipt": "docs/validation/mcp-stateless-2026-10-22.json"
+  },
+  "nodeAdapters": {
+    "status": "passed",
+    "recordedDate": "2026-10-23",
+    "scope": "Local adapter contracts, not VS Code UI or hosted GitHub runner live acceptance.",
+    "suites": [
+      {
+        "name": "VS Code",
+        "tests": 17,
+        "skips": 0,
+        "failures": 0,
+        "exitCode": 0,
+        "durationMilliseconds": 57.108416,
+        "evidence": {
+          "path": "tmp/release-1.4.8-vscode.log",
+          "sha256": "5c65461ab453399ee2598dd2f2c0e6a6784c5fe1ecd10f775397ca81ccf4d2fc",
+          "bytes": 1456
+        }
+      },
+      {
+        "name": "GitHub Action",
+        "tests": 14,
+        "skips": 0,
+        "failures": 0,
+        "exitCode": 0,
+        "durationMilliseconds": 47.922458,
+        "evidence": {
+          "path": "tmp/release-1.4.8-github-action.log",
+          "sha256": "9979c1a2e8cf59c0df4ccdd7e61c5fe3124ae0728dff9b70851f472b6f2f9ecc",
+          "bytes": 1275
+        }
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/LumaChat-1.4.8-arm64.archive-manifest.json",
+      "sha256": "e8892fb2c4fc500fdea003f27518b92ed507f116095f8a23d6c956d7cf274582",
+      "bytes": 5073
+    },
+    {
+      "path": "dist/LumaChat-1.4.8-arm64.provenance.json",
+      "sha256": "8a23dfe8f0cccaee099ec688af6d4dd18be3bcd6436f9c7cc3c652d7b52f88b1",
+      "bytes": 886
+    },
+    {
+      "path": "dist/LumaChat-1.4.8-arm64.sbom.spdx.json",
+      "sha256": "5c7d262789b1ce34de8c28d8014186e6ace04f6d04af3650c553a5d8514b9f82",
+      "bytes": 786
+    },
+    {
+      "path": "dist/LumaChat-1.4.8-arm64.sha256",
+      "sha256": "55f97200471d13cf8b30057baa7af3938160964ff17c733393bd75434d018ddd",
+      "bytes": 91
+    },
+    {
+      "path": "dist/LumaChat-1.4.8-arm64.zip",
+      "sha256": "ba0f14b8be761da2c2c648986fce9f19f9b831c0f0eb80ee973aa06865350888",
+      "bytes": 11507329
+    }
+  ],
+  "applicationBinary": {
+    "path": "dist/LumaChat.app/Contents/MacOS/LumaChat",
+    "sha256": "50d58eede3e7227445245f78d19b461131a01bddca5123a772d0da54560a042a",
+    "bytes": 40230784
+  },
+  "acceptanceBoundaries": {
+    "packagedNativeUI": "passed_limited_MCP_fixture_and_About_scope",
+    "hostedMacOSAndLinuxCI": "pending",
+    "releasePublication": "pending",
+    "sourceBoundSoak2h8h24hMultiDay": "pending",
+    "externalModelSSHMCPOAuthPRTargets": "deferred_by_user",
+    "developerIDNotarizationStaplingProductionFeedSignedUpdates": "not_required_for_private_use",
+    "windowsDesktop": "out_of_scope",
+    "slackGmailProviders": "future_evaluation",
+    "mrtrSamplingElicitation": "unsupported_not_advertised",
+    "historicalVersion147Evidence": "Retains its original source scope; no elapsed time, UI result or qualification transferred."
+  },
+  "localEvidenceOnly": true,
+  "priorCandidates": [
+    {
+      "source": {
+        "baseCommit": "2f17a1aca6bc15be52417d184d01b98762555684",
+        "uncommittedChangesAtGate": true,
+        "sourceFingerprint": "2ac43949b9cfef43c0c4c4b926fed4041acd567494d416d30ee9fb5cfc28522d",
+        "inputCount": 350,
+        "contractFingerprint": "b75332977cf00704aedc228451e2f345af2f90f76a5a35e8aacf3e8c21d848d8",
+        "swiftFingerprint": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+        "swiftPath": "/usr/bin/swift",
+        "unchangedDuringGate": true,
+        "receipt": {
+          "path": "tmp/release-1.4.8-first-candidate/release-1.4.8-source-receipt.json",
+          "sha256": "170d238eaec267ccfd3211fb1549e8a6cc403c14f1e60154574158443d819158",
+          "bytes": 42848
+        }
+      },
+      "localReleaseGate": {
+        "status": "passed",
+        "exitCode": 0,
+        "startedAt": "2026-10-22T01:38:36Z",
+        "finishedAt": "2026-10-22T01:52:06Z",
+        "mode": "private-use-ad-hoc",
+        "swift": {
+          "tests": 962,
+          "skips": 1,
+          "failures": 0,
+          "unexpectedFailures": 0,
+          "testDurationSeconds": 241.759,
+          "skipReason": "The system top executable is setuid and intentionally blocked by the PTY sandbox."
+        },
+        "python": {
+          "tests": 48,
+          "skips": 1,
+          "failures": 0,
+          "suites": [
+            {
+              "name": "release archive",
+              "tests": 7,
+              "skips": 0,
+              "failures": 0,
+              "seconds": 0.631
+            },
+            {
+              "name": "soak harness",
+              "tests": 28,
+              "skips": 0,
+              "failures": 0,
+              "seconds": 5.155
+            },
+            {
+              "name": "security audit",
+              "tests": 3,
+              "skips": 0,
+              "failures": 0,
+              "seconds": 0.006
+            },
+            {
+              "name": "remote worker",
+              "tests": 10,
+              "skips": 1,
+              "failures": 0,
+              "seconds": 13.311
+            }
+          ],
+          "skipReason": "Process cancellation requires Linux /proc."
+        },
+        "build": {
+          "debug": "passed",
+          "debugSeconds": 299.49,
+          "optimized": "passed",
+          "optimizedSeconds": 188.22,
+          "toolchain": "Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)"
+        },
+        "package": {
+          "adHocSigning": "passed",
+          "strictDeepSignatureVerification": "passed",
+          "plistPrivacyManifestChecks": "passed",
+          "archiveCRCAndManifest": "passed",
+          "archiveMetadataExclusion": "passed",
+          "extractedApplicationChecks": "passed",
+          "extractedCLIVersion": "LumaChat 1.4.8",
+          "securityAudit": "passed",
+          "securityAuditSummary": {
+            "applicationBytes": 42230682,
+            "applicationFiles": 17,
+            "getTaskAllow": false,
+            "releaseMode": "development",
+            "schemaVersion": 1,
+            "sourceBytes": 10434460,
+            "sourceFiles": 421,
+            "updateTrustConfigured": false
+          }
+        },
+        "evidence": [
+          {
+            "path": "tmp/release-1.4.8-first-candidate/release-1.4.8-result.json",
+            "sha256": "7719c5157757311acad52ea4acff474e7ba85f04cc1cd42031de9033aaea525d",
+            "bytes": 376
+          },
+          {
+            "path": "tmp/release-1.4.8-first-candidate/release-1.4.8.log",
+            "sha256": "0b6f831dead6087ab0709dd2dd015c826a2d3d672ff6a07bf8d0aec0f6e31345",
+            "bytes": 284261
+          },
+          {
+            "path": "tmp/release-1.4.8-runner.py",
+            "sha256": "8ed925343b3664d52643a864e7a4bc0c4416d6ed956f6dfac47bdd722502a298",
+            "bytes": 1877
+          }
+        ],
+        "evidenceNote": "Ephemeral package staging was replaced by the final gate. Its original audit summary is retained above and supported by the preserved gate log and archived package."
+      },
+      "artifacts": [
+        {
+          "path": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.archive-manifest.json",
+          "sha256": "01c3a84201a53961dfb6552551b10ce106edd2bec2d1d0325e39bb4c9bb3ee2c",
+          "bytes": 5073
+        },
+        {
+          "path": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.provenance.json",
+          "sha256": "0c62b199fdc780544c98668ac8c4233e5324f7946920133dd937e1aa40fa1ff9",
+          "bytes": 886
+        },
+        {
+          "path": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.sbom.spdx.json",
+          "sha256": "ebe693b9471850a763178900c92a234c6d8f0301b1735f4e9f65cb1c2cba98cd",
+          "bytes": 786
+        },
+        {
+          "path": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.sha256",
+          "sha256": "425ece195c77ae01c76eae34b0d46f0be31e08bf49283721ce470c8efeaf1081",
+          "bytes": 91
+        },
+        {
+          "path": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.zip",
+          "sha256": "a336b34c3c94075076bee09c421b5127c5270158cce153eae4f6ac18b8161739",
+          "bytes": 11505675
+        }
+      ],
+      "applicationBinary": {
+        "sha256": "498e545f5d9048ca6ecdb8ec9c0091a6e4456aa11a3a1b0e44d7d910ee628cc0",
+        "bytes": 40221920,
+        "archivePath": "tmp/release-1.4.8-first-candidate/LumaChat-1.4.8-arm64.zip",
+        "archiveMember": "LumaChat.app/Contents/MacOS/LumaChat"
+      },
+      "status": "superseded_after_packaged_UI_layout_finding",
+      "scope": "First candidate before the final MCP Settings layout correction; retains its own source, test and artifact evidence.",
+      "packagedNativeUI": {
+        "status": "passed_functional_checks_with_layout_bug_found",
+        "finding": "Connection action buttons and diagnostics truncated at the default Settings width. The final source wraps actions and diagnostics.",
+        "scope": "Isolated local HTTP fixture: modern discovery, excluded invalid tool warning, saved legacy selection, refresh and explicit reconnect; clean exit 0. Final layout, restart and About acceptance were pending.",
+        "receipt": {
+          "path": "tmp/release-1.4.8-ui/first-acceptance.json",
+          "sha256": "7dac12620f08a0a3276a9dcacebdef4cadfab2d3c9d38788dc388641ebba0e7a",
+          "bytes": 1460
+        },
+        "evidence": [
+          {
+            "path": "tmp/release-1.4.8-ui/modern-connected.ax.txt",
+            "sha256": "787100af35738210088a583da732231b7126552b1e78adaff8a59cff5a350774",
+            "bytes": 3494
+          },
+          {
+            "path": "tmp/release-1.4.8-ui/modern-connected.png",
+            "sha256": "a987ff7d25bb92680e0fb4a7c1252c0dc7821a5a1db0d681dadc31e1bcd71af7",
+            "bytes": 216538
+          },
+          {
+            "path": "tmp/release-1.4.8-ui/legacy-connected.ax.txt",
+            "sha256": "a751bd7e8364476615000bf8b973db9b1745971853eb5fe656b9204a725ab9ed",
+            "bytes": 3429
+          },
+          {
+            "path": "tmp/release-1.4.8-ui/legacy-connected.png",
+            "sha256": "f6e4f77081ac092e337e3c3f2b210b34072cbff6367d5923b3831869d3daca67",
+            "bytes": 208383
+          },
+          {
+            "path": "tmp/release-1.4.8-ui/first-app-result.json",
+            "sha256": "1775e2d43a69a55a889b5c89ea33f2557c7a49e988199ca5a0f0ed8b56d61130",
+            "bytes": 59
+          },
+          {
+            "path": "tmp/release-1.4.8-ui/first-requests.jsonl",
+            "sha256": "fef923c6ae5b7a6c25f5bffafecdfa0459355f0e3418a4790470f7ed34c6648b",
+            "bytes": 11712
+          }
+        ]
+      }
+    }
+  ],
+  "packagedNativeUI": {
+    "status": "passed",
+    "recordedAt": "2026-10-24T00:58:13.408487+00:00",
+    "scope": "Local packaged native MCP UI with loopback HTTP fixture and isolated profile; not external provider acceptance or all Phase I-Q UI",
+    "applicationBinary": {
+      "path": "dist/LumaChat.app/Contents/MacOS/LumaChat",
+      "sha256": "50d58eede3e7227445245f78d19b461131a01bddca5123a772d0da54560a042a",
+      "bytes": 40230784
+    },
+    "version": "1.4.8",
+    "build": 15,
+    "appExitCode": 0,
+    "checks": [
+      "prior saved legacy mode preserved across app restart",
+      "legacy connect protocol 2025-06-18",
+      "save Automatic mode disconnects old connection",
+      "new connection protocol 2026-07-28 via server/discover",
+      "invalid header tool excluded with fully wrapped diagnostic",
+      "1 valid tool, resource and prompt visible",
+      "Refresh Discovery succeeds",
+      "explicit Reconnect succeeds",
+      "all connection action labels visible without truncation",
+      "About shows 1.4.8 (15)",
+      "clean application quit"
+    ],
+    "requests": {
+      "total": 20,
+      "modern": 14,
+      "modernDiscovery": 2,
+      "protocolAndMethodHeadersVerified": true,
+      "modernSessionHeaderAbsent": true
+    },
+    "evidence": [
+      {
+        "path": "tmp/release-1.4.8-ui/final-restart.ax.txt",
+        "sha256": "e70db935d61a8ccc0f07e16ccdcf987da2434123b25df371966a8409ab574a70",
+        "bytes": 3065
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-legacy-connected.ax.txt",
+        "sha256": "3b6d67d8d800c441feacbb5ec2cb4098f505955cd52372b84a30ea740aefc558",
+        "bytes": 3409
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-legacy-connected.png",
+        "sha256": "6515de38605c8ccb5bc861e3e128e20e9a508178ab8ce1abad6c87c6676dbcb6",
+        "bytes": 202588
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-buttons.png",
+        "sha256": "3d0896a03627052d24e851a88de692044807f9698338efa2e35175cb1d03704b",
+        "bytes": 200173
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-modern-connected.ax.txt",
+        "sha256": "0df2ff32b69e33dfc0325929a0187ab072dea91b923a3c40f720cb968c37224e",
+        "bytes": 3461
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-modern-connected.png",
+        "sha256": "67cb56564dd187de970e48c377aef0f7d4252b4a3d27ae96576a0bf3454de89e",
+        "bytes": 218115
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-about.ax.txt",
+        "sha256": "269fbb6e674bed45a5042ecd0768b000c24108ad99025c4c31da702f3dcf8ac1",
+        "bytes": 331
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-about.png",
+        "sha256": "6ccac0ddb62103973e6d6a1337357180cf09855261506faf9dd40a06b14167f5",
+        "bytes": 20367
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/final-requests.jsonl",
+        "sha256": "980e82059eeef5a92e80afcca985962aa89d47c0ed0e22a158b7a3e409554d53",
+        "bytes": 13218
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/app-owner.json",
+        "sha256": "36c38cddce7cbca681900518a0fa65d51f40dc7d921e8fd76813bb16debd48a6",
+        "bytes": 183
+      },
+      {
+        "path": "tmp/release-1.4.8-ui/app-result.json",
+        "sha256": "69f32975bc84ac79a078dce85518ac1ce9e256efce74eb89bf4e1725761d13af",
+        "bytes": 58
+      }
+    ],
+    "receipt": {
+      "path": "tmp/release-1.4.8-ui/final-acceptance.json",
+      "sha256": "422495371256f3dd046bfa30df5eb127efb820454a89d717afff78f3dd3274f7",
+      "bytes": 3148
+    }
+  },
+  "postGateCleanup": {
+    "recordedAt": "2026-10-24T06:04:21Z",
+    "scope": "Remove one trailing ASCII space in a test file, with identical executable product sources and packaging inputs. No functional code or test behavior change.",
+    "fullGateSourceFingerprint": "f7c34cecebea6d19723774fc017dbb33ed5d4fe0d46140df717d25ece5cbe29f",
+    "publicationSourceFingerprint": "879db100d236f42b3a398318505109d5d7d961c7eb902f4f69f7ea98d079a7a8",
+    "changes": [
+      {
+        "path": "Tests/LumaChatTests/MCPProtocolConfigurationTests.swift",
+        "beforeSHA256": "9e083abea5d02e7f4746d7a33fe6cdace4b2ad31492113d6afac9680e6065099",
+        "afterSHA256": "f1f0ab2b5c9b262dcd2cadf5bb3bb30a1e447a816b1ff5611fd60da0c5c4e404",
+        "line": 21,
+        "change": "Remove one trailing ASCII space"
+      }
+    ],
+    "sourceReceipt": {
+      "path": "tmp/release-1.4.8-publication-source-receipt.json",
+      "sha256": "cc8f0ff2298eb16180d0127fcf79d715716f39cd1bd149436ccc9fe1d00a6cbd"
+    }
+  }
+}

@@ -2,6 +2,20 @@ import Foundation
 
 // MARK: - Configuration
 
+enum MCPProtocolMode: String, Codable, CaseIterable, Sendable {
+    case automatic
+    case legacy
+    case stateless
+
+    var title: String {
+        switch self {
+        case .automatic: "自動"
+        case .legacy: "2025-06-18 相容"
+        case .stateless: "2026-07-28 無狀態"
+        }
+    }
+}
+
 enum MCPTransportKind: String, Codable, CaseIterable, Sendable {
     case stdio
     case streamableHTTP = "streamable_http"
@@ -156,6 +170,7 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
     var id: UUID
     var name: String
     var enabled: Bool
+    var protocolMode: MCPProtocolMode
     var permissionLevel: AgentPermissionLevel?
     var scope: MCPServerScope
     /// Canonical workspace root selected for Project Only servers. This is
@@ -170,6 +185,7 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
         id: UUID = UUID(),
         name: String,
         enabled: Bool = true,
+        protocolMode: MCPProtocolMode = .legacy,
         permissionLevel: AgentPermissionLevel? = nil,
         scope: MCPServerScope = .global,
         projectPath: String? = nil,
@@ -179,6 +195,7 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.name = name
         self.enabled = enabled
+        self.protocolMode = protocolMode
         self.permissionLevel = permissionLevel
         self.scope = scope
         self.projectPath = projectPath
@@ -190,6 +207,7 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
         case id
         case name
         case enabled
+        case protocolMode
         case permissionLevel
         case scope
         case projectPath, ownerPluginID
@@ -201,6 +219,8 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        // Existing settings keep their original lifecycle until explicitly changed.
+        protocolMode = try container.decodeIfPresent(MCPProtocolMode.self, forKey: .protocolMode) ?? .legacy
         permissionLevel = try container.decodeIfPresent(AgentPermissionLevel.self, forKey: .permissionLevel)
         scope = try container.decodeIfPresent(MCPServerScope.self, forKey: .scope) ?? .global
         projectPath = try container.decodeIfPresent(String.self, forKey: .projectPath)
@@ -219,6 +239,7 @@ struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
         try container.encode(id, forKey: .id)
         if !name.isEmpty { try container.encode(name, forKey: .name) }
         if !enabled { try container.encode(enabled, forKey: .enabled) }
+        try container.encode(protocolMode, forKey: .protocolMode)
         try container.encodeIfPresent(permissionLevel, forKey: .permissionLevel)
         if scope != .global { try container.encode(scope, forKey: .scope) }
         try container.encodeIfPresent(projectPath, forKey: .projectPath)
@@ -281,6 +302,12 @@ struct MCPJSONRPCRequest: Codable, Equatable, Sendable {
     var id: MCPJSONRPCID?
     var method: String
     var params: JSONValue?
+    // Locally derived routing headers; never serialized as JSON-RPC payload.
+    var localHTTPHeaders: [String: String] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case jsonrpc, id, method, params
+    }
 
     init(id: MCPJSONRPCID?, method: String, params: JSONValue? = nil) {
         self.id = id
@@ -321,7 +348,7 @@ enum MCPError: LocalizedError, Sendable, Equatable {
         case .invalidResponse(let detail): "MCP server 回傳無效內容：\(detail)"
         case .remote(let code, let message): "MCP server 錯誤 \(code)：\(message)"
         case .serverNotFound(let id): "找不到 MCP server：\(id.uuidString)"
-        case .sessionExpired: "MCP HTTP session 已過期，正在重新初始化。"
+        case .sessionExpired: "MCP HTTP session 已過期。請重新連線；未自動重送操作，請先確認先前操作的結果。"
         }
     }
 }

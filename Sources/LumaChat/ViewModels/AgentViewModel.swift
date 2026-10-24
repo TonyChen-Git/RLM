@@ -164,6 +164,8 @@ final class AgentViewModel: ObservableObject {
     @Published private(set) var mcpServers: [MCPServerConfiguration] = []
     @Published private(set) var mcpSnapshots: [MCPServerSnapshot] = []
     @Published private(set) var mcpBusyServerIDs: Set<UUID> = []
+    private var isMutatingMCPSettings = false
+    private var recoveryBlockedMCPServerIDs: Set<UUID> = []
     @Published private(set) var installedPlugins: [InstalledPlugin] = []
     @Published private(set) var availableSkills: [SkillDescriptor] = []
     @Published private(set) var oauthConnectors: [OAuthConnectorConfiguration] = []
@@ -7414,6 +7416,7 @@ final class AgentViewModel: ObservableObject {
                     id: existingByKey[key]?.id ?? UUID(),
                     name: displayName,
                     enabled: true,
+                    protocolMode: declaration.protocolMode,
                     permissionLevel: declaration.permissionLevel,
                     scope: .global,
                     projectPath: nil,
@@ -7426,14 +7429,9 @@ final class AgentViewModel: ObservableObject {
         var nextServers = mcpServers.filter { $0.ownerPluginID == nil }
         nextServers.append(contentsOf: desired)
         nextServers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        // Persist first. If the atomic settings transaction fails, current
-        // in-memory configurations and live connections remain authoritative.
-        try await mcpSettingsStore.save(nextServers)
-        for server in existingOwned {
-            await mcpManager.disconnect(serverID: server.id)
+        guard await persistMCPSettings(nextServers, affectedServerIDs: Set(existingOwned.map(\.id))) else {
+            throw MCPError.invalidConfiguration("Plugin MCP 設定未確定儲存；請檢查設定診斷後重試。")
         }
-        mcpServers = nextServers
-        await refreshMCPSnapshots()
     }
 
     private func recordLifecycleHookResult(_ result: LifecycleHookResult) async {
@@ -7629,18 +7627,14 @@ final class AgentViewModel: ObservableObject {
         }
         do {
             try validateMCPConfiguration(normalized)
-            await toolExecutor?.clearAllPermissions()
-            if mcpSnapshot(serverID: normalized.id)?.state == .connected {
-                await mcpManager.disconnect(serverID: normalized.id)
-            }
-            if let index = mcpServers.firstIndex(where: { $0.id == normalized.id }) {
-                mcpServers[index] = normalized
+            var candidate = mcpServers
+            if let index = candidate.firstIndex(where: { $0.id == normalized.id }) {
+                candidate[index] = normalized
             } else {
-                mcpServers.append(normalized)
+                candidate.append(normalized)
             }
-            mcpServers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            try await mcpSettingsStore.save(mcpServers)
-            await refreshMCPSnapshots()
+            candidate.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            guard await persistMCPSettings(candidate, affectedServerIDs: [normalized.id]) else { return false }
             if normalized.enabled,
                activeMode.usesAgentRuntime,
                mcpServerIsSelectedForCurrentProject(normalized.id) {
@@ -7658,15 +7652,8 @@ final class AgentViewModel: ObservableObject {
             errorMessage = "Plugin 管理的 MCP Server 會隨 Plugin 一起移除。"
             return
         }
-        do {
-            await toolExecutor?.clearAllPermissions()
-            await mcpManager.disconnect(serverID: id)
-            mcpServers.removeAll { $0.id == id }
-            try await mcpSettingsStore.save(mcpServers)
-            await refreshMCPSnapshots()
-        } catch {
-            errorMessage = "MCP Server 無法刪除：\(redactor.redact(error.localizedDescription))"
-        }
+        let candidate = mcpServers.filter { $0.id != id }
+        _ = await persistMCPSettings(candidate, affectedServerIDs: [id])
     }
 
     func setMCPServerEnabled(id: UUID, enabled: Bool) async {
@@ -7675,25 +7662,87 @@ final class AgentViewModel: ObservableObject {
             errorMessage = "請從 Extensions 頁面啟用或停用這個 Plugin MCP Server。"
             return
         }
-        await toolExecutor?.clearAllPermissions()
-        mcpServers[index].enabled = enabled
-        do {
-            try await mcpSettingsStore.save(mcpServers)
-            if enabled {
-                if activeMode.usesAgentRuntime,
-                   mcpServerIsSelectedForCurrentProject(id) {
-                    await connectMCP(serverID: id)
-                }
-            } else {
-                await mcpManager.disconnect(serverID: id)
-                await refreshMCPSnapshots()
-            }
-        } catch {
-            errorMessage = "MCP 狀態無法儲存：\(redactor.redact(error.localizedDescription))"
+        var candidate = mcpServers
+        candidate[index].enabled = enabled
+        guard await persistMCPSettings(candidate, affectedServerIDs: [id]) else { return }
+        if enabled, activeMode.usesAgentRuntime, mcpServerIsSelectedForCurrentProject(id) {
+            await connectMCP(serverID: id)
         }
     }
 
+    /// Publish only committed settings. Any attempted authority change first
+    /// disconnects both active and initializing clients; failed writes cannot
+    /// reactivate the previous configuration through background lifecycle work.
+    private func persistMCPSettings(
+        _ candidate: [MCPServerConfiguration],
+        affectedServerIDs requestedIDs: Set<UUID>
+    ) async -> Bool {
+        guard !isMutatingMCPSettings else {
+            errorMessage = "另一個 MCP 設定變更正在儲存，請稍後重試。"
+            return false
+        }
+        isMutatingMCPSettings = true
+        defer { isMutatingMCPSettings = false }
+        let previous = mcpServers
+        let allIDs = Set(previous.map(\.id)).union(candidate.map(\.id))
+        let changedIDs = Set(allIDs.filter { id in
+            previous.first(where: { $0.id == id }) != candidate.first(where: { $0.id == id })
+        })
+        let affectedIDs = requestedIDs.union(changedIDs)
+        recoveryBlockedMCPServerIDs.formUnion(affectedIDs)
+        await toolExecutor?.clearAllPermissions()
+        for id in affectedIDs { await mcpManager.disconnect(serverID: id) }
+        var cleanupWarning: String?
+        do {
+            try await mcpSettingsStore.save(candidate)
+        } catch let error as MCPSettingsStoreCredentialCleanupError {
+            // The store has already committed the metadata. Retaining the old
+            // in-memory generation here would reconnect using obsolete secrets.
+            cleanupWarning = redactor.redact(error.localizedDescription)
+        } catch {
+            let failure = redactor.redact(error.localizedDescription)
+            do {
+                // A rename/fsync failure may have committed either generation.
+                // Show current persisted readback while keeping affected clients
+                // quarantined until a subsequent confirmed save.
+                let recovered = try await mcpSettingsStore.load()
+                let recoveryIDs = Set(previous.map(\.id)).union(recovered.map(\.id))
+                let unexpectedlyChanged = Set(recoveryIDs.filter { id in
+                    previous.first(where: { $0.id == id }) != recovered.first(where: { $0.id == id })
+                })
+                recoveryBlockedMCPServerIDs.formUnion(unexpectedlyChanged)
+                for id in unexpectedlyChanged { await mcpManager.disconnect(serverID: id) }
+                mcpServers = recovered
+            } catch {
+                // An unreadable document must never be replaced with an empty
+                // inferred configuration or leave a stale client connected.
+                recoveryBlockedMCPServerIDs.formUnion(allIDs)
+                for id in allIDs { await mcpManager.disconnect(serverID: id) }
+            }
+            await refreshMCPSnapshots()
+            errorMessage = "MCP 設定未確定儲存；相關連線已停止，請重新儲存後再連線：\(failure)"
+            return false
+        }
+        mcpServers = candidate
+        recoveryBlockedMCPServerIDs.subtract(affectedIDs)
+        await refreshMCPSnapshots()
+        if let cleanupWarning {
+            statusMessage = "MCP 設定已儲存，但舊憑證清理尚未完成：\(cleanupWarning)"
+        }
+        return true
+    }
+
+    private func mcpSettingsAllowConnection(serverID: UUID) -> Bool {
+        guard !isMutatingMCPSettings else { return false }
+        guard !recoveryBlockedMCPServerIDs.contains(serverID) else {
+            errorMessage = "MCP 設定變更尚未確定保存；請重新儲存此 Server 後再連線。"
+            return false
+        }
+        return true
+    }
+
     func connectMCP(serverID: UUID) async {
+        guard mcpSettingsAllowConnection(serverID: serverID) else { return }
         let workspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
         let executionLocation = selectedSession?.resolvedExecutionLocation.kind
         let scopedSettings = projectSettingsForRun(session: selectedSession)
@@ -7728,7 +7777,9 @@ final class AgentViewModel: ObservableObject {
         executionLocation: AgentExecutionLocationKind?
     ) async {
         let serverID = configuration.id
-        guard !mcpBusyServerIDs.contains(serverID), configuration.enabled else { return }
+        guard mcpSettingsAllowConnection(serverID: serverID),
+              mcpServers.first(where: { $0.id == serverID }) == configuration,
+              !mcpBusyServerIDs.contains(serverID), configuration.enabled else { return }
         guard Self.mcpTransportIsAvailable(
                 configuration,
                 executionLocation: executionLocation
@@ -7743,8 +7794,11 @@ final class AgentViewModel: ObservableObject {
         defer { mcpBusyServerIDs.remove(serverID) }
         do {
             await toolExecutor?.clearAllPermissions()
+            guard mcpSettingsAllowConnection(serverID: serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration else { return }
             _ = try await mcpManager.connect(configuration)
-            guard mcpServers.contains(where: { $0.id == serverID && $0.enabled }) else {
+            guard !isMutatingMCPSettings, !recoveryBlockedMCPServerIDs.contains(serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration else {
                 await mcpManager.disconnect(serverID: serverID)
                 await refreshMCPSnapshots()
                 return
@@ -7765,6 +7819,7 @@ final class AgentViewModel: ObservableObject {
     }
 
     func reconnectMCP(serverID: UUID) async {
+        guard mcpSettingsAllowConnection(serverID: serverID) else { return }
         let workspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
         let executionLocation = selectedSession?.resolvedExecutionLocation.kind
         let scopedSettings = projectSettingsForRun(session: selectedSession)
@@ -7789,9 +7844,30 @@ final class AgentViewModel: ObservableObject {
         defer { mcpBusyServerIDs.remove(serverID) }
         do {
             await toolExecutor?.clearAllPermissions()
-            _ = try await mcpManager.reconnect(serverID: serverID)
+            guard mcpSettingsAllowConnection(serverID: serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration else { return }
+            // A disconnected snapshot describes the previous connection, which
+            // may predate a saved protocol, endpoint, or credential change.
+            await mcpManager.disconnect(serverID: serverID)
+            let reconnectWorkspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
+            guard mcpSettingsAllowConnection(serverID: serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration,
+                  Self.mcpTransportIsAvailable(
+                    configuration,
+                    executionLocation: selectedSession?.resolvedExecutionLocation.kind
+                  ),
+                  Self.mcpServerIsSelected(
+                    serverID,
+                    projectSettings: projectSettingsForRun(session: selectedSession)
+                  ),
+                  Self.mcpServer(configuration, matchesWorkspaceRoot: reconnectWorkspaceRoot) else {
+                await refreshMCPSnapshots()
+                return
+            }
+            _ = try await mcpManager.connect(configuration)
             let currentWorkspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
-            guard mcpServers.first(where: { $0.id == serverID }) == configuration,
+            guard !isMutatingMCPSettings, !recoveryBlockedMCPServerIDs.contains(serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration,
                   Self.mcpTransportIsAvailable(
                     configuration,
                     executionLocation: selectedSession?.resolvedExecutionLocation.kind
@@ -7816,6 +7892,7 @@ final class AgentViewModel: ObservableObject {
     }
 
     func refreshMCPDiscovery(serverID: UUID) async {
+        guard mcpSettingsAllowConnection(serverID: serverID) else { return }
         let workspaceRoot = selectedSession.flatMap { settingsWorkspace(for: $0) }?.rootPath
         let executionLocation = selectedSession?.resolvedExecutionLocation.kind
         let scopedSettings = projectSettingsForRun(session: selectedSession)
@@ -7825,11 +7902,15 @@ final class AgentViewModel: ObservableObject {
               Self.mcpServerIsSelected(serverID, projectSettings: scopedSettings),
               Self.mcpServer(configuration, matchesWorkspaceRoot: workspaceRoot),
               mcpSnapshot(serverID: serverID)?.state == .connected,
+              mcpSnapshot(serverID: serverID)?.configuration == configuration,
               !mcpBusyServerIDs.contains(serverID) else { return }
         mcpBusyServerIDs.insert(serverID)
         defer { mcpBusyServerIDs.remove(serverID) }
         do {
             await toolExecutor?.clearAllPermissions()
+            guard mcpSettingsAllowConnection(serverID: serverID),
+                  mcpServers.first(where: { $0.id == serverID }) == configuration,
+                  mcpSnapshot(serverID: serverID)?.configuration == configuration else { return }
             _ = try await mcpManager.refreshDiscovery(serverID: serverID)
             await refreshMCPSnapshots()
             statusMessage = "MCP「\(configuration.name)」的 Discovery 已重新整理。"
@@ -7940,9 +8021,7 @@ final class AgentViewModel: ObservableObject {
                 }
             }
             merged.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            try await mcpSettingsStore.save(merged)
-            mcpServers = merged
-            await refreshMCPSnapshots()
+            guard await persistMCPSettings(merged, affectedServerIDs: []) else { return false }
             statusMessage = "MCP 設定已匯入但保持停用；請逐一檢查後再啟用或 Connect。"
             return true
         } catch {

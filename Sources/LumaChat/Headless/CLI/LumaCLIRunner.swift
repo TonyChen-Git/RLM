@@ -27,7 +27,7 @@ final class LumaCLIStandardIO: LumaCLIIO {
 
 @MainActor
 struct LumaCLIRunner {
-    static let currentVersion = "1.4.7"
+    static let currentVersion = "1.4.8"
 
     private let host: (any LumaCLIHost)?
     private let io: any LumaCLIIO

@@ -14,10 +14,10 @@ struct MCPSettingsPane: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("MCP Servers").font(.headline)
-                    Text("連接後會 initialize 並探索 Tools、Resources 與 Prompts；Tools 會動態加入 Agent registry。")
+                    Text("連接後會探索 Tools、Resources 與 Prompts；Tools 會動態加入 Agent registry。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("相容協定：\(MCPClient.protocolVersion) initialize。若 Server 回傳其他版本，診斷會顯示版本不符。")
+                    Text("支援 2026-07-28 無狀態與 2025-06-18 相容協定。自動模式會確認 Server 支援的協定；既有設定保留相容模式。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -159,6 +159,12 @@ struct MCPSettingsPane: View {
             }
             .pickerStyle(.segmented)
 
+            Picker("協定模式", selection: $draft.protocolMode) {
+                ForEach(MCPProtocolMode.allCases, id: \.rawValue) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+
             if draft.kind == .stdio {
                 labeledField("Command", placeholder: "/opt/homebrew/bin/npx", text: $draft.command)
                 labeledField(
@@ -207,16 +213,18 @@ struct MCPSettingsPane: View {
             discovery
 
             Spacer(minLength: 0)
+            connectionActions
             HStack {
                 if selectedServerID != nil {
                     Button("刪除", role: .destructive) { pendingDeleteID = selectedServerID }
-                    connectionControls
+                        .fixedSize()
                 }
                 Spacer()
                 Button("儲存 Server") {
                     Task { await saveDraft() }
                 }
                 .buttonStyle(.borderedProminent)
+                .fixedSize()
             }
         }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,6 +240,7 @@ struct MCPSettingsPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             LabeledContent("Transport", value: server.transport.kind == .stdio ? "STDIO" : "Streamable HTTP")
+            LabeledContent("協定模式", value: server.protocolMode.title)
             LabeledContent(
                 "Permission",
                 value: server.permissionLevel?.rawValue.uppercased() ?? "AUTO"
@@ -239,13 +248,10 @@ struct MCPSettingsPane: View {
             connectionHealth
             discovery
             Spacer(minLength: 0)
-            HStack {
-                connectionControls
-                Spacer()
-                Label("請在 Extensions 頁面管理", systemImage: "lock")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            connectionActions
+            Label("請在 Extensions 頁面管理", systemImage: "lock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -269,12 +275,20 @@ struct MCPSettingsPane: View {
                     Text("Server：\(info.name) \(info.version) · Protocol：\(snapshot?.negotiatedProtocolVersion ?? "未知")")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let version = snapshot?.negotiatedProtocolVersion {
+                    Text("協定模式：\(version == "2026-07-28" ? "無狀態（server/discover）" : "相容（initialize）")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = snapshot?.lastError, !error.isEmpty {
                     Text(error)
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -322,6 +336,14 @@ struct MCPSettingsPane: View {
         }
     }
 
+    private var connectionActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack { connectionControls }
+                .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 8) { connectionControls }
+        }
+    }
+
     @ViewBuilder
     private var connectionControls: some View {
         if let id = selectedServerID {
@@ -335,15 +357,18 @@ struct MCPSettingsPane: View {
                 }
             }
             .disabled(busy || (!connected && !enabled))
+            .fixedSize()
             if connected {
                 Button("Reconnect") {
                     Task { await agentViewModel.reconnectMCP(serverID: id) }
                 }
                 .disabled(busy)
+                .fixedSize()
                 Button("Refresh Discovery") {
                     Task { await agentViewModel.refreshMCPDiscovery(serverID: id) }
                 }
                 .disabled(busy)
+                .fixedSize()
             }
         }
     }
@@ -422,6 +447,7 @@ private struct MCPServerDraft {
     var name: String
     var enabled: Bool
     var kind: MCPTransportKind
+    var protocolMode: MCPProtocolMode
     var permissionLevel: AgentPermissionLevel?
     var scope: MCPServerScope
     var projectPath: String?
@@ -434,7 +460,7 @@ private struct MCPServerDraft {
 
     static func newSTDIO() -> Self {
         .init(
-            id: UUID(), name: "", enabled: false, kind: .stdio, permissionLevel: nil,
+            id: UUID(), name: "", enabled: false, kind: .stdio, protocolMode: .automatic, permissionLevel: nil,
             scope: .global, projectPath: nil,
             command: "", argumentsText: "", environmentText: "", workingDirectory: "",
             url: "", headersText: ""
@@ -451,6 +477,7 @@ private struct MCPServerDraft {
         id = configuration.id
         name = configuration.name
         enabled = configuration.enabled
+        protocolMode = configuration.protocolMode
         permissionLevel = configuration.permissionLevel
         scope = configuration.scope
         projectPath = configuration.projectPath
@@ -479,6 +506,7 @@ private struct MCPServerDraft {
         name: String,
         enabled: Bool,
         kind: MCPTransportKind,
+        protocolMode: MCPProtocolMode,
         permissionLevel: AgentPermissionLevel?,
         scope: MCPServerScope,
         projectPath: String?,
@@ -493,6 +521,7 @@ private struct MCPServerDraft {
         self.name = name
         self.enabled = enabled
         self.kind = kind
+        self.protocolMode = protocolMode
         self.permissionLevel = permissionLevel
         self.scope = scope
         self.projectPath = projectPath
@@ -531,6 +560,7 @@ private struct MCPServerDraft {
             id: id,
             name: name,
             enabled: enabled,
+            protocolMode: protocolMode,
             permissionLevel: permissionLevel,
             scope: scope,
             projectPath: scope == .projectOnly ? Self.optional(projectPath ?? "") : nil,

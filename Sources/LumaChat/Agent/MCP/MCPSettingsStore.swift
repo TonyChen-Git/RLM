@@ -184,9 +184,9 @@ actor MCPSettingsStore {
             )
         }
 
-        // A document without secrets may be byte-identical. Versioned markers
-        // make every credential-bearing update distinct by construction.
-        if previousDocument == encoded { return }
+        // Even identical bytes must confirm durability. A previous rename may
+        // have succeeded while its directory fsync failed; readback alone is
+        // insufficient to clear that uncertain state on an explicit retry.
         do {
             try writeData(encoded, fileURL)
         } catch {

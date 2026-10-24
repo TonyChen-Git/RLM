@@ -1,5 +1,79 @@
 # Luma Chat — Development integration history
 
+## MCP 1.4.8 candidate compatibility and recovery — updated 2026-10-24
+
+- Added the stable MCP `2026-07-28` stateless core profile for STDIO and
+  Streamable HTTP, retaining `2025-06-18` legacy compatibility. Settings
+  persists Automatic, legacy or stateless selection and shows the negotiated
+  protocol. Existing records and plugin declarations default to legacy;
+  newly created Settings drafts default to Automatic.
+- Stateless operations use read-only `server/discover` and per-request version,
+  empty client capabilities and client identity metadata. Core tools,
+  resources, resource templates and prompts use bounded validation; HTTP
+  supports JSON and request-scoped SSE without protocol sessions or GET
+  reconnection. Only compatible discovery-probe failures can select a fresh
+  legacy lifecycle; authentication failures do not trigger a downgrade.
+- Added bounded `Mcp-Method`, `Mcp-Name` and schema `x-mcp-header` projections.
+  Invalid annotated tools are excluded with redacted diagnostics while valid
+  discovery results replace the registry. Protocol-owned headers cannot be
+  overridden by configured values.
+- Removed automatic operation replay after session expiry or uncertain
+  transport failure. Failed connections retire tool authority and require
+  explicit reconnect; users must verify remote outcomes before retrying.
+  Discovery tokens and exact descriptor checks reject retained adapters after
+  schema/permission changes. Failed tool discovery disables execution until
+  discovery succeeds. STDIO probe recovery waits for complete old-process
+  teardown so delayed callbacks cannot kill its replacement.
+- MCP settings changes disconnect affected clients, invalidate approvals and
+  publish only committed configuration. Ambiguous writes/readback failures
+  leave affected servers disconnected. Staged Keychain credential updates
+  preserve the metadata/credential recovery boundary without persisting secrets
+  in JSON or logs.
+- Modern client capabilities intentionally remain empty. MRTR `input_required`,
+  sampling, elicitation and other unadvertised client capabilities fail with
+  an explicit diagnostic; they cannot supply input or grant execution rights.
+- Corrected connection-button and diagnostic truncation found by the first
+  packaged MCP Settings UI run. Controls wrap with available width and complete
+  diagnostics remain visible; the first candidate retains its separate evidence.
+
+These changes are packaged locally as **1.4.8 build 15**, beyond the published
+1.4.7 binary. The frozen focused run passes **140 MCP/Phase D tests, zero skips
+or failures**. The separate full candidate gate passes **962 Swift tests and
+48 Python contracts, each with one skip and zero failures**, plus successful
+debug/optimized compilation, ad-hoc signing and archive/security checks.
+The final gate includes the Settings layout fix. Its complete log reaches the
+release footer; the controller exit code was not retained. October 24 recovery
+matched the starting source receipt and repeated signature, ZIP and CLI checks.
+The first candidate and stale controller record remain separate evidence.
+Local Node contracts pass **17/17 VS Code** and **14/14 GitHub Action**.
+Final packaged MCP native UI passes with an isolated loopback fixture:
+legacy settings survive restart, save/mode switching disconnects the old
+connection, modern filtering diagnostics and button labels display completely,
+Refresh Discovery and Reconnect succeed, About reports 1.4.8 (15), and quit
+returns 0. HTTP metadata was checked against 20 captured requests. This limited
+scope does not qualify external providers or every Phase I–Q UI.
+Publication, current-source hosted CI and source-bound soak remain pending.
+Exact evidence and artifact hashes are recorded in
+[1.4.8 candidate notes](RELEASE_NOTES_1.4.8.md) and its
+[validation receipt](validation/1.4.8.json). Official protocol references and
+the supported profile are recorded in
+[Phase L–Q architecture](PHASE_L_Q_ARCHITECTURE.md).
+
+The prior corrected-test 8h run
+`ccb2e92e-d3da-428c-af8f-25fd86ca7031` was interrupted by SIGTERM at
+`2026-10-21T03:17:32Z`, sender unknown: 5,988.242 continuous seconds, 46 cycles,
+368 completed / 369 attempted shards, exit 130. It does not qualify;
+24h/72h did not start and no long soak remains running. The controller's final
+state is `tmp/release-1.4.7-corrected-soak-suite/state.json`. The original
+exact-tag 1.4.7 2h qualification remains valid only for that historical source.
+
+External model/SSH/MCP/test-repository acceptance remains `deferred_by_user`.
+Developer ID/notarization/stapling/production feed and signed-update acceptance
+remain `not_required_for_private_use`, not passed. Windows desktop work is
+outside this round; Slack/Gmail remain future provider evaluation.
+
+## Published 1.4.7 and earlier evidence
+
 The [1.4.7 corrective patch](RELEASE_NOTES_1.4.7.md) was published on
 October 19 as a regular GitHub Release from `main`. Final source `eeddc75` passes the complete local release gate:
 896 Swift tests and 48 Python contracts, each with one skip and zero failures;
@@ -11,8 +85,10 @@ order and verifies completion while its response stream remains open.
 All five final artifact hashes match the preceding candidate; exact archive and
 binary equivalence ties the final package to the October 19 limited native
 smoke (startup, idle Task, About 1.4.7 (14), clean quit). This is not a second UI
-run or external acceptance. Uploaded asset sizes/digests are verified;
-version-bound soak qualification remains pending.
+run or external acceptance. Uploaded asset sizes/digests are verified.
+Version-bound soak was pending at publication; the exact tag subsequently
+qualified its 2h run, while longer runs remain unqualified as recorded in the
+[parity audit](CODEX_FULL_PARITY_AUDIT.md).
 Exact attempts are in the [1.4.7 validation receipt](validation/1.4.7.json).
 Published 1.4.6 evidence follows.
 

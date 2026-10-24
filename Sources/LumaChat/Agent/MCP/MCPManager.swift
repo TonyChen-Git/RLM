@@ -12,6 +12,9 @@ actor MCPManager {
     private var transientNamespaces: [UUID: String] = [:]
     private var toolMappings: [UUID: [String: String]] = [:]
     private var connectionTokens: [UUID: UUID] = [:]
+    // Registry readers can retain an adapter after replacement. A separate
+    // discovery token prevents it from using an obsolete schema or permission.
+    private var toolAuthorityTokens: [UUID: UUID] = [:]
     private var discoveryRefreshes: [UUID: Task<MCPServerSnapshot, Error>] = [:]
     private var logs: [UUID: [MCPLogEntry]] = [:]
 
@@ -64,7 +67,7 @@ actor MCPManager {
             appendLog(
                 serverID: configuration.id,
                 level: .info,
-                message: "Initialized \(initialized.serverInfo.name) \(initialized.serverInfo.version) using protocol \(initialized.protocolVersion)"
+                message: "Connected to \(initialized.serverInfo.name) \(initialized.serverInfo.version) using protocol \(initialized.protocolVersion)"
             )
             try requireCurrentConnection(configuration.id, token: connectionToken)
             // MCP server features are independently optional capabilities.
@@ -79,11 +82,17 @@ actor MCPManager {
             let resourceTemplates = templateDiscovery.values
             let prompts = promptDiscovery.values
             try requireCurrentConnection(configuration.id, token: connectionToken)
+            guard await client.isConnected else {
+                throw MCPError.transport("Connection ended during discovery. Reconnect explicitly before using this server.")
+            }
+            try requireCurrentConnection(configuration.id, token: connectionToken)
+            let authorityToken = UUID()
             let registration = try await register(
                 tools: tools,
                 for: configuration,
-                client: client,
-                namespace: namespace
+                namespace: namespace,
+                connectionToken: connectionToken,
+                authorityToken: authorityToken
             )
             guard connectionTokens[configuration.id] == connectionToken else {
                 await registry.unregister(namespace: namespace)
@@ -91,6 +100,7 @@ actor MCPManager {
             }
 
             clients[configuration.id] = client
+            if !toolDiscovery.failed { toolAuthorityTokens[configuration.id] = authorityToken }
             connectingClients.removeValue(forKey: configuration.id)
             toolMappings[configuration.id] = registration.mapping
             let snapshot = MCPServerSnapshot(
@@ -125,6 +135,7 @@ actor MCPManager {
                 connectionTokens.removeValue(forKey: configuration.id)
                 connectingClients.removeValue(forKey: configuration.id)
                 toolMappings.removeValue(forKey: configuration.id)
+                toolAuthorityTokens.removeValue(forKey: configuration.id)
                 clients.removeValue(forKey: configuration.id)
                 let safeError = SecretRedactor().redact(error.localizedDescription)
                 snapshots[configuration.id]?.state = .failed
@@ -147,6 +158,7 @@ actor MCPManager {
         // Detach all state before the first suspension. Pending initialization
         // is a live transport too, and late replies cannot regain authority.
         connectionTokens.removeValue(forKey: serverID)
+        toolAuthorityTokens.removeValue(forKey: serverID)
         let namespace = namespaces.removeValue(forKey: serverID)
         let retirement = UUID()
         if let namespace { transientNamespaces[retirement] = namespace }
@@ -215,24 +227,37 @@ actor MCPManager {
             throw MCPError.serverNotFound(serverID)
         }
 
+        let refreshReservation = UUID()
+        transientNamespaces[refreshReservation] = namespace
+        defer { transientNamespaces.removeValue(forKey: refreshReservation) }
+        toolAuthorityTokens.removeValue(forKey: serverID)
+
         let toolDiscovery = await optionalTools(from: client)
         let resourceDiscovery = await optionalResources(from: client)
         let templateDiscovery = await optionalResourceTemplates(from: client)
         let promptDiscovery = await optionalPrompts(from: client)
         // A transient discovery error must not silently revoke previously
         // published capabilities. An explicit empty successful response does.
-        let tools = toolDiscovery.warning == nil ? toolDiscovery.values : snapshot.tools
-        let resources = resourceDiscovery.warning == nil ? resourceDiscovery.values : snapshot.resources
-        let resourceTemplates = templateDiscovery.warning == nil
-            ? templateDiscovery.values : snapshot.resourceTemplates
-        let prompts = promptDiscovery.warning == nil ? promptDiscovery.values : snapshot.prompts
+        let tools = toolDiscovery.failed ? snapshot.tools : toolDiscovery.values
+        let resources = resourceDiscovery.failed ? snapshot.resources : resourceDiscovery.values
+        let resourceTemplates = templateDiscovery.failed
+            ? snapshot.resourceTemplates : templateDiscovery.values
+        let prompts = promptDiscovery.failed ? snapshot.prompts : promptDiscovery.values
+        try requireCurrentConnection(serverID, token: connectionToken)
+        guard await client.isConnected else {
+            let error = MCPError.transport("Connection ended during discovery. Reconnect explicitly before using this server.")
+            await invalidateDisconnectedClient(serverID: serverID, token: connectionToken, client: client, error: error)
+            throw error
+        }
         try requireCurrentConnection(serverID, token: connectionToken)
         do {
+            let authorityToken = UUID()
             let registration = makeToolRegistration(
                 tools: tools,
                 for: snapshot.configuration,
-                client: client,
-                namespace: namespace
+                namespace: namespace,
+                connectionToken: connectionToken,
+                authorityToken: authorityToken
             )
             try await registry.replace(
                 removingNames: Set(toolMappings[serverID].map { Array($0.keys) } ?? []),
@@ -240,8 +265,12 @@ actor MCPManager {
             )
             try requireCurrentConnection(serverID, token: connectionToken)
             toolMappings[serverID] = registration.mapping
+            if !toolDiscovery.failed { toolAuthorityTokens[serverID] = authorityToken }
         } catch {
-            try requireCurrentConnection(serverID, token: connectionToken)
+            guard connectionTokens[serverID] == connectionToken else {
+                await registry.unregister(namespace: namespace)
+                throw CancellationError()
+            }
             let safeError = redactedError(error)
             snapshot.lastError = safeError.localizedDescription
             snapshots[serverID] = snapshot
@@ -272,24 +301,22 @@ actor MCPManager {
     }
 
     func listTools(serverID: UUID) async throws -> [MCPToolDescriptor] {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
-        return try await client.listTools()
+        // Listing tools changes the client's validated schema cache, so use the
+        // same atomic registration path as an explicit discovery refresh.
+        return try await refreshDiscovery(serverID: serverID).tools
     }
 
     func listResources(serverID: UUID) async throws -> [MCPResourceDescriptor] {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
-        return try await client.listResources()
+        try await withCurrentClient(serverID: serverID) { try await $0.listResources() }
     }
 
     func listPrompts(serverID: UUID) async throws -> [MCPPromptDescriptor] {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
-        return try await client.listPrompts()
+        try await withCurrentClient(serverID: serverID) { try await $0.listPrompts() }
     }
 
     func listResourceTemplates(serverID: UUID) async throws -> [MCPResourceTemplateDescriptor] {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
         do {
-            let templates = try await client.listResourceTemplates()
+            let templates = try await withCurrentClient(serverID: serverID) { try await $0.listResourceTemplates() }
             appendLog(
                 serverID: serverID,
                 level: .info,
@@ -317,9 +344,8 @@ actor MCPManager {
         name: String,
         arguments: [String: String]? = nil
     ) async throws -> MCPPromptGetResult {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
         do {
-            let prompt = try await client.getPrompt(name: name, arguments: arguments)
+            let prompt = try await withCurrentClient(serverID: serverID) { try await $0.getPrompt(name: name, arguments: arguments) }
             appendLog(
                 serverID: serverID,
                 level: .info,
@@ -336,9 +362,8 @@ actor MCPManager {
     }
 
     func readResource(serverID: UUID, uri: String) async throws -> MCPResourceReadResult {
-        guard let client = clients[serverID] else { throw MCPError.serverNotFound(serverID) }
         do {
-            let resource = try await client.readResource(uri: uri)
+            let resource = try await withCurrentClient(serverID: serverID) { try await $0.readResource(uri: uri) }
             appendLog(
                 serverID: serverID,
                 level: .info,
@@ -376,14 +401,16 @@ actor MCPManager {
     private func register(
         tools: [MCPToolDescriptor],
         for configuration: MCPServerConfiguration,
-        client: MCPClient,
-        namespace: String
+        namespace: String,
+        connectionToken: UUID,
+        authorityToken: UUID
     ) async throws -> (mapping: [String: String], names: [String]) {
         let registration = makeToolRegistration(
             tools: tools,
             for: configuration,
-            client: client,
-            namespace: namespace
+            namespace: namespace,
+            connectionToken: connectionToken,
+            authorityToken: authorityToken
         )
         do {
             try await registry.register(registration.adapters)
@@ -397,8 +424,9 @@ actor MCPManager {
     private func makeToolRegistration(
         tools: [MCPToolDescriptor],
         for configuration: MCPServerConfiguration,
-        client: MCPClient,
-        namespace: String
+        namespace: String,
+        connectionToken: UUID,
+        authorityToken: UUID
     ) -> (mapping: [String: String], names: [String], adapters: [any AgentTool]) {
         var mapping: [String: String] = [:]
         var names: [String] = []
@@ -419,12 +447,80 @@ actor MCPManager {
                     serverName: configuration.name,
                     descriptor: descriptor,
                     configuration: configuration,
-                    client: client
+                    invoke: { [weak self] arguments in
+                        guard let self else { throw MCPError.notConnected }
+                        return try await self.invokeTool(
+                            serverID: configuration.id,
+                            token: connectionToken,
+                            authorityToken: authorityToken,
+                            descriptor: descriptor,
+                            arguments: arguments
+                        )
+                    }
                 )
             )
         }
 
         return (mapping, names, adapters)
+    }
+
+    private func invokeTool(
+        serverID: UUID,
+        token: UUID,
+        authorityToken: UUID,
+        descriptor: MCPToolDescriptor,
+        arguments: JSONValue
+    ) async throws -> MCPToolCallResult {
+        guard connectionTokens[serverID] == token,
+              toolAuthorityTokens[serverID] == authorityToken else {
+            throw MCPError.transport("Tool discovery changed or failed. Refresh discovery or reconnect, then approve the current tool before retrying.")
+        }
+        return try await withCurrentClient(serverID: serverID) {
+            try await $0.callTool(name: descriptor.name, arguments: arguments, expectedDescriptor: descriptor)
+        }
+    }
+
+    private func withCurrentClient<Value: Sendable>(
+        serverID: UUID,
+        operation: @Sendable (MCPClient) async throws -> Value
+    ) async throws -> Value {
+        guard let client = clients[serverID], let token = connectionTokens[serverID] else {
+            throw MCPError.serverNotFound(serverID)
+        }
+        do {
+            let value = try await operation(client)
+            try requireCurrentConnection(serverID, token: token)
+            return value
+        } catch {
+            await invalidateDisconnectedClient(serverID: serverID, token: token, client: client, error: error)
+            throw error
+        }
+    }
+
+    private func invalidateDisconnectedClient(
+        serverID: UUID,
+        token: UUID,
+        client: MCPClient,
+        error: Error
+    ) async {
+        guard connectionTokens[serverID] == token, !(await client.isConnected),
+              connectionTokens[serverID] == token else { return }
+        // Detach authority before unregistering. A failed request may have been
+        // accepted remotely, so recovery is explicit and never replays it.
+        connectionTokens.removeValue(forKey: serverID)
+        toolAuthorityTokens.removeValue(forKey: serverID)
+        clients.removeValue(forKey: serverID)
+        toolMappings.removeValue(forKey: serverID)
+        discoveryRefreshes.removeValue(forKey: serverID)?.cancel()
+        let namespace = namespaces.removeValue(forKey: serverID)
+        let reservation = UUID()
+        if let namespace { transientNamespaces[reservation] = namespace }
+        defer { transientNamespaces.removeValue(forKey: reservation) }
+        let message = "\(redactedError(error).localizedDescription) Reconnect explicitly; check the remote outcome before retrying an operation."
+        snapshots[serverID]?.state = .failed
+        snapshots[serverID]?.lastError = message
+        appendLog(serverID: serverID, level: .error, message: message)
+        if let namespace { await registry.unregister(namespace: namespace) }
     }
 
     private func uniqueNamespace(for configuration: MCPServerConfiguration) -> String {
@@ -481,18 +577,24 @@ actor MCPManager {
         catch {
             return OptionalDiscovery(
                 values: [],
-                warning: "Resources discovery failed: \(redactedError(error).localizedDescription)"
+                warning: "Resources discovery failed: \(redactedError(error).localizedDescription)",
+                failed: true
             )
         }
     }
 
     private func optionalTools(from client: MCPClient) async -> OptionalDiscovery<MCPToolDescriptor> {
-        do { return OptionalDiscovery(values: try await client.listTools()) }
+        do {
+            let tools = try await client.listTools()
+            let warnings = await client.discoveryWarnings
+            return OptionalDiscovery(values: tools, warning: warnings.joined(separator: "\n").nilIfEmpty)
+        }
         catch MCPError.remote(let code, _) where code == -32601 { return OptionalDiscovery(values: []) }
         catch {
             return OptionalDiscovery(
                 values: [],
-                warning: "Tools discovery failed: \(redactedError(error).localizedDescription)"
+                warning: "Tools discovery failed: \(redactedError(error).localizedDescription) Tool execution is disabled until discovery succeeds.",
+                failed: true
             )
         }
     }
@@ -505,7 +607,8 @@ actor MCPManager {
         catch {
             return OptionalDiscovery(
                 values: [],
-                warning: "Resource template discovery failed: \(redactedError(error).localizedDescription)"
+                warning: "Resource template discovery failed: \(redactedError(error).localizedDescription)",
+                failed: true
             )
         }
     }
@@ -516,7 +619,8 @@ actor MCPManager {
         catch {
             return OptionalDiscovery(
                 values: [],
-                warning: "Prompts discovery failed: \(redactedError(error).localizedDescription)"
+                warning: "Prompts discovery failed: \(redactedError(error).localizedDescription)",
+                failed: true
             )
         }
     }
@@ -525,10 +629,12 @@ actor MCPManager {
 private struct OptionalDiscovery<Value: Sendable>: Sendable {
     var values: [Value]
     var warning: String?
+    var failed: Bool
 
-    init(values: [Value], warning: String? = nil) {
+    init(values: [Value], warning: String? = nil, failed: Bool = false) {
         self.values = values
         self.warning = warning
+        self.failed = failed
     }
 }
 
@@ -566,20 +672,20 @@ private struct MCPAgentTool: AgentTool {
     let requiresNetwork: Bool
     let supportsParallelExecution: Bool
     let configuration: MCPServerConfiguration
-    let client: MCPClient
+    let invoke: @Sendable (JSONValue) async throws -> MCPToolCallResult
 
     init(
         registeredName: String,
         serverName: String,
         descriptor: MCPToolDescriptor,
         configuration: MCPServerConfiguration,
-        client: MCPClient
+        invoke: @escaping @Sendable (JSONValue) async throws -> MCPToolCallResult
     ) {
         self.registeredName = registeredName
         self.serverName = serverName
         self.descriptor = descriptor
         self.configuration = configuration
-        self.client = client
+        self.invoke = invoke
 
         let transportMinimum: AgentPermissionLevel = switch configuration.transport {
         case .streamableHTTP: .network
@@ -642,7 +748,7 @@ private struct MCPAgentTool: AgentTool {
     }
 
     func execute(arguments: JSONValue, context: AgentToolContext) async throws -> AgentToolResult {
-        let result = try await client.callTool(name: descriptor.name, arguments: arguments)
+        let result = try await invoke(arguments)
         let rendered = MCPContentRenderer.render(result.content)
         let data = result.structuredContent ?? .array(result.content)
         let isError = result.isError ?? false

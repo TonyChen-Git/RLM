@@ -91,7 +91,18 @@ actor MCPStreamableHTTPTransport: MCPTransport {
     ) async throws -> MCPJSONRPCResponse? {
         try ensureActive(operationGeneration)
 
-        let negotiatedSessionID = sessionID
+        let versionMetadata = request.params?["_meta"]?["io.modelcontextprotocol/protocolVersion"]
+        if let versionMetadata, versionMetadata != .string(MCPClient.statelessProtocolVersion) {
+            throw MCPError.invalidConfiguration("HTTP protocol version metadata is not supported.")
+        }
+        let isStateless = versionMetadata != nil
+        if isStateless {
+            guard request.method != "initialize", request.method != "notifications/initialized",
+                  sessionID == nil else {
+                throw MCPError.invalidConfiguration("Stateless MCP cannot initialize or reuse a protocol session.")
+            }
+        }
+        let negotiatedSessionID = isStateless ? nil : sessionID
         var urlRequest = URLRequest(url: configuration.endpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = try MCPWireCodec.encode(request)
@@ -99,28 +110,62 @@ actor MCPStreamableHTTPTransport: MCPTransport {
         applyConfiguredHeaders(to: &urlRequest)
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        if request.method != "initialize" {
-            urlRequest.setValue(MCPClient.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
-        }
-        if let negotiatedSessionID {
-            urlRequest.setValue(negotiatedSessionID, forHTTPHeaderField: "Mcp-Session-Id")
+        if isStateless {
+            guard !request.method.isEmpty, request.method.utf8.count <= 256,
+                  request.method.utf8.allSatisfy({ (0x21...0x7E).contains($0) }) else {
+                throw MCPError.invalidConfiguration("MCP method cannot be represented as an HTTP header.")
+            }
+            urlRequest.setValue(MCPClient.statelessProtocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
+            urlRequest.setValue(request.method, forHTTPHeaderField: "Mcp-Method")
+            let name: String?
+            switch request.method {
+            case "tools/call", "prompts/get": name = request.params?["name"]?.stringValue
+            case "resources/read": name = request.params?["uri"]?.stringValue
+            default: name = nil
+            }
+            if let name {
+                urlRequest.setValue(try MCPHTTPHeaderProjection.encodedValue(name), forHTTPHeaderField: "Mcp-Name")
+            }
+            guard request.method == "tools/call" || request.localHTTPHeaders.isEmpty else {
+                throw MCPError.invalidConfiguration("MCP parameter headers are only valid for tool calls.")
+            }
+            try applyProjectedHeaders(request.localHTTPHeaders, to: &urlRequest)
+        } else {
+            if request.method != "initialize" {
+                urlRequest.setValue(MCPClient.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
+            }
+            if let negotiatedSessionID {
+                urlRequest.setValue(negotiatedSessionID, forHTTPHeaderField: "Mcp-Session-Id")
+            }
         }
 
         let (bytes, response) = try await responseBytes(for: urlRequest)
         try ensureActive(operationGeneration)
         let http = try validatedHTTPResponse(response, for: urlRequest)
 
-        if http.statusCode == 404, negotiatedSessionID != nil {
+        if !isStateless, http.statusCode == 404, negotiatedSessionID != nil {
             sessionID = nil
             throw MCPError.sessionExpired
         }
         guard (200..<300).contains(http.statusCode) else {
+            if isStateless {
+                return try await statelessErrorResponse(
+                    in: bytes, response: http, request: request, generation: operationGeneration
+                )
+            }
             throw MCPError.transport("Streamable HTTP returned status \(http.statusCode).")
         }
-        try negotiateSession(from: http)
+        // A stateless peer cannot create transport authority by attaching a legacy
+        // session header. It is neither stored nor sent back, including at stop.
+        if !isStateless {
+            try negotiateSession(from: http, mayCreate: request.method == "initialize")
+        }
 
         if http.statusCode == 202 {
             guard let requestID = request.id else { return nil }
+            guard !isStateless else {
+                throw MCPError.invalidResponse("Stateless MCP accepted a request without its response; the result is unknown and must not be replayed automatically.")
+            }
             return try await receiveAsynchronousResponse(
                 matching: requestID,
                 includeProtocolHeader: request.method != "initialize",
@@ -137,8 +182,12 @@ actor MCPStreamableHTTPTransport: MCPTransport {
             return try await matchingSSEResponse(
                 in: bytes,
                 expectedID: requestID,
-                generation: operationGeneration
+                generation: operationGeneration,
+                stateless: isStateless
             )
+        }
+        if isStateless, contentType != "application/json" {
+            throw MCPError.invalidResponse("Stateless MCP must return application/json or text/event-stream.")
         }
 
         let data = try await collect(
@@ -150,12 +199,53 @@ actor MCPStreamableHTTPTransport: MCPTransport {
         guard !data.isEmpty else {
             throw MCPError.invalidResponse("No JSON-RPC response was present in the HTTP body.")
         }
-        let responses = try decodeResponses(from: data)
+        let responses = try decodeResponses(from: data, stateless: isStateless)
         guard let matched = responses.first(where: { $0.id == requestID }) else {
             throw MCPError.invalidResponse("No JSON-RPC response matched the request id.")
         }
-        try validateMatchedResponse(matched)
+        try validateMatchedResponse(matched, stateless: isStateless)
         return matched
+    }
+
+    private func statelessErrorResponse(
+        in bytes: URLSession.AsyncBytes,
+        response: HTTPURLResponse,
+        request: MCPJSONRPCRequest,
+        generation operationGeneration: UInt64
+    ) async throws -> MCPJSONRPCResponse {
+        // Authentication, availability, and retry/backoff failures never select
+        // another protocol. Only the read-only discovery probe can downgrade.
+        guard response.statusCode == 400 || response.statusCode == 404 else {
+            throw MCPError.transport("Streamable HTTP returned status \(response.statusCode).")
+        }
+        let data = try await collect(
+            bytes, response: response, maximumBytes: Self.maximumBodyBytes,
+            generation: operationGeneration
+        )
+        let decoded = try? MCPWireCodec.decode(MCPJSONRPCResponse.self, from: data)
+        let raw = try? MCPWireCodec.decode(JSONValue.self, from: data)
+        let recognizedModernError = raw?["error"]?["code"]?.intValue.map {
+            [-32020, -32021, -32022].contains($0)
+        } ?? false
+        if response.statusCode == 400, request.method == "server/discover", !recognizedModernError {
+            throw MCPCompatibilityError.legacyHTTPServer
+        }
+        guard normalizedContentType(response) == "application/json", var decoded,
+              decoded.error != nil else {
+            throw MCPError.invalidResponse("MCP HTTP error did not contain a JSON-RPC error response.")
+        }
+        // Modern protocol errors may omit id when a gateway rejects metadata
+        // before decoding the body. This POST provides unambiguous correlation;
+        // never rewrite a present (including explicit null) or mismatched id.
+        if response.statusCode == 400, recognizedModernError,
+           decoded.id == nil, raw?["id"] == nil {
+            decoded.id = request.id
+        }
+        guard decoded.id == request.id else {
+            throw MCPError.invalidResponse("MCP HTTP error did not match the request id.")
+        }
+        try validateMatchedResponse(decoded, stateless: true)
+        return decoded
     }
 
     private func receiveAsynchronousResponse(
@@ -191,7 +281,7 @@ actor MCPStreamableHTTPTransport: MCPTransport {
         guard normalizedContentType(http) == "text/event-stream" else {
             throw MCPError.invalidResponse("Streamable HTTP GET did not return text/event-stream.")
         }
-        try negotiateSession(from: http)
+        try negotiateSession(from: http, mayCreate: false)
         return try await matchingSSEResponse(
             in: bytes,
             expectedID: requestID,
@@ -202,7 +292,8 @@ actor MCPStreamableHTTPTransport: MCPTransport {
     private func matchingSSEResponse(
         in bytes: URLSession.AsyncBytes,
         expectedID: MCPJSONRPCID,
-        generation operationGeneration: UInt64
+        generation operationGeneration: UInt64,
+        stateless: Bool = false
     ) async throws -> MCPJSONRPCResponse {
         var decoder = BoundedMCPSSEDecoder(
             maximumBytes: Self.maximumBodyBytes,
@@ -213,13 +304,13 @@ actor MCPStreamableHTTPTransport: MCPTransport {
             try Task.checkCancellation()
             try ensureActive(operationGeneration)
             for payload in try decoder.append(byte) {
-                if let response = try matchingResponse(in: payload, expectedID: expectedID) {
+                if let response = try matchingResponse(in: payload, expectedID: expectedID, stateless: stateless) {
                     return response
                 }
             }
         }
         for payload in try decoder.finish() {
-            if let response = try matchingResponse(in: payload, expectedID: expectedID) {
+            if let response = try matchingResponse(in: payload, expectedID: expectedID, stateless: stateless) {
                 return response
             }
         }
@@ -228,22 +319,23 @@ actor MCPStreamableHTTPTransport: MCPTransport {
 
     private func matchingResponse(
         in payload: Data,
-        expectedID: MCPJSONRPCID
+        expectedID: MCPJSONRPCID,
+        stateless: Bool
     ) throws -> MCPJSONRPCResponse? {
         guard payload != Data("[DONE]".utf8) else { return nil }
-        let responses = try decodeResponses(from: payload)
+        let responses = try decodeResponses(from: payload, stateless: stateless)
         guard let matched = responses.first(where: { $0.id == expectedID }) else {
             // Server notifications, requests, and responses for other in-flight
             // calls may share a receive stream. They are deliberately ignored here.
             return nil
         }
-        try validateMatchedResponse(matched)
+        try validateMatchedResponse(matched, stateless: stateless)
         return matched
     }
 
-    private func decodeResponses(from data: Data) throws -> [MCPJSONRPCResponse] {
+    private func decodeResponses(from data: Data, stateless: Bool) throws -> [MCPJSONRPCResponse] {
         do {
-            if let batch = try? MCPWireCodec.decode([MCPJSONRPCResponse].self, from: data) {
+            if !stateless, let batch = try? MCPWireCodec.decode([MCPJSONRPCResponse].self, from: data) {
                 return batch
             }
             return [try MCPWireCodec.decode(MCPJSONRPCResponse.self, from: data)]
@@ -252,12 +344,12 @@ actor MCPStreamableHTTPTransport: MCPTransport {
         }
     }
 
-    private func validateMatchedResponse(_ response: MCPJSONRPCResponse) throws {
-        guard response.jsonrpc == nil || response.jsonrpc == "2.0" else {
+    private func validateMatchedResponse(_ response: MCPJSONRPCResponse, stateless: Bool) throws {
+        guard response.jsonrpc == "2.0" || (!stateless && response.jsonrpc == nil) else {
             throw MCPError.invalidResponse("JSON-RPC response has an unsupported version.")
         }
-        guard response.result != nil || response.error != nil else {
-            throw MCPError.invalidResponse("JSON-RPC response contains neither result nor error.")
+        guard (response.result != nil) != (response.error != nil) else {
+            throw MCPError.invalidResponse("JSON-RPC response must contain exactly one of result or error.")
         }
     }
 
@@ -295,13 +387,16 @@ actor MCPStreamableHTTPTransport: MCPTransport {
         return http
     }
 
-    private func negotiateSession(from response: HTTPURLResponse) throws {
+    private func negotiateSession(from response: HTTPURLResponse, mayCreate: Bool) throws {
         guard let value = response.value(forHTTPHeaderField: "Mcp-Session-Id"), !value.isEmpty else {
             return
         }
         guard value.utf8.count <= 1_024,
               value.utf8.allSatisfy({ (0x21...0x7E).contains($0) }) else {
             throw MCPError.invalidResponse("Mcp-Session-Id contains invalid characters.")
+        }
+        guard mayCreate || value == sessionID else {
+            throw MCPError.invalidResponse("MCP session identity changed outside initialization; reconnect explicitly.")
         }
         sessionID = value
     }
@@ -316,6 +411,35 @@ actor MCPStreamableHTTPTransport: MCPTransport {
 
     private func applyConfiguredHeaders(to request: inout URLRequest) {
         for (field, value) in configuration.headers {
+            let normalized = field.lowercased()
+            // Protocol identity and routing headers come only from the selected
+            // request. Configuration remains the source of credentials.
+            guard !normalized.hasPrefix("mcp-"), normalized != "last-event-id" else { continue }
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+    }
+
+    private func applyProjectedHeaders(_ headers: [String: String], to request: inout URLRequest) throws {
+        guard headers.count <= 64 else {
+            throw MCPError.invalidConfiguration("Too many MCP parameter headers.")
+        }
+        var names = Set<String>()
+        var totalBytes = 0
+        for (field, value) in headers {
+            let lowercased = field.lowercased()
+            let suffix = field.dropFirst("Mcp-Param-".count)
+            let tokenCharacters = "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            guard lowercased.hasPrefix("mcp-param-"), !suffix.isEmpty,
+                  field.utf8.count <= 138, field.allSatisfy({ tokenCharacters.contains($0) }),
+                  names.insert(lowercased).inserted,
+                  value.utf8.count <= 12 * 1_024,
+                  value.utf8.allSatisfy({ $0 == 9 || (32...126).contains($0) }) else {
+                throw MCPError.invalidConfiguration("MCP parameter headers contain invalid fields or values.")
+            }
+            totalBytes += field.utf8.count + value.utf8.count + 4
+            guard totalBytes <= 32 * 1_024 else {
+                throw MCPError.invalidConfiguration("MCP parameter headers exceed the aggregate size limit.")
+            }
             request.setValue(value, forHTTPHeaderField: field)
         }
     }

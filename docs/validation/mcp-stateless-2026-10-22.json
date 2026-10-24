@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "recordedDate": "2026-10-22",
+  "timezone": "Asia/Taipei",
+  "scope": "Local focused MCP and Phase D verification, including fixtures and real sandboxed STDIO; not external provider acceptance or a complete release gate.",
+  "localEvidenceOnly": true,
+  "releaseCandidate": {
+    "version": "1.4.8",
+    "build": 15,
+    "status": "local_gate_passed_awaiting_ui_ci_publication_and_soak",
+    "published": false,
+    "note": "The focused input receipt predates the version/build bump. A separate full 1.4.8 gate passed on its own frozen source; see overallReleaseGate."
+  },
+  "focusedSwift": {
+    "status": "passed",
+    "tests": 140,
+    "skips": 0,
+    "failures": 0,
+    "unexpectedFailures": 0,
+    "testDurationSeconds": 13.465,
+    "exitCode": 0,
+    "startedAt": "2026-10-21T19:41:19Z",
+    "finishedAt": "2026-10-21T19:44:36Z",
+    "filter": "MCP|PhaseD",
+    "sourceUnchanged": true,
+    "sourceInputCount": 350,
+    "sourceFingerprint": "1a25a1e3cec4b5bf78edfa276d39029d648277641f8bedbe7fd17f441c150f03",
+    "contractFingerprint": "b75332977cf00704aedc228451e2f345af2f90f76a5a35e8aacf3e8c21d848d8",
+    "swiftFingerprint": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+    "swiftPath": "/usr/bin/swift",
+    "evidence": [
+      {
+        "path": "tmp/mcp-stateless-oct22/verification.json",
+        "sha256": "9751bad8c4e09bea85bae4c978c18799643c8e9c8817b5b39f921e14c0b40833",
+        "bytes": 366
+      },
+      {
+        "path": "tmp/mcp-stateless-oct22/source-before.json",
+        "sha256": "9fe7bb1f87ae169f6695b1b0250e5be06f5c73f1d5acf2e8338d8bd5ec74bf51",
+        "bytes": 42848
+      },
+      {
+        "path": "tmp/mcp-stateless-oct22/source-after.json",
+        "sha256": "9fe7bb1f87ae169f6695b1b0250e5be06f5c73f1d5acf2e8338d8bd5ec74bf51",
+        "bytes": 42848
+      },
+      {
+        "path": "tmp/mcp-stateless-oct22/focused.log",
+        "sha256": "db778b3b5009713b56189f0ae5adc275a4ab086f77ec9183459d8787e73f4803",
+        "bytes": 41890
+      },
+      {
+        "path": "tmp/mcp-stateless-oct22/owner.json",
+        "sha256": "958f7f251a7b01ba5a9a077cb6f751bd4755467f894278b5400af5fef67b5696",
+        "bytes": 432
+      },
+      {
+        "path": "tmp/mcp-stateless-oct22/check.py",
+        "sha256": "e3e04ea2d05148a1886fadea49d18f08e3dfa054f466a7ce122882a9d17210fd",
+        "bytes": 1646
+      }
+    ]
+  },
+  "pythonSoakContract": {
+    "status": "passed",
+    "tests": 28,
+    "skips": 0,
+    "failures": 0,
+    "testDurationSeconds": 7.357,
+    "scope": "Soak harness contract tests only; no elapsed-duration qualification.",
+    "evidence": {
+      "path": "tmp/mcp-stateless-oct22/soak-contract.log",
+      "sha256": "50088975d1651bc73a57e873a40cdf9c1690e11097869d5d31894d830f60c24a",
+      "bytes": 127
+    }
+  },
+  "diagnosticHistory": [
+    {
+      "id": "diagnostic-1",
+      "status": "failed_diagnostic_only",
+      "tests": 138,
+      "skips": 0,
+      "failures": 6,
+      "failingTestCases": 2,
+      "testDurationSeconds": 14.647,
+      "exitCode": 1,
+      "finishedAt": "2026-10-21T19:40:28Z",
+      "sourceUnchanged": false,
+      "qualifiesFrozenSource": false,
+      "sourceFingerprintBefore": "2a4e68652e0c205564282c465231bcd5f0a055f94b5b4960440ec9f75627b230",
+      "sourceFingerprintAfter": "5645554f339fab4aa1946f7b3571e8fa50df99c636e1779edfc2dca1b817add6",
+      "explanation": "Compilation overlapped ongoing source/test edits. Six assertion failures in two test cases are retained as diagnostic evidence; this run cannot qualify a single frozen source generation.",
+      "failureGroups": [
+        {
+          "test": "MCPStatelessClientTests.testVersionNegotiationRequiresMatchingRequestedVersion",
+          "assertionFailures": 4,
+          "correction": "Version negotiation must require error.data.requested to match the requested modern revision before fallback."
+        },
+        {
+          "test": "MCPViewModelPersistenceTests.testExplicitReconnectUsesSavedProtocolAndTransportInsteadOfOldSnapshot",
+          "assertionFailures": 2,
+          "correction": "Explicit reconnect uses the current persisted configuration and rechecks authority, rather than the previous connection snapshot."
+        }
+      ],
+      "changedInputsDuringRun": [
+        "Scripts/soak_profiles.json",
+        "Sources/LumaChat/Agent/MCP/MCPClient.swift",
+        "Sources/LumaChat/Agent/MCP/MCPStdioTransport.swift",
+        "Sources/LumaChat/Agent/MCP/MCPStreamableHTTPTransport.swift",
+        "Sources/LumaChat/ViewModels/AgentViewModel.swift",
+        "Tests/LumaChatTests/MCPStatelessClientTests.swift",
+        "Tests/LumaChatTests/MCPStatelessHTTPTests.swift",
+        "Tests/LumaChatTests/MCPViewModelPersistenceTests.swift"
+      ],
+      "additionalChangesBeforeFrozenRun": [
+        "Sources/LumaChat/Agent/MCP/MCPStdioTransport.swift",
+        "Tests/LumaChatTests/MCPStdioNegotiationTests.swift"
+      ],
+      "evidence": [
+        {
+          "path": "tmp/mcp-stateless-oct22/diagnostic-1/verification.json",
+          "sha256": "ef369f87b13934e45966acf6329a7f888d114d5d66524e4d2be2ad4e16848b5a",
+          "bytes": 367
+        },
+        {
+          "path": "tmp/mcp-stateless-oct22/diagnostic-1/source-before.json",
+          "sha256": "5162127e016780b79344027c95ae7f462ff8c21fb9024157e5886325087e3f29",
+          "bytes": 42848
+        },
+        {
+          "path": "tmp/mcp-stateless-oct22/diagnostic-1/source-after.json",
+          "sha256": "ccc1ac447668a999ac41027ca548a4a15f21ee04099c8df0620dca0e1899b512",
+          "bytes": 42848
+        },
+        {
+          "path": "tmp/mcp-stateless-oct22/diagnostic-1/focused.log",
+          "sha256": "29e0d71a659cde500a7dad9eb7618ed65ac340af36864003c2563446228773ea",
+          "bytes": 46210
+        },
+        {
+          "path": "tmp/mcp-stateless-oct22/diagnostic-1/owner.json",
+          "sha256": "fcd028910ae040bd5d71401271137d04e4bc714b92df987e54f35aea02b3ebe6",
+          "bytes": 432
+        }
+      ]
+    }
+  ],
+  "acceptanceBoundaries": {
+    "completeReleaseGate": "passed_separate_1.4.8_source_receipt",
+    "packagedNativeUI": "pending",
+    "sourceBoundSoak": "pending",
+    "externalModelSSHMCPOAuthPRTargets": "deferred_by_user",
+    "developerIDNotarizationStaplingProductionFeedSignedUpdates": "not_required_for_private_use",
+    "windowsDesktop": "out_of_scope",
+    "mrtrSamplingElicitation": "unsupported_not_advertised",
+    "historicalVersion147Soak": "Retains its original source scope; no time or qualification transferred.",
+    "hostedMacOSAndLinuxCI": "pending",
+    "releasePublication": "pending"
+  },
+  "overallReleaseGate": {
+    "status": "passed",
+    "sourceFingerprint": "2ac43949b9cfef43c0c4c4b926fed4041acd567494d416d30ee9fb5cfc28522d",
+    "tests": 962,
+    "skips": 1,
+    "failures": 0,
+    "pythonTests": 48,
+    "pythonSkips": 1,
+    "pythonFailures": 0,
+    "finishedAt": "2026-10-22T01:52:06Z",
+    "receipt": "docs/validation/1.4.8.json",
+    "note": "Separate full candidate gate; does not change the focused run source scope."
+  }
+}

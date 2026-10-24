@@ -24,6 +24,78 @@ repository targets at this time ("先不提供"). Acceptance requiring those tar
 is `deferred_by_user`, with no passing live result claimed. Local fixture and
 hosted CI evidence retain their documented scope.
 
+## MCP 1.4.8 candidate integration — updated 2026-10-24
+
+The development source now contains `2026-07-28` stateless MCP for both STDIO
+and Streamable HTTP, alongside explicit `2025-06-18` legacy compatibility.
+This is new product code beyond the immutable v1.4.7 release, packaged as the
+local `1.4.8` / build `15` candidate. The full local release gate and packaging
+pass. Limited packaged MCP UI with a local fixture also passes. Publication,
+hosted CI and source-bound soak remain pending. Historical passing counts below retain their own version and input
+fingerprints.
+
+The frozen MCP/Phase D run passes **140 tests, zero skips or failures,
+13.465 seconds**, fingerprint
+`1a25a1e3cec4b5bf78edfa276d39029d648277641f8bedbe7fd17f441c150f03`.
+It includes local fixtures and real sandboxed STDIO, with no external provider
+acceptance. The final full gate after the version/build bump and Settings
+layout correction records **962 Swift tests, one skip, zero failures,
+253.914 seconds**, and **48 Python contracts, one skip, zero failures**. Node contracts pass **VS Code 17/17** and
+**GitHub Action 14/14**. Debug/optimized compilation, ad-hoc signing, archive
+and extracted-App checks, CLI version 1.4.8 and security audit all pass.
+
+The complete gate's 350-input fingerprint is
+`f7c34cecebea6d19723774fc017dbb33ed5d4fe0d46140df717d25ece5cbe29f`.
+The log reaches the final release footer. The controller's original exit code
+is unavailable; October 24 recovery matched the initial receipt against the
+current inputs and repeated signature, ZIP CRC and CLI checks successfully.
+The stale controller record and first candidate remain separate historical
+evidence. ZIP SHA-256:
+`ba0f14b8be761da2c2c648986fce9f19f9b831c0f0eb80ee973aa06865350888`.
+The gate's base commit was `2f17a1aca6bc15be52417d184d01b98762555684`
+with these changes uncommitted. Exact scope, skip reasons, artifact hashes and
+retained diagnostic failures are in [1.4.8 notes](RELEASE_NOTES_1.4.8.md),
+[validation/1.4.8.json](validation/1.4.8.json) and the
+[focused MCP receipt](validation/mcp-stateless-2026-10-22.json).
+
+The final packaged binary's October 24 MCP native UI run used an isolated
+profile and loopback fixture. Legacy settings survived restart; legacy connect,
+save-and-disconnect to Automatic, modern connect with invalid-tool warning,
+Refresh Discovery and explicit Reconnect passed. Complete action labels and
+wrapped diagnostics are visible. About reports `1.4.8 (15)` and clean quit
+returns 0. Twenty captured HTTP requests include fourteen modern requests and
+two modern discovery calls; protocol/method headers and the absence of modern
+session headers are verified. This is limited MCP UI evidence, not external
+provider or all Phase I–Q UI acceptance.
+
+Implemented scope includes persisted protocol selection (old records/plugin
+declarations default to legacy; new Settings drafts default to automatic),
+read-only discovery negotiation, per-request protocol/capability metadata,
+tools/resources/templates/prompts, bounded HTTP header projections and JSON or
+request-scoped SSE. Invalid annotated tools are excluded with diagnostics.
+Refresh separates successful filtering warnings from discovery failure, and
+both connection and discovery tokens protect retained tool adapters from
+stale schemas/permissions. The client checks each adapter's exact descriptor
+before sending. Failed transports retire registered authority; session expiry
+and ambiguous results require explicit recovery and never replay tool calls.
+STDIO fallback joins prior process cleanup before creating the replacement.
+
+Settings changes disconnect affected clients and clear cached approvals before
+committing. Failed or ambiguous persistence keeps affected servers quarantined
+while persisted readback is shown, rather than reconnecting stale credentials.
+Keychain remains the credential boundary. These paths preserve existing
+project, plugin ownership, sandbox and network approvals.
+
+The supported modern profile advertises empty client capabilities. MRTR
+`input_required`, sampling, elicitation and other unadvertised capabilities are
+explicitly unsupported; no input or additional tool authority is supplied.
+This records the implemented core profile, not universal provider/extension
+compatibility. Live MCP/account acceptance remains `deferred_by_user`.
+Apple distribution signing remains `not_required_for_private_use`; Windows
+desktop work is outside this round. Slack/Gmail remain future provider
+evaluation, as in the Phase M scope. Details and official protocol references
+are in [Phase L–Q architecture](PHASE_L_Q_ARCHITECTURE.md).
+
 ## 1.4.7 integrated corrective release — 2026-10-19
 
 Version `1.4.7`, build `14`, includes Swift 6.2.4 compatibility, isolated test/store
@@ -141,20 +213,30 @@ setuid-top environment skip, zero failures, 27.718 seconds) and two additional
 real-pip runs (11.877/15.013 seconds, no skips or failures). Frozen before/after
 receipts match fingerprint
 `d295b7da89b9a78a6cda360ab948c79f51c8716ab0b9e592e67a64f0f670a1c9`.
-Of the 341 release inputs, only the PTY test file differs; production inputs
-remain identical. Receipt: `tmp/pty-pip-oct20/verification.json`. These focused
+At that test-only checkpoint, of the 341 release inputs only the PTY test file
+differs; production inputs remain identical. Receipt: `tmp/pty-pip-oct20/verification.json`. These focused
 results do not qualify a continuous soak or replace the original tag results.
 
 A separate corrected-test **8h → 24h → 72h** sequence starts at
 `2026-10-21T01:31:01Z` from immutable commit `fdcabc20a9c6538c76b1089afaf8a872af2c17e6`.
 The snapshot verifies 464 tracked files and the focused test receipt. It keeps
 the published production inputs but changes the PTY test file, so this is not
-an unchanged release-tag test run. The launch checkpoint is preparing, with
-no measured duration or qualification yet; prior elapsed time is not reused.
-Receipt: `tmp/release-1.4.7-corrected-soak-launch-checkpoint.json`; live state:
+an unchanged release-tag test run. The launch checkpoint records preparation;
+prior elapsed time is not reused.
+Receipt: `tmp/release-1.4.7-corrected-soak-launch-checkpoint.json`; final state:
 `tmp/release-1.4.7-corrected-soak-suite/state.json`. The correction's
 [macOS CI](https://github.com/TonyChen-Git/RLM/actions/runs/39527531264) is also
 in progress at the recorded checkpoint; no passing result is claimed.
+
+That corrected-test run `ccb2e92e-d3da-428c-af8f-25fd86ca7031` subsequently
+receives **SIGTERM at `2026-10-21T03:17:32Z`** (11:17:32 Asia/Taipei), with
+`senderKnown: false`. Its final state is interrupted: **5,988.242 continuous
+seconds, 46 completed cycles, 368 completed shards and 369 attempted shards**,
+exit 130. The in-flight Agent shard exits -15; the recorded cause is
+`InterruptedError: soak interrupted`. The sender and reason for the signal are
+unknown. It does not qualify, 24h/72h did not start, and no sequence remains
+running. The original exact-tag 2h qualification is historical v1.4.7 evidence;
+neither it nor this interrupted test-only run qualifies the later MCP source.
 
 The published package also passes actual Chrome open/snapshot/find/screenshot/
 close, with a visually verified 1280×657 PNG. Completed Task history and the
@@ -758,7 +840,7 @@ permission, remote worker, or real external provider flows.
 | M | GitLab PR adapter and HMAC-verified GitHub webhook projection into durable Automation event scheduling; provider/webhook/replay tests pass | Authorized GitLab/GitHub live acceptance and HTTPS webhook ingress configuration |
 | N | On-device macOS Speech recognition, Task composer controls and interruptible synthesis; permission/interruption tests pass and packaged mic control is visible | Real microphone permission and spoken Task interaction acceptance |
 | O | Linux Python command worker over pinned outbound SSH, independent worktree, job binding/heartbeat/reconnect/cancel/log/diff; journaled textual patch takeover into a new local managed worktree Task; local protocol and Swift path tests pass | Linux CI execution, real-host and fault acceptance; v1 supports command jobs and textual patch takeover, with full remote Agent runtime and binary takeover outside the minimal worker scope |
-| P | Registry-pinned package digest, source/update/permission preview, OAuth refresh/revoke/recovery, explicit MCP protocol diagnosis; trust and token race tests pass | Supported-provider live acceptance; modern stateless MCP remains unsupported |
+| P | Registry-pinned package digest, source/update/permission preview, OAuth refresh/revoke/recovery; 1.4.8 candidate adds modern stateless MCP core profile and legacy compatibility; focused/full local gates pass as recorded above | Current-source hosted CI; supported-provider live acceptance; optional unadvertised MCP client capabilities remain unsupported |
 | Q | macOS development and Linux worker CI definitions; development release gate and limited packaged native UI smoke pass | External acceptance, Developer ID/notary/staple/feed/rollback and qualifying 2h/8h/24h/multi-day soak |
 
 No Developer ID identity, notary profile, published feed, external service

@@ -173,7 +173,7 @@ final class MCPStreamableHTTPTests: XCTestCase {
         )
     }
 
-    func testExpiredSessionIsReinitializedAndOriginalRequestIsRetriedOnce() async throws {
+    func testExpiredSessionDisconnectsWithoutReinitializingOrReplaying() async throws {
         var initializeCount = 0
         MCPHTTPStubURLProtocol.handler = { request, json in
             let method = json?["method"]?.stringValue ?? ""
@@ -221,14 +221,22 @@ final class MCPStreamableHTTPTests: XCTestCase {
             )
         )
         _ = try await client.connect()
-        let tools = try await client.listTools()
-        XCTAssertTrue(tools.isEmpty)
-        XCTAssertEqual(initializeCount, 2)
+        do {
+            _ = try await client.listTools()
+            XCTFail("Expired sessions require explicit reconnect and fresh tool discovery")
+        } catch let error as MCPError {
+            XCTAssertEqual(error, .sessionExpired)
+        }
+        XCTAssertEqual(initializeCount, 1)
+        let connected = await client.isConnected
+        XCTAssertFalse(connected)
         let toolRequests = MCPHTTPStubURLProtocol.methodRequests
             .filter { $0.0 == "tools/list" }
             .map(\.1)
-        XCTAssertEqual(toolRequests.count, 2)
-        XCTAssertEqual(toolRequests.last?.value(forHTTPHeaderField: "Mcp-Session-Id"), "fresh-session")
+        XCTAssertEqual(toolRequests.count, 1)
+        _ = try await client.connect()
+        _ = try await client.listTools()
+        XCTAssertEqual(initializeCount, 2)
         await client.disconnect()
     }
 

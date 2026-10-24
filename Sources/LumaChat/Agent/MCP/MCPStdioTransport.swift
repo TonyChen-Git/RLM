@@ -19,6 +19,9 @@ actor MCPStdioTransport: MCPTransport {
     private var pending: [MCPJSONRPCID: PendingRequest] = [:]
     private var artifactLog: MCPTransportArtifactLog?
     private var running = false
+    private var generation = UUID()
+    private var stopTask: Task<Void, Never>?
+    private var stopID: UUID?
     private var ownsDedicatedProcessGroup = false
     private var processEnvironmentRoot: URL?
     private var sandboxRuntimeRoot: URL?
@@ -36,7 +39,11 @@ actor MCPStdioTransport: MCPTransport {
     }
 
     func start() async throws {
-        guard !running else { throw MCPError.alreadyRunning }
+        // Starting during teardown must not suspend and later revive a process
+        // after a concurrent disconnect. Callers explicitly await stop first.
+        guard stopTask == nil, !running, process == nil else { throw MCPError.alreadyRunning }
+        let generation = UUID()
+        self.generation = generation
         guard !configuration.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MCPError.invalidConfiguration("STDIO command is empty.")
         }
@@ -117,18 +124,18 @@ actor MCPStdioTransport: MCPTransport {
 
         output.fileHandleForReading.readabilityHandler = { [weak self, outputPump] handle in
             guard outputPump.receive(from: handle) else {
-                Task { await self?.streamBufferOverflow(stream: "stdout") }
+                Task { await self?.streamBufferOverflow(stream: "stdout", generation: generation) }
                 return
             }
         }
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self, errorPump] handle in
             guard errorPump.receive(from: handle) else {
-                Task { await self?.streamBufferOverflow(stream: "stderr") }
+                Task { await self?.streamBufferOverflow(stream: "stderr", generation: generation) }
                 return
             }
         }
         process.terminationHandler = { [weak self] terminated in
-            Task { await self?.processDidTerminate(status: terminated.terminationStatus) }
+            Task { await self?.processDidTerminate(status: terminated.terminationStatus, generation: generation) }
         }
 
         do {
@@ -157,13 +164,13 @@ actor MCPStdioTransport: MCPTransport {
         stdoutConsumer = Task { [weak self, outputPump] in
             for await data in outputPump.stream {
                 guard let self else { return }
-                await self.consumeStandardOutput(data)
+                await self.consumeStandardOutput(data, generation: generation)
             }
         }
         stderrConsumer = Task { [weak self, errorPump] in
             for await data in errorPump.stream {
                 guard let self else { return }
-                await self.consumeStandardError(data)
+                await self.consumeStandardError(data, generation: generation)
             }
         }
         retainTemporaryRoots = true
@@ -171,6 +178,7 @@ actor MCPStdioTransport: MCPTransport {
     }
 
     func send(_ request: MCPJSONRPCRequest) async throws -> MCPJSONRPCResponse? {
+        let generation = self.generation
         try Task.checkCancellation()
         guard running, process?.isRunning == true, let writer = inputWriter else {
             throw MCPError.notConnected
@@ -189,7 +197,12 @@ actor MCPStdioTransport: MCPTransport {
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let holder = PendingRequest(continuation: continuation)
+                let holder = PendingRequest(
+                    continuation: continuation,
+                    isStatelessDiscovery: request.method == "server/discover"
+                        && request.params?["_meta"]?["io.modelcontextprotocol/protocolVersion"]
+                            == .string(MCPClient.statelessProtocolVersion)
+                )
                 guard pending[id] == nil else {
                     holder.resume(
                         throwing: MCPError.transport("Duplicate JSON-RPC request id.")
@@ -201,16 +214,31 @@ actor MCPStdioTransport: MCPTransport {
                     do {
                         try await writer.write(encoded)
                     } catch {
-                        await self?.writeFailed(id: id, error: error)
+                        await self?.writeFailed(id: id, error: error, generation: generation)
                     }
                 }
             }
         } onCancel: {
-            Task { [weak self] in await self?.cancelRequest(id) }
+            Task { [weak self] in await self?.cancelRequest(id, generation: generation) }
         }
     }
 
     func stop() async {
+        if let stopTask {
+            let id = stopID
+            await stopTask.value
+            if stopID == id { self.stopTask = nil; stopID = nil }
+            return
+        }
+        let id = UUID()
+        let task = Task { await self.tearDown() }
+        stopID = id
+        stopTask = task
+        await task.value
+        if stopID == id { stopTask = nil; stopID = nil }
+    }
+
+    private func tearDown() async {
         guard running || process != nil else { return }
         running = false
         inputWriter?.close()
@@ -246,15 +274,37 @@ actor MCPStdioTransport: MCPTransport {
         removeTemporaryRoots()
     }
 
-    private func consumeStandardOutput(_ data: Data) {
+    private func consumeStandardOutput(_ data: Data, generation: UUID) {
+        guard self.generation == generation, running else { return }
         do {
             for frame in try framer.append(data) {
                 var loggedFrame = frame
                 loggedFrame.append(0x0A)
                 artifactLog?.appendSanitized(loggedFrame, stream: .stdout)
-                guard let response = try? MCPWireCodec.decode(MCPJSONRPCResponse.self, from: frame),
-                      response.result != nil || response.error != nil,
-                      let id = response.id,
+                let probe = pending.count == 1 && pending.first?.value.isStatelessDiscovery == true
+                guard var response = try? MCPWireCodec.decode(MCPJSONRPCResponse.self, from: frame),
+                      response.result != nil || response.error != nil else {
+                    if probe, let raw = try? MCPWireCodec.decode(JSONValue.self, from: frame),
+                       raw.objectValue?["error"] != nil || raw.objectValue?["result"] != nil {
+                        throw MCPError.invalidResponse("Malformed response during stateless discovery.")
+                    }
+                    continue
+                }
+                if response.id == nil, let error = response.error,
+                   pending.count == 1, let entry = pending.first, entry.value.isStatelessDiscovery {
+                    // Version/capability errors may omit id. Only the sole
+                    // discovery probe can provide unambiguous correlation.
+                    let raw = try MCPWireCodec.decode(JSONValue.self, from: frame)
+                    guard raw.objectValue?["id"] == nil, response.jsonrpc == "2.0",
+                          response.result == nil, [-32020, -32021, -32022].contains(error.code) else {
+                        throw MCPError.invalidResponse("Uncorrelated error during stateless discovery.")
+                    }
+                    response.id = entry.key
+                }
+                if probe, response.id != pending.first?.key {
+                    throw MCPError.invalidResponse("Uncorrelated response during stateless discovery.")
+                }
+                guard let id = response.id,
                       let request = pending.removeValue(forKey: id) else { continue }
                 request.resume(returning: response)
             }
@@ -262,16 +312,17 @@ actor MCPStdioTransport: MCPTransport {
             running = false
             failPending(with: error)
             signalProcess(SIGKILL)
-            Task { await self.stop() }
+            Task { await self.stop(generation: generation) }
         }
     }
 
-    private func consumeStandardError(_ data: Data) {
+    private func consumeStandardError(_ data: Data, generation: UUID) {
+        guard self.generation == generation, running else { return }
         artifactLog?.appendSanitized(data, stream: .stderr)
     }
 
-    private func streamBufferOverflow(stream: String) {
-        guard running else { return }
+    private func streamBufferOverflow(stream: String, generation: UUID) {
+        guard self.generation == generation, running else { return }
         running = false
         let error = MCPError.transport(
             "MCP \(stream) exceeded its bounded in-memory stream queue."
@@ -279,10 +330,11 @@ actor MCPStdioTransport: MCPTransport {
         failPending(with: error)
         inputWriter?.close()
         signalProcess(SIGKILL)
-        Task { await self.stop() }
+        Task { await self.stop(generation: generation) }
     }
 
-    private func cancelRequest(_ id: MCPJSONRPCID) {
+    private func cancelRequest(_ id: MCPJSONRPCID, generation: UUID) {
+        guard self.generation == generation else { return }
         guard let request = pending.removeValue(forKey: id) else { return }
         request.resume(throwing: CancellationError())
         // If a server stopped reading stdin, even a cancellation notification
@@ -292,10 +344,11 @@ actor MCPStdioTransport: MCPTransport {
         signalProcess(SIGKILL)
         running = false
         failPending(with: CancellationError())
-        Task { await self.stop() }
+        Task { await self.stop(generation: generation) }
     }
 
-    private func writeFailed(id: MCPJSONRPCID, error: Error) {
+    private func writeFailed(id: MCPJSONRPCID, error: Error, generation: UUID) {
+        guard self.generation == generation else { return }
         guard let request = pending.removeValue(forKey: id) else { return }
         request.resume(
             throwing: MCPError.transport("Unable to write to MCP STDIO: \(error.localizedDescription)")
@@ -304,11 +357,11 @@ actor MCPStdioTransport: MCPTransport {
         signalProcess(SIGKILL)
         running = false
         failPending(with: MCPError.notConnected)
-        Task { await self.stop() }
+        Task { await self.stop(generation: generation) }
     }
 
-    private func processDidTerminate(status: Int32) {
-        guard running else { return }
+    private func processDidTerminate(status: Int32, generation: UUID) {
+        guard self.generation == generation, running else { return }
         running = false
         // A server may fork a background child and let its leader exit. The
         // launcher-created group remains addressable by the original PID, so
@@ -316,7 +369,12 @@ actor MCPStdioTransport: MCPTransport {
         if managedProcessTreeIsAlive { signalProcess(SIGKILL) }
         inputWriter?.close()
         failPending(with: MCPError.transport("STDIO server exited with status \(status)."))
-        Task { await self.stop() }
+        Task { await self.stop(generation: generation) }
+    }
+
+    private func stop(generation: UUID) async {
+        guard self.generation == generation else { return }
+        await stop()
     }
 
     private func failPending(with error: Error) {
@@ -581,11 +639,13 @@ private final class MCPStdioReadPump: @unchecked Sendable {
 /// dictionary and resumed from Sendable closures without exposing the
 /// continuation as a sending capture.
 private final class PendingRequest: @unchecked Sendable {
+    let isStatelessDiscovery: Bool
     private var continuation: CheckedContinuation<MCPJSONRPCResponse?, Error>?
     private var resumed = false
     private let lock = NSLock()
 
-    init(continuation: CheckedContinuation<MCPJSONRPCResponse?, Error>) {
+    init(continuation: CheckedContinuation<MCPJSONRPCResponse?, Error>, isStatelessDiscovery: Bool) {
+        self.isStatelessDiscovery = isStatelessDiscovery
         self.continuation = continuation
     }
 

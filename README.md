@@ -9,7 +9,7 @@ Plan/Agent、MCP、Projects、Tasks、Goals、Undo 與 Checkpoint 基礎上，�
 Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲端 fallback
 或 proprietary Codex 服務。
 
-> **目前版本（2026-10-19）**：[LumaChat 1.4.7 build 14](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
+> **已發佈版本（2026-10-19）**：[LumaChat 1.4.7 build 14](https://github.com/TonyChen-Git/RLM/releases/tag/v1.4.7)
 > 已從 `main` 發佈為一般正式 GitHub Release（非 prerelease），整合 Phase I–Q 與後續修復。
 > 完整本機 gate 通過 896 項 Swift、48 項 Python（各 1 skip、0 failures）；
 > macOS CI 896 項（2 skips）及 Linux worker CI 10 項皆零失敗。
@@ -21,9 +21,21 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 > 語音播放／停止控制及 Computer Use 安全提示已檢查；模型與網頁使用本機 fixture。
 > 本版 2h 長測通過；8h 尚未合格，第三次嘗試發現 pip 互動測試逾時。
 > 10 月 21 日測試流程修正通過 22 項 PTY 測試（1 skip、0 failures）及兩次 pip 重跑；
-> 產品程式碼與已發佈版相同。外部測試目標依使用者決定暫不提供。
+> 當時產品程式碼與已發佈版相同。外部測試目標依使用者決定暫不提供。
 > 修正後測試的 8h → 24h → 72h 長測於 10 月 21 日 09:31（台北時間）重新啟動；
-> 啟動紀錄仍在準備編譯，尚無新的長測合格結果。
+> 11:17 收到來源不明的 SIGTERM 後中斷，實測 5,988.242 秒、46 cycles、368 完成 shards
+> （369 attempted），不合格；24h／72h 未開始，目前沒有執行中的長測序列。
+
+> **1.4.8 build 15 候選版（2026-10-24 更新）**：已整合 MCP `2026-07-28` stateless 支援，
+> 包含 STDIO／Streamable HTTP、協定模式設定、每次請求的版本與能力資訊、工具標頭投影、
+> 斷線後明確重連及設定持久化安全。本機完整 gate 與 ad-hoc 封裝通過：962 項 Swift、
+> 48 項 Python（各 1 skip、0 failures）；Node adapter 17/17、14/14 通過。
+> 最終 gate 日誌已到封裝完成；控制器退出碼未保留，10 月 24 日已重新核對來源與產物。
+> 最終封裝的 MCP 原生 UI（本機 fixture）通過重啟保留、模式切換、重連、完整按鈕與警告顯示，
+> About 顯示 1.4.8 (15)，正常退出。此結果僅涵蓋上述 UI 範圍。
+> 候選版尚未發佈，目前來源的 hosted CI 與版本綁定長測仍待完成。
+> 歷史 1.4.7 的 2h 合格結果只適用於該版本。
+> 詳見 [1.4.8 候選版紀錄](docs/RELEASE_NOTES_1.4.8.md) 與 [Phase L–Q 架構](docs/PHASE_L_Q_ARCHITECTURE.md)。
 
 > **私用驗收範圍（2026-10-20 更新）**：依使用者「不用簽，我私用」的決定，
 > 沿用已驗證的 ad-hoc 封裝。Apple Developer ID／公證／stapling、正式更新 feed
@@ -31,6 +43,7 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 > 未執行的功能外部驗收與本版長測資格仍須各自取得證據；更新信任與權限檢查維持原有行為。
 > 使用者目前「先不提供」外部模型、SSH、MCP 與測試 repository 目標；相關 live acceptance
 > 記為 `deferred_by_user`，未執行也未標為通過。
+> Windows 桌面版本不在本輪範圍；Slack／Gmail 仍列為後續 provider 評估。
 > 各版本證據分別保留於 [1.4.6 版本說明](docs/RELEASE_NOTES_1.4.6.md)、
 > [開發整合紀錄](docs/RELEASE_NOTES_UNRELEASED.md) 與 [差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。
 
@@ -58,7 +71,9 @@ Anthropic-compatible 等）；本專案不宣稱提供 OpenAI 託管模型、雲
 - **Skills、Plugins、Hooks、OAuth**：bounded `SKILL.md` discovery、獨立 plugin
   manifest/lifecycle、permission-derived sandbox、host-only lifecycle hooks、
   PKCE OAuth 與 Keychain-only token；plugin-owned MCP 與手動 MCP 分離。MCP 設定可
-  查看連線診斷、Reconnect 與 Refresh Discovery。
+  查看連線診斷、Reconnect 與 Refresh Discovery。1.4.8 候選版增加 Automatic／legacy／stateless
+  協定選擇；既有設定保留 legacy，新建設定預設 Automatic。stateless 使用空的 client
+  capabilities，未支援的 MRTR 追問會明確拒絕；工具結果不明時不自動重送。
 - **Browser 與 Computer Use 2.0**：Task-owned Chromium/CDP profile、tabs/
   navigation、DOM/Accessibility、screenshot、network/download metadata、
   Browser annotations，以及需 Screen Recording/Accessibility、capture-bound
@@ -369,10 +384,12 @@ docs/                           Architecture, roadmap, audit and release notes
   已修復；第二次 run 在 60 個完整 cycles、481 個 shards 後中斷，沒有完成結算，
   兩次紀錄均不合格且原樣保留。後續 10 月 14 日的 1.4.5 整合來源，以及
   10 月 15 日精確的 1.4.6 發行來源，分別取得合格的 2h 結果；兩個序列的
-  8h 均中斷，24h／72h 未開始。目前沒有仍在執行的序列，1.4.7 尚無
-  自己的 qualifying soak。新 run 不沿用舊 run 時數或 cycles；完成與
+  8h 均中斷，24h／72h 未開始。1.4.7 exact tag 隨後取得自己的合格 2h 結果
+  （7,257.719 秒、52 cycles、418 shards），三次 8h 嘗試與修正測試後的 8h 均不合格。
+  目前沒有仍在執行的序列；1.4.8 已通過完整本機 gate 與有限 MCP 封裝 UI，hosted CI 與新來源長測仍待完成。
+  新 run 不沿用舊 run 時數或 cycles；完成與
   qualification 檢查通過前不算驗收。證據見
-  [1.4.6 驗證紀錄](docs/validation/1.4.6.json)。本機整合／fixture soak
+  [1.4.6 驗證紀錄](docs/validation/1.4.6.json) 與 [差異稽核](docs/CODEX_FULL_PARITY_AUDIT.md)。本機整合／fixture soak
   不替代外部服務驗收；dry-run 只證明 profile、inventory 與 selector 契約有效。
 - live SSH host、真實 Ollama/OpenAI-compatible backend、native Computer Use、
   VS Code 與 GitHub hosted runner 仍需要各自授權環境的 acceptance。
@@ -412,6 +429,7 @@ docs/                           Architecture, roadmap, audit and release notes
 
 ## Further reading
 
+- [1.4.8 candidate notes and local gate](docs/RELEASE_NOTES_1.4.8.md)
 - [1.4.7 patch release preparation](docs/RELEASE_NOTES_1.4.7.md)
 - [1.4.6 release notes](docs/RELEASE_NOTES_1.4.6.md)
 - [1.4.5 development prerelease notes](docs/RELEASE_NOTES_1.4.5.md)

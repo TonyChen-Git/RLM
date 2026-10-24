@@ -222,6 +222,31 @@ struct PluginMCPServerDeclaration: Codable, Equatable, Sendable {
     var name: String
     var transport: MCPTransportConfiguration
     var permissionLevel: AgentPermissionLevel?
+    var protocolMode: MCPProtocolMode
+
+    init(
+        name: String,
+        transport: MCPTransportConfiguration,
+        permissionLevel: AgentPermissionLevel? = nil,
+        protocolMode: MCPProtocolMode = .legacy
+    ) {
+        self.name = name
+        self.transport = transport
+        self.permissionLevel = permissionLevel
+        self.protocolMode = protocolMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, transport, permissionLevel, protocolMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        transport = try values.decode(MCPTransportConfiguration.self, forKey: .transport)
+        permissionLevel = try values.decodeIfPresent(AgentPermissionLevel.self, forKey: .permissionLevel)
+        protocolMode = try values.decodeIfPresent(MCPProtocolMode.self, forKey: .protocolMode) ?? .legacy
+    }
 }
 
 struct PluginCommandDeclaration: Codable, Equatable, Sendable {

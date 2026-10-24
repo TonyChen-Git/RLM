@@ -41,7 +41,7 @@
     },
     {
       "category": "ollama-reconnect",
-      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AgentProviderStreamingTests|LLMReasoningStreamTests|MCPRuntimeTests|MCPConnectionLifecycleTests|MCPStreamableHTTPTests|MCPResourcesPromptsTests|PhaseDOAuthAndMCPTests|PluginRegistryIntegrityTests|PhaseDPluginAndHookTests)/test[A-Za-z0-9_]+$"
+      "filter": "(?m)^(?:[A-Za-z_][A-Za-z0-9_]*\\.)?(?:AgentProviderStreamingTests|LLMReasoningStreamTests|MCPRuntimeTests|MCPConnectionLifecycleTests|MCPProtocolConfigurationTests|MCPHTTPHeaderProjectionTests|MCPStatelessClientTests|MCPStatelessHTTPTests|MCPStdioNegotiationTests|MCPManagerAuthorityTests|MCPViewModelPersistenceTests|MCPStreamableHTTPTests|MCPResourcesPromptsTests|PhaseDOAuthAndMCPTests|PluginRegistryIntegrityTests|PhaseDPluginAndHookTests)/test[A-Za-z0-9_]+$"
     },
     {
       "category": "task-switching",
